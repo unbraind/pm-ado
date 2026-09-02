@@ -195,6 +195,14 @@ test("typed relations map to pm kinds, and an unmapped edge is reported not drop
 });
 
 test("relationTargetId accepts only a positive integer final segment", () => {
+  // A URL with no separator is its own final segment - both branches of the
+  // lookup are reachable, which is why this does not need a guard for a case
+  // that cannot happen.
+  assert.equal(relationTargetId("42"), 42);
+  // Extracting the segment before testing it keeps the pattern anchored. An
+  // unanchored search for the segment was quadratic on a run of separators.
+  assert.equal(relationTargetId("/".repeat(64) + "7"), 7);
+  assert.equal(relationTargetId("/".repeat(64)), undefined);
   assert.equal(relationTargetId("https://x/_apis/wit/workItems/7"), 7);
   assert.equal(relationTargetId("https://x/_apis/wit/workItems/0"), undefined);
   assert.equal(relationTargetId("https://x/_apis/wit/workItems/-3"), undefined);

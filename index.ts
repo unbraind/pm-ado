@@ -156,11 +156,18 @@ export function batchIds(ids: readonly number[]): number[][] {
  * @returns The target work item id, or `undefined` when the URL names no item.
  */
 export function relationTargetId(url: string): number | undefined {
-  // Matches the final path segment directly rather than splitting and taking
-  // the last element: `split` always yields at least one element, so guarding
-  // the "no segment" case would add a branch that can never run.
-  const match = /(?:^|\/)([1-9][0-9]*)$/u.exec(url);
-  return match === null ? undefined : Number(match[1]);
+  // `lastIndexOf` rather than `split`, because `split(...).pop()` is typed as
+  // possibly-undefined for a case that cannot happen, and guarding it would add
+  // a branch no test can reach. Both outcomes here ARE reachable: a URL with no
+  // separator is just its own final segment.
+  //
+  // The scan is deliberately not part of the pattern. Searching for the segment
+  // with an unanchored expression made this quadratic on a run of separators -
+  // CodeQL flagged exactly that. Anchoring the test to an already-extracted
+  // segment leaves nothing to backtrack over.
+  const separator = url.lastIndexOf("/");
+  const segment = separator === -1 ? url : url.slice(separator + 1);
+  return /^[1-9][0-9]*$/u.test(segment) ? Number(segment) : undefined;
 }
 
 /**

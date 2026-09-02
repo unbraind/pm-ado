@@ -20,6 +20,7 @@ import extension, {
   CommandError,
   EXIT_CODE,
   MUTATING_COMMANDS,
+  PATCH_MEDIA_TYPE,
   RELATION_MAP,
   STATE_MAP,
   assertsRevision,
@@ -30,6 +31,7 @@ import extension, {
   preflightMessage,
   shouldFailFast,
   readConfig,
+  runCredentialPreflight,
   relationTargetId,
   type AdoWorkItem,
   type JsonPatchOperation,
@@ -39,10 +41,10 @@ const CONFIG = { orgUrl: "https://dev.azure.com/contoso", project: "Fabrikam", t
 
 /** Build a transport that records calls and replays scripted responses. */
 function recordingTransport(responses: readonly { status: number; body: string }[]) {
-  const calls: { method: string; url: string; body: string | undefined; contentType: string | undefined }[] = [];
+  const calls: { method: string; url: string; body: string | undefined; headers: Readonly<Record<string, string>> }[] = [];
   let index = 0;
-  const transport = async (method: string, url: string, body: string | undefined, contentType: string | undefined) => {
-    calls.push({ method, url, body, contentType });
+  const transport = async (method: string, url: string, body: string | undefined, headers: Readonly<Record<string, string>>) => {
+    calls.push({ method, url, body, headers });
     const response = responses[Math.min(index, responses.length - 1)]!;
     index += 1;
     return response;
@@ -88,7 +90,7 @@ test("a stale revision is reported as a conflict a caller can retry, not as a tr
   // The document that went out asserted the revision it was read at.
   const sent = JSON.parse(calls[0]!.body!) as JsonPatchOperation[];
   assert.deepEqual(sent[0], { op: "test", path: "/rev", value: 3 });
-  assert.equal(calls[0]!.contentType, "application/json-patch+json");
+  assert.equal(calls[0]!.headers["Content-Type"], "application/json-patch+json");
   assert.equal(calls[0]!.method, "PATCH");
 });
 
@@ -161,7 +163,7 @@ test("a request without a body sends no content type and encodes the project", a
   const { transport, calls } = recordingTransport([{ status: 200, body: "{}" }]);
   await new AdoClient({ ...CONFIG, project: "a b/c" }, transport).request("GET", "/_apis/wit/x");
   assert.equal(calls[0]!.body, undefined);
-  assert.equal(calls[0]!.contentType, undefined);
+  assert.equal(calls[0]!.headers["Content-Type"], undefined);
   assert.match(calls[0]!.url, /a%20b%2Fc/u);
 });
 
@@ -287,4 +289,120 @@ test("ado validate reports readiness without leaking the token", async () => {
       else process.env[key] = before[key];
     }
   }
+});
+
+test("every request carries the token as a basic credential with an empty username", async () => {
+  // Azure DevOps expects a personal access token as the PASSWORD of a basic
+  // credential whose username is empty. Getting this wrong authenticates
+  // nothing, and the failure surfaces only against the real service.
+  const { transport, calls } = recordingTransport([{ status: 200, body: "{}" }]);
+  await new AdoClient(CONFIG, transport).request("GET", "/_apis/wit/x");
+  const authorization = calls[0]!.headers.Authorization!;
+  assert.match(authorization, /^Basic /u);
+  assert.equal(Buffer.from(authorization.slice("Basic ".length), "base64").toString("utf-8"), ":pat");
+  assert.equal(calls[0]!.headers.Accept, "application/json");
+});
+
+test("the credential preflight refuses before the command runs, and passes otherwise", () => {
+  const written: string[] = [];
+  const exits: number[] = [];
+  const exit = ((code: number) => {
+    exits.push(code);
+    // Real `process.exit` never returns; the test double must not either, or
+    // the code under test would continue past a refusal it believes is final.
+    throw new Error("exited");
+  }) as (code: number) => never;
+
+  // Refusal: a network-bound command with no credentials.
+  assert.throws(
+    () => runCredentialPreflight({ command: "ado sync", options: {} } as never, {}, (m) => written.push(String(m)), exit),
+    /exited/u,
+  );
+  assert.deepEqual(exits, [EXIT_CODE.usage]);
+  assert.match(written[0]!, /ADO_ORG_URL/u);
+  // The message must not be able to leak a value it never received.
+  assert.equal(written[0]!.includes("undefined"), false);
+
+  // Pass-through: credentials present.
+  const ok = runCredentialPreflight(
+    { command: "ado sync", options: {} } as never,
+    { ADO_ORG_URL: "a", ADO_PROJECT: "b", ADO_TOKEN: "c" },
+    (m) => written.push(String(m)),
+    exit,
+  );
+  assert.deepEqual(ok, {});
+
+  // Pass-through: a command that never reaches the network, with no context.
+  assert.deepEqual(runCredentialPreflight({} as never, {}, (m) => written.push(String(m)), exit), {});
+  assert.equal(exits.length, 1);
+});
+
+test("the registered preflight is reachable through pm's own preflight runtime", async () => {
+  // Exercises the registration wiring itself, not just the extracted decision:
+  // the override is looked up and invoked by pm's runtime exactly as it would
+  // be in a real command. Credentials are set so the pass-through path runs -
+  // the refusal path ends the process, which is why its logic is tested through
+  // runCredentialPreflight with an injected exit rather than here.
+  const active = await getHarness();
+  const before = { ...process.env };
+  try {
+    process.env.ADO_ORG_URL = "https://dev.azure.com/c";
+    process.env.ADO_PROJECT = "P";
+    process.env.ADO_TOKEN = "t";
+    const decision = await active.runPreflightOverride({ command: "ado sync", options: {} } as never);
+    assert.ok(decision, "the runtime must return a decision for a registered preflight");
+  } finally {
+    for (const key of ["ADO_ORG_URL", "ADO_PROJECT", "ADO_TOKEN"]) {
+      if (before[key] === undefined) delete process.env[key];
+      else process.env[key] = before[key];
+    }
+  }
+});
+
+test("an informational status is a remote failure too, not a success below the range", async () => {
+  // The success test is a range, not `>= 300`. A 1xx reaching this layer means
+  // the request did not complete, and treating it as success would parse an
+  // empty body as a work item.
+  const { transport } = recordingTransport([{ status: 100, body: "" }]);
+  await assert.rejects(
+    () => new AdoClient(CONFIG, transport).queryIds("SELECT 1"),
+    (error: unknown) => error instanceof CommandError && error.exitCode === EXIT_CODE.remote,
+  );
+});
+
+test("a token of only whitespace is reported as absent, not as present", async () => {
+  const active = await getHarness();
+  const before = process.env.ADO_TOKEN;
+  try {
+    process.env.ADO_TOKEN = "   ";
+    const result = await active.runCommand({ command: "ado validate" });
+    const payload = (result as unknown as { result: Record<string, unknown> }).result;
+    assert.equal(payload.token_present, false, "a blank token must not read as configured");
+    assert.ok((payload.missing as string[]).includes("ADO_TOKEN"));
+  } finally {
+    if (before === undefined) delete process.env.ADO_TOKEN;
+    else process.env.ADO_TOKEN = before;
+  }
+});
+
+test("a patch that does not assert a revision is refused before it reaches the network", async () => {
+  // The invariant guards the transport, not one call site, so it holds for any
+  // future patch path. Reachable precisely because it lives here: sending an
+  // unchecked patch directly is the only way to violate it, and it is refused.
+  const { transport, calls } = recordingTransport([{ status: 200, body: "{}" }]);
+  const client = new AdoClient(CONFIG, transport);
+  await assert.rejects(
+    () => client.request("PATCH", "/_apis/wit/workitems/1", [{ op: "replace", path: "/fields/System.Title", value: "x" }], PATCH_MEDIA_TYPE),
+    (error: unknown) => error instanceof CommandError && error.exitCode === EXIT_CODE.usage,
+  );
+  // A non-array body is refused the same way rather than being coerced.
+  await assert.rejects(
+    () => client.request("PATCH", "/_apis/wit/workitems/1", { op: "test" }, PATCH_MEDIA_TYPE),
+    (error: unknown) => error instanceof CommandError && error.exitCode === EXIT_CODE.usage,
+  );
+  assert.equal(calls.length, 0, "nothing may reach the network before the invariant is satisfied");
+
+  // A well-formed patch passes.
+  await client.request("PATCH", "/_apis/wit/workitems/1", buildUpdatePatch(2, { "System.Title": "x" }), PATCH_MEDIA_TYPE);
+  assert.equal(calls.length, 1);
 });

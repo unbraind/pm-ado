@@ -1,0 +1,22 @@
+# Approved commit author and committer identities for this repository.
+#
+# The gate in test/identity-audit.test.ts fails closed on any author or
+# committer email outside this list, and on any newly added absolute home path.
+#
+# Unlike the older repositories in this fleet, this list carries no personal
+# authoring address. pm-ado was created with a clean history, so nothing in it
+# requires one, and the smallest list that admits every identity which actually
+# appears is the right one. Adding an address here should be a deliberate act,
+# not an inheritance from whichever repository this was scaffolded from.
+
+# The maintainer's GitHub noreply address, used for every hand-made commit.
+1153461+unbraind@users.noreply.github.com
+
+# GitHub's committer for merges made through the web UI.
+noreply@github.com
+
+# The GitHub Actions bot, which authors the release commit.
+41898282+github-actions[bot]@users.noreply.github.com
+
+# Dependabot's public GitHub noreply address.
+49699333+dependabot[bot]@users.noreply.github.com

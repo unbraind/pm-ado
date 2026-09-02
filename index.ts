@@ -62,6 +62,9 @@ export class CommandError extends Error {
   }
 }
 
+/** The media type Azure DevOps requires for a work item patch document. */
+export const PATCH_MEDIA_TYPE = "application/json-patch+json";
+
 /** One operation in an Azure DevOps JSON Patch document. */
 export interface JsonPatchOperation {
   /** The patch verb. `test` asserts a value without changing it. */
@@ -153,9 +156,11 @@ export function batchIds(ids: readonly number[]): number[][] {
  * @returns The target work item id, or `undefined` when the URL names no item.
  */
 export function relationTargetId(url: string): number | undefined {
-  const segment = url.split("/").pop() ?? "";
-  if (!/^[1-9][0-9]*$/u.test(segment)) return undefined;
-  return Number(segment);
+  // Matches the final path segment directly rather than splitting and taking
+  // the last element: `split` always yields at least one element, so guarding
+  // the "no segment" case would add a branch that can never run.
+  const match = /(?:^|\/)([1-9][0-9]*)$/u.exec(url);
+  return match === null ? undefined : Number(match[1]);
 }
 
 /**
@@ -213,10 +218,10 @@ export interface AdoTransport {
    * @param method - The HTTP method.
    * @param url - The absolute request URL.
    * @param body - The request body, already serialised, or `undefined`.
-   * @param contentType - The body's media type when a body is present.
+   * @param headers - Request headers, including the authorization credential.
    * @returns The response status and decoded body.
    */
-  (method: string, url: string, body: string | undefined, contentType: string | undefined): Promise<{ status: number; body: string }>;
+  (method: string, url: string, body: string | undefined, headers: Readonly<Record<string, string>>): Promise<{ status: number; body: string }>;
 }
 
 /**
@@ -289,8 +294,21 @@ export class AdoClient {
    */
   async request(method: string, path: string, body?: unknown, contentType = "application/json"): Promise<unknown> {
     const url = `${this.#config.orgUrl}/${encodeURIComponent(this.#config.project)}${path}`;
+    // The invariant lives here rather than at one call site, so it guards EVERY
+    // patch this client will ever send. A patch document that does not open
+    // with a revision assertion is an unchecked write, and an unchecked write
+    // is the failure this package exists to make impossible - so it is refused
+    // before it reaches the network, whatever produced it.
+    if (contentType === PATCH_MEDIA_TYPE && !(Array.isArray(body) && assertsRevision(body as JsonPatchOperation[]))) {
+      throw new CommandError(
+        "refusing to send a work item patch that does not assert a revision",
+        EXIT_CODE.usage,
+      );
+    }
     const payload = body === undefined ? undefined : JSON.stringify(body);
-    const response = await this.#transport(method, url, payload, payload === undefined ? undefined : contentType);
+    const headers: Record<string, string> = { Accept: "application/json", Authorization: this.#auth };
+    if (payload !== undefined) headers["Content-Type"] = contentType;
+    const response = await this.#transport(method, url, payload, headers);
     if (response.status === 412) {
       // Azure DevOps answers a failed `test` operation with a precondition
       // failure. That is the revision race, and it is the one remote failure a
@@ -359,17 +377,11 @@ export class AdoClient {
    */
   async updateWorkItem(id: number, rev: number, fields: Readonly<Record<string, unknown>>): Promise<AdoWorkItem> {
     const patch = buildUpdatePatch(rev, fields);
-    /* c8 ignore next 3 -- unreachable while buildUpdatePatch always leads with the
-       assertion; kept because it is the invariant that makes every write checked,
-       and a future second write path would trip it rather than ship unchecked. */
-    if (!assertsRevision(patch)) {
-      throw new CommandError("refusing to send a work item update that does not assert a revision", EXIT_CODE.usage);
-    }
     const payload = await this.request(
       "PATCH",
       `/_apis/wit/workitems/${id}?api-version=7.1`,
       patch,
-      "application/json-patch+json",
+      PATCH_MEDIA_TYPE,
     );
     return payload as AdoWorkItem;
   }
@@ -451,6 +463,39 @@ export function preflightMessage(command: string, missing: readonly string[]): s
 }
 
 /**
+ * Decide and act on the credential preflight for one invocation.
+ *
+ * Extracted from the registration so both paths are exercisable: the refusal
+ * ends the process, and a callback that calls `process.exit` directly cannot be
+ * tested in-process without taking the test runner down with it. The writer and
+ * the exit are parameters for that reason, not for configurability.
+ *
+ * The refusal terminates rather than throws because pm's preflight runtime
+ * wraps this callback in a try/catch that turns a throw into a non-fatal
+ * warning and lets the command proceed - so a throw here could not fail fast.
+ *
+ * @param ctx - The preflight context pm supplies.
+ * @param env - The environment to read credentials from.
+ * @param write - Sink for the operator-facing message.
+ * @param exit - Process terminator, called with a usage exit code.
+ * @returns An empty decision delta when the command may proceed.
+ */
+export function runCredentialPreflight(
+  ctx: PreflightOverrideContext,
+  env: Readonly<Record<string, string | undefined>>,
+  write: (message: string) => unknown,
+  exit: (code: number) => never,
+): Record<string, never> {
+  const command: string = ctx?.command ?? "";
+  const options: Record<string, unknown> = ctx?.options ?? {};
+  if (shouldFailFast(command, options, env)) {
+    write(`${preflightMessage(command, missingEnv(env))}\n`);
+    exit(EXIT_CODE.usage);
+  }
+  return {};
+}
+
+/**
  * Local stand-in for the SDK's `defineExtension` identity helper.
  *
  * Declared here rather than imported so this package keeps a type-only
@@ -484,15 +529,13 @@ export default defineExtension({
     // cannot fail fast. Writing the message and exiting bypasses that catch.
     api.registerPreflight({
       commands: [...MUTATING_COMMANDS],
-      run: (ctx: PreflightOverrideContext) => {
-        const command: string = ctx?.command ?? "";
-        const options: Record<string, unknown> = ctx?.options ?? {};
-        if (shouldFailFast(command, options, process.env)) {
-          process.stderr.write(`${preflightMessage(command, missingEnv(process.env))}\n`);
-          process.exit(EXIT_CODE.usage);
-        }
-        return {};
-      },
+      run: (ctx: PreflightOverrideContext) =>
+        runCredentialPreflight(
+          ctx,
+          process.env,
+          process.stderr.write.bind(process.stderr),
+          process.exit.bind(process) as (code: number) => never,
+        ),
     });
 
     api.registerCommand({

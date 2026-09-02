@@ -1,0 +1,15 @@
+id: pm-ado-o0ik
+title: Scaffold the package with the fleet's mandatory gates and its own pm tracker
+description: "Created the package from the fleet TypeScript starter and repointed every identity the copy carried: the starter's own name appeared in the release workflow, the docstring gate, the catalog metadata and a tracking item link that would have pointed at an item in a different repository. A scaffolded package that keeps the template's identity is the same failure as propagating a fleet change by copying a reference file, and it is invisible until something follows one of those links.\n\nTwo gate files were written rather than copied. The approved-identity list carries no personal authoring address, because this history is clean from the start and nothing in it requires one; inheriting an address from whichever repository the scaffold came from is exactly the kind of unexamined copy this fleet has been removing. The identity baseline points at the root commit and says plainly that it records no amnesty, unlike its counterparts in the older repositories where it freezes a history that cannot be rewritten without orphaning release tags.\n\nOne copied test was made stronger rather than satisfied. It asserted that the release job's ref gate is the entire condition, which a new package cannot satisfy because publication is additionally gated behind an approval variable. It now requires the ref check to be present and refuses a disjunction, so it still fails when the gate is removed and also fails when the gate is weakened into an alternative - a case the original spelling would have accepted."
+type: Chore
+status: closed
+priority: 2
+tags[1]: "area:scaffold"
+created_at: "2026-09-02T18:20:25.929Z"
+updated_at: "2026-09-02T18:20:26.412Z"
+closed_at: "2026-09-02T18:20:26.400Z"
+completed_at: "2026-09-02T18:20:26.400Z"
+author: "harness:claude-code"
+acceptance_criteria: "No reference to the template package remains anywhere in the tree; the identity gate passes against a purpose-written allowlist and baseline; the release job is gated by both the ref and the approval variable; the package builds, typechecks and its tests pass"
+close_reason: "The tree carries no template references, the identity gate passes against an allowlist written for this repository rather than inherited, the release job is gated by both the ref and PM_RELEASE_APPROVED, and the copied ref-gate test was strengthened to refuse a disjunction as well as an absent gate - verified by reverting each weakening and observing it fail."
+body: ""

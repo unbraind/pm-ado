@@ -1,0 +1,12 @@
+# The commit from which the identity and host-path gate applies.
+#
+# In the older repositories of this fleet this file records an amnesty: their
+# reachable history contains machine-local commit identities and absolute home
+# paths, and rewriting it would orphan release tags and break the provenance of
+# already-published npm versions, so the past was frozen and the future gated.
+#
+# Here it records no such thing. pm-ado was created clean, and this is its root
+# commit, so the gate covers the entire history rather than a suffix of it. The
+# anchor exists because the gate needs one, not because anything before it was
+# excused.
+ff1d013c5a6b51a623f690f47a5ee543c83b191f

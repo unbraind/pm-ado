@@ -352,10 +352,21 @@ test("publication is proven possible before anything is mutated", () => {
   // would execute repository-controlled code with release privileges. The job
   // itself has to be gated.
   const jobHeader = workflow.slice(workflow.indexOf("jobs:\n  release:"), stepIndex("Checkout"));
+  const jobIf = /^ {4}if: (.+)$/m.exec(executable(jobHeader))?.[1] ?? "";
   assert.match(
-    executable(jobHeader),
-    /^ {4}if: github\.ref == 'refs\/heads\/main'$/m,
+    jobIf,
+    /github\.ref == 'refs\/heads\/main'/,
     "jobs.release must be gated by ref, not only by a step"
+  );
+  // Additional conditions may be ANDed onto the ref check - this repository
+  // also requires PM_RELEASE_APPROVED, because a new package must not treat a
+  // merge as implicit approval to publish to npm. A conjunction can only make
+  // the gate stricter. A disjunction would let the ref check be bypassed by
+  // satisfying the other side, so it is refused outright.
+  assert.doesNotMatch(
+    jobIf,
+    /\|\|/,
+    "jobs.release must not weaken the ref gate with a disjunction"
   );
   assert.match(executable(stepSource("Check release ref")), /refs\/heads\/main/);
   const commit = stepIndex("Commit release files");

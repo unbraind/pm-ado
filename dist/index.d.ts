@@ -1,4 +1,4 @@
-import type { ExtensionApi } from "@unbrained/pm-cli/sdk/authoring";
+import type { ExtensionApi, PreflightOverrideContext } from "@unbrained/pm-cli/sdk/authoring";
 /**
  * Semantic exit codes pm's command runtime propagates to the shell.
  *
@@ -34,6 +34,8 @@ export declare class CommandError extends Error {
      */
     constructor(message: string, exitCode?: number);
 }
+/** The media type Azure DevOps requires for a work item patch document. */
+export declare const PATCH_MEDIA_TYPE = "application/json-patch+json";
 /** One operation in an Azure DevOps JSON Patch document. */
 export interface JsonPatchOperation {
     /** The patch verb. `test` asserts a value without changing it. */
@@ -143,10 +145,10 @@ export interface AdoTransport {
      * @param method - The HTTP method.
      * @param url - The absolute request URL.
      * @param body - The request body, already serialised, or `undefined`.
-     * @param contentType - The body's media type when a body is present.
+     * @param headers - Request headers, including the authorization credential.
      * @returns The response status and decoded body.
      */
-    (method: string, url: string, body: string | undefined, contentType: string | undefined): Promise<{
+    (method: string, url: string, body: string | undefined, headers: Readonly<Record<string, string>>): Promise<{
         status: number;
         body: string;
     }>;
@@ -270,6 +272,25 @@ export declare function shouldFailFast(command: string, options: Readonly<Record
  * @returns The message to write to stderr.
  */
 export declare function preflightMessage(command: string, missing: readonly string[]): string;
+/**
+ * Decide and act on the credential preflight for one invocation.
+ *
+ * Extracted from the registration so both paths are exercisable: the refusal
+ * ends the process, and a callback that calls `process.exit` directly cannot be
+ * tested in-process without taking the test runner down with it. The writer and
+ * the exit are parameters for that reason, not for configurability.
+ *
+ * The refusal terminates rather than throws because pm's preflight runtime
+ * wraps this callback in a try/catch that turns a throw into a non-fatal
+ * warning and lets the command proceed - so a throw here could not fail fast.
+ *
+ * @param ctx - The preflight context pm supplies.
+ * @param env - The environment to read credentials from.
+ * @param write - Sink for the operator-facing message.
+ * @param exit - Process terminator, called with a usage exit code.
+ * @returns An empty decision delta when the command may proceed.
+ */
+export declare function runCredentialPreflight(ctx: PreflightOverrideContext, env: Readonly<Record<string, string | undefined>>, write: (message: string) => unknown, exit: (code: number) => never): Record<string, never>;
 declare const _default: {
     name: string;
     version: string;

@@ -3,10 +3,8 @@
 # The gate in test/identity-audit.test.ts fails closed on any author or
 # committer email outside this list, and on any newly added absolute home path.
 #
-# Unlike the older repositories in this fleet, this list carries no personal
-# authoring address. pm-ado was created with a clean history, so nothing in it
-# requires one, and the smallest list that admits every identity which actually
-# appears is the right one. Adding an address here should be a deliberate act,
+# Every address here is one that actually appears, and the note beside it says
+# where from. Adding an address should be a deliberate act with a stated reason,
 # not an inheritance from whichever repository this was scaffolded from.
 
 # The maintainer's GitHub noreply address, used for every hand-made commit.
@@ -20,3 +18,16 @@ noreply@github.com
 
 # Dependabot's public GitHub noreply address.
 49699333+dependabot[bot]@users.noreply.github.com
+
+# The maintainer's public GitHub account identity.
+#
+# This appears in CI even though no commit here is authored with it. A
+# `pull_request` workflow checks out `refs/pull/N/merge`, whose tip is a merge
+# commit GitHub fabricates for the run and attributes to the account that opened
+# the pull request. That commit is never pushed and never lands on main - but it
+# is HEAD while the gate runs, so the gate audits it.
+#
+# It is listed rather than excluded because "skip merge commits" would also stop
+# auditing real ones, and a merge commit carries an identity like any other. The
+# address is already an intentional public identity across this fleet's history.
+stefan@preu.at

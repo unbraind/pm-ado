@@ -4,7 +4,7 @@
 
 ### Security
 
-- Removing an unreachable branch for coverage introduced a polynomial expression in the relation parser ([pm-ado-muqg](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-muqg.toon))
+- Closed the polynomial expression in the relation parser that a coverage edit had introduced ([pm-ado-muqg](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-muqg.toon))
 
 ### Other
 

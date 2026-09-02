@@ -1,0 +1,14 @@
+id: pm-ado-8zx9
+title: Assert System.Rev on every write so a concurrent agent cannot silently overwrite another
+description: "Each update sends a JSON Patch document whose first operation is a test against the revision the local item was read at. Azure DevOps rejects the entire document when the revision has moved, which turns a lost update into a visible, retryable failure. The retry re-reads the work item, replays the intended field changes onto the new revision, and asserts again, so contention resolves without a human. This is the property that makes the package safe for many agents on one project."
+type: Feature
+status: open
+priority: 2
+tags[1]: "area:concurrency"
+created_at: "2026-09-02T18:06:05.245Z"
+updated_at: "2026-09-02T18:06:05.245Z"
+author: "harness:claude-code"
+acceptance_criteria: A write whose asserted revision is stale fails and does not mutate the remote item; the failure is distinguishable from a transport error; a bounded retry re-reads and reapplies; a test interleaves two writers against a fake service and asserts the loser fails rather than wins
+parent: pm-ado-g4v1
+risk: high
+body: ""

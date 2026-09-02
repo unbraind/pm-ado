@@ -1,0 +1,13 @@
+id: pm-ado-ntkc
+title: Read a project through the work item batch endpoint instead of one request per item
+description: "The batch endpoint accepts up to two hundred sub-requests in a single call. A project sync that issues one request per work item is the difference between a handful of round trips and hundreds, which for an agent is latency and token budget rather than an abstract efficiency concern. Batching also keeps the sync inside the service rate limits on projects large enough to matter."
+type: Feature
+status: open
+priority: 2
+tags[1]: "area:performance"
+created_at: "2026-09-02T18:06:06.392Z"
+updated_at: "2026-09-02T18:06:06.392Z"
+author: "harness:claude-code"
+acceptance_criteria: A sync of more than two hundred items issues ceiling of n over two hundred batch calls and no per-item reads; the request count is asserted by test rather than assumed; a partial batch failure is surfaced per sub-request rather than failing the whole sync
+parent: pm-ado-g4v1
+body: ""

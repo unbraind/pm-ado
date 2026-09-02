@@ -1,0 +1,13 @@
+id: pm-ado-g4v1
+title: "pm-ado: Azure DevOps work-item sync designed around revision-checked writes"
+description: "Azure DevOps is the one major tracker whose write API is natively conflict-aware. Work items are updated with a JSON Patch document, and that document may carry a test operation asserting the current System.Rev. If another writer moved the item first the whole patch is rejected atomically instead of silently overwriting. That is a compare-and-swap on a remote tracker, and it is the primitive this ecosystem already organises itself around for multi-agent work. Every other integration in this fleet performs last-write-wins updates and can lose a concurrent edit; pm-ado does not have to, so every remote write asserts a revision.\n\nThree further Azure DevOps capabilities map onto pm primitives more directly than Jira or Linear can express: System.Rev with its revisions endpoint is an append-only log on the remote side that can be reconciled against a pm item history rather than flattened into one updated_at; work item relations are typed and align with pm parent and dependency kinds instead of needing an ad hoc convention; and the work item batch endpoint accepts up to two hundred sub-requests per call, so a project sync costs a handful of round trips rather than hundreds, which is directly an agent's latency and token budget."
+type: Epic
+status: open
+priority: 2
+tags[2]: "area:integrations","type:new-package"
+created_at: "2026-09-02T18:06:04.650Z"
+updated_at: "2026-09-02T18:06:04.650Z"
+author: "harness:claude-code"
+acceptance_criteria: "Every remote write carries a revision assertion, proven by a test that interleaves two writers and asserts the loser fails; work item revisions reconcile with pm item history; typed relations round-trip to pm parent and dependency kinds; a full project sync uses the batch endpoint and its request count is asserted; the credential preflight aborts before any store read or network call; coverage is 100 across statements, branches, functions and lines and the docstring gate passes"
+risk: medium
+body: ""

@@ -1,0 +1,125 @@
+{
+  "name": "pm-ado",
+  "version": "2026.9.2",
+  "description": "Azure DevOps work-item sync for pm-cli, with revision-checked writes so concurrent agents cannot clobber each other",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/unbraind/pm-ado.git"
+  },
+  "bugs": {
+    "url": "https://github.com/unbraind/pm-ado/issues"
+  },
+  "homepage": "https://github.com/unbraind/pm-ado#readme",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/",
+    "manifest.json",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "build:test": "tsc -p tsconfig.test.json",
+    "test": "npm run build && npm run build:test && node --test test/*.test.ts",
+    "prepack": "npm run build",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck",
+    "docstring": "node scripts/docstring-gate.ts",
+    "audit:prod": "node --input-type=module -e \"import { spawnSync } from 'node:child_process'; import { devNull } from 'node:os'; const env = { ...process.env, npm_config_userconfig: devNull, NPM_CONFIG_USERCONFIG: devNull }; for (const key of Object.keys(env)) if (key.toLowerCase() === 'npm_config_allow_scripts') delete env[key]; const win = process.platform === 'win32'; const r = spawnSync(win ? 'npm.cmd' : 'npm', ['audit', '--omit=dev', '--ignore-scripts'], { stdio: 'inherit', env, shell: win }); process.exit(r.status ?? 1);\"",
+    "pack:dry-run": "npm pack --dry-run",
+    "changelog": "pm-changelog --pm-root .agents/pm --mode prepend --output CHANGELOG.md --release-version-from-package --date-from-version --since-previous-tag --until-release-tag --item-url-base https://github.com/unbraind/pm-ado/blob/main/.agents/pm --respect-item-release --pm-bin ./node_modules/.bin/pm --pm-arg=--output-budget --pm-arg=unbounded --pm-arg=--output-limit --pm-arg=unbounded",
+    "changelog:full": "pm-changelog --pm-root .agents/pm --mode replace --output CHANGELOG.md --all-release-tags --release-version-from-package --date-from-version --item-url-base https://github.com/unbraind/pm-ado/blob/main/.agents/pm --respect-item-release --pm-bin ./node_modules/.bin/pm --pm-arg=--output-budget --pm-arg=unbounded --pm-arg=--output-limit --pm-arg=unbounded",
+    "changelog:check": "pm-changelog --pm-root .agents/pm --mode replace --output CHANGELOG.md --all-release-tags --release-version-from-package --date-from-version --item-url-base https://github.com/unbraind/pm-ado/blob/main/.agents/pm --respect-item-release --check --pm-bin ./node_modules/.bin/pm --pm-arg=--output-budget --pm-arg=unbounded --pm-arg=--output-limit --pm-arg=unbounded",
+    "release:check": "npm run typecheck && npm run build && npm run docstring && npm run coverage && npm run audit:prod && npm run pack:dry-run && npm run changelog:check && npm run verify:release-publish-attestation && npm run verify:release-changelog-date",
+    "prepublishOnly": "npm run release:check",
+    "release:notes": "pm-changelog --pm-root .agents/pm --stdout --since-previous-tag --until-release-tag --release-version-from-package --date-from-version --item-url-base https://github.com/unbraind/pm-ado/blob/main/.agents/pm --respect-item-release --pm-bin ./node_modules/.bin/pm --github-step-summary --pm-arg=--output-budget --pm-arg=unbounded --pm-arg=--output-limit --pm-arg=unbounded",
+    "prepare": "node scripts/prepare-merge-driver.ts",
+    "merge:install": "pm merge install",
+    "coverage": "npm run build && npm run build:test && node scripts/coverage-gate.ts",
+    "verify:release-publish-attestation": "node scripts/verify-release-publish-attestation.ts",
+    "verify:release-changelog-date": "node scripts/verify-release-changelog-date.ts"
+  },
+  "peerDependencies": {
+    "@unbrained/pm-cli": ">=2026.8.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@unbrained/pm-cli": "2026.8.31",
+    "pm-changelog": "2026.8.30",
+    "pm-ops": "2026.8.17",
+    "typescript": "^7.0.2"
+  },
+  "keywords": [
+    "pm-cli",
+    "pm-extension",
+    "azure-devops",
+    "ado",
+    "work-items",
+    "boards",
+    "sync",
+    "agents"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "author": "@unbraind",
+  "pm": {
+    "aliases": [
+      "ado",
+      "azure-devops"
+    ],
+    "extensions": [
+      "."
+    ],
+    "catalog": {
+      "display_name": "Azure DevOps",
+      "category": "integration",
+      "summary": "Sync pm items with Azure DevOps work items using revision-checked writes, so concurrent agents cannot silently overwrite each other",
+      "tags": [
+        "azure-devops",
+        "ado",
+        "work-items",
+        "boards",
+        "integration",
+        "sync"
+      ],
+      "links": {
+        "docs": "https://github.com/unbraind/pm-ado#readme",
+        "npm": "https://www.npmjs.com/package/pm-ado",
+        "repository": "https://github.com/unbraind/pm-ado",
+        "report": "https://github.com/unbraind/pm-ado/issues"
+      }
+    },
+    "docs": [
+      "README.md",
+      "CHANGELOG.md"
+    ],
+    "examples": [
+      "README.md"
+    ]
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "coverageGate": {
+    "sources": [
+      ".",
+      "scripts/coverage-gate.ts",
+      "scripts/prepare-merge-driver.ts",
+      "scripts/docstring-gate.ts"
+    ],
+    "tests": [
+      "test/*.test.ts"
+    ],
+    "thresholds": {
+      "statements": 100,
+      "lines": 100,
+      "branches": 100,
+      "functions": 100
+    },
+    "ignore": []
+  }
+}

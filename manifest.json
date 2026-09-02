@@ -1,0 +1,16 @@
+{
+  "name": "pm-ado",
+  "version": "2026.9.2",
+  "description": "Azure DevOps work-item sync for pm-cli. Every remote write carries a System.Rev assertion in its JSON Patch document, so a concurrent edit is rejected atomically instead of silently overwritten - the compare-and-swap that lets many agents sync one project at once. Maps work item revisions onto pm item history, typed work item relations onto pm parent and dependency kinds, and batches reads through the work item batch endpoint.",
+  "author": "@unbraind",
+  "entry": "./dist/index.js",
+  "pm_min_version": "2026.8.7",
+  "priority": 50,
+  "capabilities": [
+    "commands",
+    "schema",
+    "importers",
+    "hooks",
+    "preflight"
+  ]
+}

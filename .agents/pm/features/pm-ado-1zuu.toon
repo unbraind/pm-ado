@@ -1,0 +1,13 @@
+id: pm-ado-1zuu
+title: Map typed work item relations onto pm parent and dependency kinds in both directions
+description: "Azure DevOps relations are typed rather than free-form: Parent, Child, Related, Duplicate, Predecessor and Successor each carry meaning the pm model already has a home for. Parent and Child map onto pm hierarchy, and the remaining kinds map onto pm dependency kinds. Round-tripping them preserves structure that a flat field-only sync would discard, and it is what lets a project imported from Azure DevOps still answer a pm graph query."
+type: Feature
+status: open
+priority: 2
+tags[1]: "area:mapping"
+created_at: "2026-09-02T18:06:05.839Z"
+updated_at: "2026-09-02T18:06:05.839Z"
+author: "harness:claude-code"
+acceptance_criteria: Each relation kind round-trips without loss; a cycle introduced remotely is refused rather than written into the local hierarchy; an unmapped relation kind is reported rather than silently dropped
+parent: pm-ado-g4v1
+body: ""

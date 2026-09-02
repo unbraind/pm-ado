@@ -1,0 +1,12 @@
+id: pm-ado-glif
+title: Track the automated daily release for pm-ado
+description: "The daily release workflow opens a pull request carrying the generated changelog and release notes, and links this item so the release has a tracked record rather than only a commit. Publication to npm stays gated behind the PM_RELEASE_APPROVED repository variable until this repository is approved as carrying no private data anywhere in its history, which is the same rule pm-rl and pm-vcs follow as new packages."
+type: Chore
+status: open
+priority: 2
+tags[1]: "area:release"
+created_at: "2026-09-02T18:06:25.032Z"
+updated_at: "2026-09-02T18:06:25.032Z"
+author: "harness:claude-code"
+acceptance_criteria: The release workflow references a pm item that exists in this repository; publication remains gated until approval is granted explicitly
+body: ""

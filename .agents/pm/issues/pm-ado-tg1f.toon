@@ -1,0 +1,18 @@
+id: pm-ado-tg1f
+title: "This package claims to be publishable while its release is gated and npm answers 404, which would render an install button that cannot work"
+description: "pm-ado declares publishConfig.access public in package.json while its release workflow is gated behind vars.PM_RELEASE_APPROVED and the package has never been published — npm answers 404 for pm-ado. Its two release-gated siblings, pm-rl and pm-vcs, declare no publishConfig at all, and both publish with npm publish --access public on the command line exactly as this package's workflow does. The field is therefore redundant here even after approval: the package name is unscoped, so npm defaults to public anyway, and the command supplies the flag regardless.\n\nThe inconsistency has a consequence outside this repository. pm-web catalogues every fleet extension and decides whether to offer an install action by asking whether the package declares publishConfig.access, treating that as the local, offline-checkable signal for publishable. Consulting the npm registry instead would make the check fail on an offline runner, so the convention is deliberate. pm-ado is the first package to break it, and cataloguing it by that rule would produce an install button for a package npm answers 404 for — precisely the outcome the assertion in pm-web exists to prevent.\n\nRemoving the field aligns this package with the two siblings it shares a release gate with, and restores the signal pm-web depends on. When the release is approved, the workflow publishes with --access public as it already does, and the catalog entry moves from unreleased to published as a deliberate edit rather than as a silent consequence of a field nobody re-reads."
+type: Issue
+status: closed
+priority: 2
+tags[2]: catalog,release
+created_at: "2026-09-03T18:06:14.247Z"
+updated_at: "2026-09-03T18:07:07.513Z"
+closed_at: "2026-09-03T18:07:07.493Z"
+completed_at: "2026-09-03T18:07:07.493Z"
+author: "harness:claude-code"
+acceptance_criteria: "package.json declares no publishConfig, matching pm-rl and pm-vcs; the release workflow still passes --access public so an approved release publishes unchanged; and pm-web's availability assertion agrees with this package's real installability rather than contradicting it"
+risk: low
+comments[1]{created_at,author,text}:
+  "2026-09-03T18:07:07.080Z","harness:claude-code","Checked that removing the field cannot break an approved release before removing it. This package's release workflow publishes with npm publish --access public --provenance --ignore-scripts, so the flag is supplied on the command line and does not depend on package.json. The package name is unscoped, so npm's default access is public regardless. pm-rl publishes with the identical command and declares no publishConfig, which is the arrangement this change adopts.\n\nGates after the change: 177 tests pass with 0 failures, the coverage gate reports 4 source files with thresholds met, pm health --strict-exit exits 0 under the pinned binary, and changelog:check reports the file up to date."
+close_reason: "Removed the redundant publishConfig.access so this package matches the two release-gated siblings it shares a gate with. The workflow already passes --access public, and the name is unscoped, so an approved release publishes unchanged."
+body: ""

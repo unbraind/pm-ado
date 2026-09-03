@@ -215,10 +215,48 @@ test("configuration is read whole or not at all, and the org URL is normalised",
     project: "P",
     token: "t",
   });
+  // Multiple trailing slashes and an all-slash URL exercise the backward scan
+  // to completion (end reaches 0) and the no-trailing-slash early exit.
+  assert.deepEqual(readConfig({ ADO_ORG_URL: "https://dev.azure.com/c///", ADO_PROJECT: "P", ADO_TOKEN: "t" }), {
+    orgUrl: "https://dev.azure.com/c",
+    project: "P",
+    token: "t",
+  });
+  assert.deepEqual(readConfig({ ADO_ORG_URL: "a/", ADO_PROJECT: "P", ADO_TOKEN: "t" }), {
+    orgUrl: "a",
+    project: "P",
+    token: "t",
+  });
   assert.equal(readConfig({ ADO_ORG_URL: "https://x", ADO_PROJECT: "P" }), undefined);
   assert.equal(readConfig({ ADO_ORG_URL: "  ", ADO_PROJECT: "P", ADO_TOKEN: "t" }), undefined);
   assert.deepEqual(missingEnv({ ADO_PROJECT: "P" }), ["ADO_ORG_URL", "ADO_TOKEN"]);
   assert.deepEqual(missingEnv({ ADO_ORG_URL: "a", ADO_PROJECT: "b", ADO_TOKEN: "c" }), []);
+});
+
+test("readConfig strips a ReDoS-adversarial org URL within a hard time bound", () => {
+  // Adversarial witness for the polynomial-redos path: a long run of slashes,
+  // a single non-slash, then a long run of trailing slashes. The old regex
+  // /\/+$/u backtracks O(n²) on this shape because the engine tries to anchor
+  // `$` from every slash position in the first run, backtracking the greedy
+  // `+` quantifier at each one before it reaches the match at the end. The
+  // backward scan is O(n) and completes in microseconds.
+  //
+  // 100 001 characters: 50 000 slashes + "a" + 50 000 slashes.
+  const slashes = "/".repeat(50000);
+  const adversarial = slashes + "a" + slashes;
+  assert.equal(adversarial.length, 100001);
+  const start = performance.now();
+  const config = readConfig({
+    ADO_ORG_URL: adversarial,
+    ADO_PROJECT: "P",
+    ADO_TOKEN: "t",
+  });
+  const elapsed = performance.now() - start;
+  assert.ok(
+    elapsed < 50,
+    `readConfig took ${elapsed.toFixed(1)}ms on a ${adversarial.length}-character adversarial URL — expected < 50ms`,
+  );
+  assert.equal(config?.orgUrl, slashes + "a");
 });
 
 test("the credential preflight fires only where a command would reach the network", () => {

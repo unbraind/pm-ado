@@ -154,6 +154,26 @@ export interface AdoTransport {
     }>;
 }
 /**
+ * Strip trailing slashes from a URL without a regular expression.
+ *
+ * `replace(/\/+$/u, "")` was flagged by CodeQL (`js/polynomial-redos`) as a
+ * polynomial-time regex on a run of separators: the `+` quantifier over a
+ * single character followed by the end anchor lets the engine backtrack
+ * O(n²) when the string has a long run of slashes before a non-slash and
+ * another run at the end — the engine tries to anchor `$` from every slash
+ * position in the first run, backtracking the greedy quantifier at each one.
+ *
+ * Scanning backward from the end of the string is O(n) with no backtracking,
+ * and the input here is a library-provided URL whose length is not bounded by
+ * anything in this package. `charCodeAt` returns `NaN` for an out-of-range
+ * index (including `-1` when `end` reaches `0`), and `NaN !== 0x2f`, so the
+ * loop terminates without a separate `end > 0` guard.
+ *
+ * @param value - The string to strip trailing slashes from.
+ * @returns The string with every trailing `/` removed.
+ */
+export declare function stripTrailingSlashes(value: string): string;
+/**
  * Read the Azure DevOps configuration from the environment.
  *
  * @param env - The environment to read, normally `process.env`.

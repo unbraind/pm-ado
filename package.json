@@ -101,9 +101,6 @@
       "README.md"
     ]
   },
-  "publishConfig": {
-    "access": "public"
-  },
   "coverageGate": {
     "sources": [
       ".",

@@ -1,0 +1,21 @@
+id: pm-ado-hawk
+title: Require the existing CI matrix at the main merge boundary
+description: "The live GitHub branch-protection API returned Branch not protected for main, although the repository runs successful test (22), test (26), and CodeQL checks. Make the existing quality checks mandatory for merges, enforce restrictions for administrators, require conversation resolution, and verify the saved settings by reading them back. Keep publication approval and exact coverage separate."
+type: Issue
+status: closed
+priority: 0
+tags[3]: ci,governance,quality
+created_at: "2026-09-04T20:31:47.950Z"
+updated_at: "2026-09-04T20:32:37.177Z"
+closed_at: "2026-09-04T20:32:37.167Z"
+completed_at: "2026-09-04T20:32:37.167Z"
+author: codex-pm-services
+estimated_minutes: 20
+acceptance_criteria: Main requires test (22) and test (26) from the GitHub Actions app; checks require a current main base; administrators and conversation resolution are enforced; force pushes and deletions remain disabled; API readback confirms every setting
+resolution: "Required the existing Node 22 and 26 CI checks from GitHub Actions app 15368 with strict current-base enforcement, administrator enforcement, conversation resolution, and force-push/deletion refusal."
+expected_result: The existing CI checks are enforced at the merge boundary rather than merely reported.
+actual_result: "GitHub API readback confirms both required check names and app IDs, strict=true, enforce_admins=true, required_conversation_resolution=true, allow_force_pushes=false and allow_deletions=false. Source runtime and publication approval remain unchanged; this PR records completed remote configuration."
+docs[1]{path,scope,note}:
+  "https://github.com/unbraind/pm-cli-companion/blob/main/.agents/pm/issues/pm-cli-website-qo3t.toon",project,Companion merge-gate coordination
+close_reason: Live branch protection installed and verified by API readback
+body: ""

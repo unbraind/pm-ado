@@ -261,10 +261,13 @@ export class AdoClient {
         if (payload !== undefined)
             headers["Content-Type"] = contentType;
         const response = await this.#transport(method, url, payload, headers);
-        if (response.status === 412) {
+        if (response.status === 412 && method === "PATCH") {
             // Azure DevOps answers a failed `test` operation with a precondition
             // failure. That is the revision race, and it is the one remote failure a
             // caller can resolve by re-reading and replaying rather than by giving up.
+            // The guard on `method` keeps a 412 arriving on a non-PATCH call (a batch
+            // read, a WIQL query) classified as a transport error rather than a
+            // conflict — a 412 on a GET is not a revision assertion failure.
             throw new CommandError(`the work item changed since it was read, so the update was refused (${url})`, EXIT_CODE.conflict);
         }
         if (response.status < 200 || response.status >= 300) {
@@ -281,22 +284,46 @@ export class AdoClient {
      * Fetch work items through the batch endpoint.
      *
      * Issues one request per {@link BATCH_LIMIT} ids rather than one per item.
+     * Delegates to {@link getWorkItemsReport} and returns only the found items,
+     * preserving the shape callers already depend on.
      *
      * @param ids - The work item ids to fetch.
      * @returns The work items, in the order the service returned them.
      */
     async getWorkItems(ids) {
+        return (await this.getWorkItemsReport(ids)).items;
+    }
+    /**
+     * Fetch work items through the batch endpoint, surfacing per-item failures.
+     *
+     * Sends `errorPolicy: "omit"` so a missing work item does not fail the batch
+     * call — the service returns 200 and simply leaves the missing id out of the
+     * response. The omitted ids are collected and returned as `missing` so a
+     * partial batch failure is surfaced per sub-request rather than failing the
+     * whole sync or silently dropping items.
+     *
+     * @param ids - The work item ids to fetch.
+     * @returns The found items and the ids the service omitted.
+     */
+    async getWorkItemsReport(ids) {
         const items = [];
+        const missing = [];
         for (const batch of batchIds(ids)) {
             const payload = await this.request("POST", "/_apis/wit/workitemsbatch?api-version=7.1", {
                 ids: batch,
                 $expand: "relations",
+                errorPolicy: "omit",
             });
             const value = payload.value;
-            if (value !== undefined)
-                items.push(...value);
+            const found = value !== undefined ? [...value] : [];
+            items.push(...found);
+            const foundIds = new Set(found.map((item) => item.id));
+            for (const id of batch) {
+                if (!foundIds.has(id))
+                    missing.push(id);
+            }
         }
-        return items;
+        return { items, missing };
     }
     /**
      * Run a WIQL query and return the work item ids it selects.
@@ -316,17 +343,46 @@ export class AdoClient {
      * that does not assert a revision. Making that a guard rather than a
      * convention is what keeps "no unchecked writes" true as the package grows.
      *
+     * When the asserted revision is stale the service returns 412 and the update
+     * is rejected in its entirety — nothing is mutated. A single diagnostic
+     * re-read then establishes the revision the item is actually at, and the
+     * conflict is surfaced as a typed error naming the item and both revisions —
+     * the one the caller read at and the one the service is now at.
+     *
+     * The stale write is deliberately **not** replayed onto the newer revision.
+     * Replaying would write the caller's field values over a change it never
+     * read, which is the silent overwrite this assertion exists to prevent. Only
+     * the caller can decide what its change means against the newer state, so the
+     * conflict is returned to it rather than resolved on its behalf.
+     *
      * @param id - The work item id.
      * @param rev - The revision the local copy was read at.
      * @param fields - Field reference names mapped to their new values.
      * @returns The updated work item as the service returned it.
      * @throws {CommandError} With {@link EXIT_CODE.conflict} when the revision
-     *   moved, so the caller can re-read and replay.
+     *   moved, naming the item and both revisions.
      */
     async updateWorkItem(id, rev, fields) {
-        const patch = buildUpdatePatch(rev, fields);
-        const payload = await this.request("PATCH", `/_apis/wit/workitems/${id}?api-version=7.1`, patch, PATCH_MEDIA_TYPE);
-        return payload;
+        try {
+            const patch = buildUpdatePatch(rev, fields);
+            const payload = await this.request("PATCH", `/_apis/wit/workitems/${id}?api-version=7.1`, patch, PATCH_MEDIA_TYPE);
+            return payload;
+        }
+        catch (error) {
+            if (!(error instanceof CommandError) || error.exitCode !== EXIT_CODE.conflict) {
+                throw error;
+            }
+            // Re-read purely to make the conflict actionable: the caller learns which
+            // revision it asserted and which revision the item is actually at. This
+            // deliberately does NOT replay the write onto the new revision. Replaying
+            // would resolve the 412 by writing the same field values over a change
+            // this caller never read, which is precisely the silent overwrite the
+            // revision assertion exists to prevent. The caller re-reads, decides what
+            // its change means against the newer state, and writes again.
+            const [current] = await this.getWorkItems([id]);
+            throw new CommandError(`work item ${id} changed since it was read: asserted rev ${rev}` +
+                (current !== undefined ? ` but current rev is ${current.rev}` : " and could not be re-read"), EXIT_CODE.conflict);
+        }
     }
 }
 /**

@@ -93,8 +93,8 @@ function statefulService(itemId: number, initialRev: number, initialFields: Reco
 /**
  * A fake service where every PATCH fails with 412 regardless of revision.
  *
- * The batch read returns a fixed revision, so the loser re-reads, retries, and
- * fails again — exhausting retries and surfacing both revisions in the error.
+ * The batch read returns a fixed revision, so the loser's diagnostic re-read
+ * always reports that revision and the conflict error carries both.
  */
 function alwaysConflictService(itemId: number, currentRev: number) {
   const calls: { method: string; url: string; body: string | undefined; headers: Readonly<Record<string, string>> }[] = [];
@@ -249,7 +249,7 @@ test("a conflict where the item cannot be re-read surfaces the original revision
   );
 });
 
-test("a transport error during a retry re-read is surfaced, not masked as a conflict", async () => {
+test("a transport error during the diagnostic re-read is surfaced, not masked as a conflict", async () => {
   // If the re-read itself fails with a transport error (not a 412), that error
   // propagates directly rather than being swallowed or misclassified as a
   // conflict. The caller sees the real failure: the service is unreachable.
@@ -263,10 +263,10 @@ test("a transport error during a retry re-read is surfaced, not masked as a conf
   );
 });
 
-test("a non-conflict write error is not retried as a conflict", async () => {
+test("a non-conflict write error is not reclassified as a conflict", async () => {
   // A 503 on the PATCH is a transport error, not a revision race. It must
-  // propagate directly without entering the retry loop, so the caller sees a
-  // remote failure rather than a spurious conflict.
+  // propagate directly without triggering the diagnostic re-read, so the caller
+  // sees a remote failure rather than a spurious conflict.
   const { transport, calls } = recordingTransport([{ status: 503, body: "" }]);
   await assert.rejects(
     () => new AdoClient(CONFIG, transport).updateWorkItem(5, 7, { "System.State": "Active" }),
@@ -277,7 +277,7 @@ test("a non-conflict write error is not retried as a conflict", async () => {
   assert.equal(calls[0]!.method, "PATCH");
 });
 
-test("a thrown transport error (not a CommandError) is propagated without retry", async () => {
+test("a thrown transport error (not a CommandError) is propagated unchanged", async () => {
   // If the transport itself throws (a network failure before any HTTP
   // response), the error is not a CommandError. It must propagate directly
   // rather than being caught and misclassified.

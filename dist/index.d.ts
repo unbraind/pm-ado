@@ -271,22 +271,23 @@ export declare class AdoClient {
      * convention is what keeps "no unchecked writes" true as the package grows.
      *
      * When the asserted revision is stale the service returns 412 and the update
-     * is rejected in its entirety — nothing is mutated. Rather than surfacing that
-     * as a dead-end failure, a bounded retry re-reads the work item, replays the
-     * intended field changes onto the new revision, and asserts again. If the
-     * retry also loses the race (or the item cannot be re-read) the conflict is
-     * surfaced as a typed, actionable error naming the item and both revisions
-     * — the one the caller read at and the one the service is now at — so a
-     * concurrent agent's change is never silently overwritten.
+     * is rejected in its entirety — nothing is mutated. A single diagnostic
+     * re-read then establishes the revision the item is actually at, and the
+     * conflict is surfaced as a typed error naming the item and both revisions —
+     * the one the caller read at and the one the service is now at.
+     *
+     * The stale write is deliberately **not** replayed onto the newer revision.
+     * Replaying would write the caller's field values over a change it never
+     * read, which is the silent overwrite this assertion exists to prevent. Only
+     * the caller can decide what its change means against the newer state, so the
+     * conflict is returned to it rather than resolved on its behalf.
      *
      * @param id - The work item id.
      * @param rev - The revision the local copy was read at.
      * @param fields - Field reference names mapped to their new values.
-     * @param maxRetries - Maximum number of re-read-and-retry attempts before
-     *   surfacing the conflict. Defaults to 1.
      * @returns The updated work item as the service returned it.
      * @throws {CommandError} With {@link EXIT_CODE.conflict} when the revision
-     *   moved and retries are exhausted, naming the item and both revisions.
+     *   moved, naming the item and both revisions.
      */
     updateWorkItem(id: number, rev: number, fields: Readonly<Record<string, unknown>>): Promise<AdoWorkItem>;
 }

@@ -461,50 +461,34 @@ export class AdoClient {
    * @throws {CommandError} With {@link EXIT_CODE.conflict} when the revision
    *   moved and retries are exhausted, naming the item and both revisions.
    */
-  async updateWorkItem(
-    id: number,
-    rev: number,
-    fields: Readonly<Record<string, unknown>>,
-    maxRetries = 1,
-  ): Promise<AdoWorkItem> {
-    let currentRev = rev;
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const patch = buildUpdatePatch(currentRev, fields);
-        const payload = await this.request(
-          "PATCH",
-          `/_apis/wit/workitems/${id}?api-version=7.1`,
-          patch,
-          PATCH_MEDIA_TYPE,
-        );
-        return payload as AdoWorkItem;
-      } catch (error) {
-        if (!(error instanceof CommandError) || error.exitCode !== EXIT_CODE.conflict) {
-          throw error;
-        }
-        // Re-read to discover the current revision. This always happens, even
-        // on the final attempt, so the error names both revisions rather than
-        // just the one the caller read at.
-        const [current] = await this.getWorkItems([id]);
-        if (current === undefined || attempt >= maxRetries) {
-          throw new CommandError(
-            `work item ${id} changed since it was read: asserted rev ${rev}` +
-              (current !== undefined
-                ? ` but current rev is ${current.rev}`
-                : " and could not be re-read"),
-            EXIT_CODE.conflict,
-          );
-        }
-        currentRev = current.rev;
+  async updateWorkItem(id: number, rev: number, fields: Readonly<Record<string, unknown>>): Promise<AdoWorkItem> {
+    try {
+      const patch = buildUpdatePatch(rev, fields);
+      const payload = await this.request(
+        "PATCH",
+        `/_apis/wit/workitems/${id}?api-version=7.1`,
+        patch,
+        PATCH_MEDIA_TYPE,
+      );
+      return payload as AdoWorkItem;
+    } catch (error) {
+      if (!(error instanceof CommandError) || error.exitCode !== EXIT_CODE.conflict) {
+        throw error;
       }
+      // Re-read purely to make the conflict actionable: the caller learns which
+      // revision it asserted and which revision the item is actually at. This
+      // deliberately does NOT replay the write onto the new revision. Replaying
+      // would resolve the 412 by writing the same field values over a change
+      // this caller never read, which is precisely the silent overwrite the
+      // revision assertion exists to prevent. The caller re-reads, decides what
+      // its change means against the newer state, and writes again.
+      const [current] = await this.getWorkItems([id]);
+      throw new CommandError(
+        `work item ${id} changed since it was read: asserted rev ${rev}` +
+          (current !== undefined ? ` but current rev is ${current.rev}` : " and could not be re-read"),
+        EXIT_CODE.conflict,
+      );
     }
-    // The loop always exits via `return` or `throw` above. Reaching here means
-    // the loop condition was initially false (maxRetries < 0), so no attempt
-    // was made at all — a caller error rather than a service failure.
-    throw new CommandError(
-      `work item ${id} could not be updated: maxRetries must not be negative (got ${maxRetries})`,
-      EXIT_CODE.usage,
-    );
   }
 }
 

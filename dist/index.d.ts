@@ -288,7 +288,7 @@ export declare class AdoClient {
      * @throws {CommandError} With {@link EXIT_CODE.conflict} when the revision
      *   moved and retries are exhausted, naming the item and both revisions.
      */
-    updateWorkItem(id: number, rev: number, fields: Readonly<Record<string, unknown>>, maxRetries?: number): Promise<AdoWorkItem>;
+    updateWorkItem(id: number, rev: number, fields: Readonly<Record<string, unknown>>): Promise<AdoWorkItem>;
 }
 /**
  * Translate a work item's relations into pm links.

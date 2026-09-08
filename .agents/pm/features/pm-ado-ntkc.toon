@@ -6,14 +6,15 @@ status: closed
 priority: 2
 tags[1]: "area:performance"
 created_at: "2026-09-02T18:06:06.392Z"
-updated_at: "2026-09-08T15:43:52.135Z"
+updated_at: "2026-09-08T15:49:08.016Z"
 closed_at: "2026-09-08T15:43:52.123Z"
 completed_at: "2026-09-08T15:43:52.123Z"
 claim_principal: pi-agent
 author: "harness:claude-code"
 acceptance_criteria: A sync of more than two hundred items issues ceiling of n over two hundred batch calls and no per-item reads; the request count is asserted by test rather than assumed; a partial batch failure is surfaced per sub-request rather than failing the whole sync
 parent: pm-ado-g4v1
-comments[1]{created_at,author,text}:
+comments[2]{created_at,author,text}:
   "2026-09-08T15:43:22.190Z",pi-agent,"Verified BATCH_LIMIT=200 against the Azure DevOps REST API 7.1 docs (Maximum 200). Added errorPolicy: 'omit' to the batch request so a missing work item does not fail the whole batch call. Added getWorkItemsReport method that returns { items, missing } surfacing per-item failures rather than silently dropping them. getWorkItems preserves its existing return shape (AdoWorkItem[]) by delegating to getWorkItemsReport. Verified: partial batch failure test asserts missing ids are surfaced, request body includes errorPolicy:'omit', and the test fails when the guard is reverted. 129 tests pass, 100/100/100/100 coverage."
+  "2026-09-08T15:49:08.016Z",claude-orchestrator,"Batch read retained as implemented: POST _apis/wit/workitemsbatch with errorPolicy omit, chunked at BATCH_LIMIT=200, plus getWorkItemsReport returning items and missing so a dropped id is surfaced rather than silently absent. getWorkItems keeps its existing AdoWorkItem[] shape. Unchanged by the concurrency correction."
 close_reason: "Done: errorPolicy:omit added to batch request; getWorkItemsReport surfaces missing items per sub-request; getWorkItems preserves existing return shape. Verified BATCH_LIMIT=200 against API 7.1 docs. 129 tests, 100/100/100/100 coverage, all gates pass."
 body: ""

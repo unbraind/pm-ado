@@ -56,6 +56,20 @@ export interface AdoWorkItem {
     /** Typed links to other work items, when the read requested them. */
     relations?: readonly AdoRelation[];
 }
+/**
+ * The outcome of a batch read: items the service returned and ids it omitted.
+ *
+ * With `errorPolicy: "omit"` a missing work item does not fail the batch call;
+ * the service simply leaves it out of the response. Surfacing the omitted
+ * ids per sub-request — rather than failing the whole sync or silently
+ * dropping them — is what makes a partial batch failure actionable.
+ */
+export interface BatchReadResult {
+    /** Work items the service returned, in the order the service returned them. */
+    items: AdoWorkItem[];
+    /** Requested ids the service omitted, in the order they were requested. */
+    missing: number[];
+}
 /** A typed link from one work item to another, or to a URL. */
 export interface AdoRelation {
     /** The Azure DevOps relation reference name, e.g. `System.LinkTypes.Hierarchy-Reverse`. */
@@ -222,11 +236,26 @@ export declare class AdoClient {
      * Fetch work items through the batch endpoint.
      *
      * Issues one request per {@link BATCH_LIMIT} ids rather than one per item.
+     * Delegates to {@link getWorkItemsReport} and returns only the found items,
+     * preserving the shape callers already depend on.
      *
      * @param ids - The work item ids to fetch.
      * @returns The work items, in the order the service returned them.
      */
     getWorkItems(ids: readonly number[]): Promise<AdoWorkItem[]>;
+    /**
+     * Fetch work items through the batch endpoint, surfacing per-item failures.
+     *
+     * Sends `errorPolicy: "omit"` so a missing work item does not fail the batch
+     * call — the service returns 200 and simply leaves the missing id out of the
+     * response. The omitted ids are collected and returned as `missing` so a
+     * partial batch failure is surfaced per sub-request rather than failing the
+     * whole sync or silently dropping items.
+     *
+     * @param ids - The work item ids to fetch.
+     * @returns The found items and the ids the service omitted.
+     */
+    getWorkItemsReport(ids: readonly number[]): Promise<BatchReadResult>;
     /**
      * Run a WIQL query and return the work item ids it selects.
      *
@@ -241,14 +270,25 @@ export declare class AdoClient {
      * that does not assert a revision. Making that a guard rather than a
      * convention is what keeps "no unchecked writes" true as the package grows.
      *
+     * When the asserted revision is stale the service returns 412 and the update
+     * is rejected in its entirety — nothing is mutated. Rather than surfacing that
+     * as a dead-end failure, a bounded retry re-reads the work item, replays the
+     * intended field changes onto the new revision, and asserts again. If the
+     * retry also loses the race (or the item cannot be re-read) the conflict is
+     * surfaced as a typed, actionable error naming the item and both revisions
+     * — the one the caller read at and the one the service is now at — so a
+     * concurrent agent's change is never silently overwritten.
+     *
      * @param id - The work item id.
      * @param rev - The revision the local copy was read at.
      * @param fields - Field reference names mapped to their new values.
+     * @param maxRetries - Maximum number of re-read-and-retry attempts before
+     *   surfacing the conflict. Defaults to 1.
      * @returns The updated work item as the service returned it.
      * @throws {CommandError} With {@link EXIT_CODE.conflict} when the revision
-     *   moved, so the caller can re-read and replay.
+     *   moved and retries are exhausted, naming the item and both revisions.
      */
-    updateWorkItem(id: number, rev: number, fields: Readonly<Record<string, unknown>>): Promise<AdoWorkItem>;
+    updateWorkItem(id: number, rev: number, fields: Readonly<Record<string, unknown>>, maxRetries?: number): Promise<AdoWorkItem>;
 }
 /**
  * Translate a work item's relations into pm links.

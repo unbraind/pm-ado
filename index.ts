@@ -87,6 +87,21 @@ export interface AdoWorkItem {
   relations?: readonly AdoRelation[];
 }
 
+/**
+ * The outcome of a batch read: items the service returned and ids it omitted.
+ *
+ * With `errorPolicy: "omit"` a missing work item does not fail the batch call;
+ * the service simply leaves it out of the response. Surfacing the omitted
+ * ids per sub-request — rather than failing the whole sync or silently
+ * dropping them — is what makes a partial batch failure actionable.
+ */
+export interface BatchReadResult {
+  /** Work items the service returned, in the order the service returned them. */
+  items: AdoWorkItem[];
+  /** Requested ids the service omitted, in the order they were requested. */
+  missing: number[];
+}
+
 /** A typed link from one work item to another, or to a URL. */
 export interface AdoRelation {
   /** The Azure DevOps relation reference name, e.g. `System.LinkTypes.Hierarchy-Reverse`. */
@@ -341,10 +356,13 @@ export class AdoClient {
     const headers: Record<string, string> = { Accept: "application/json", Authorization: this.#auth };
     if (payload !== undefined) headers["Content-Type"] = contentType;
     const response = await this.#transport(method, url, payload, headers);
-    if (response.status === 412) {
+    if (response.status === 412 && method === "PATCH") {
       // Azure DevOps answers a failed `test` operation with a precondition
       // failure. That is the revision race, and it is the one remote failure a
       // caller can resolve by re-reading and replaying rather than by giving up.
+      // The guard on `method` keeps a 412 arriving on a non-PATCH call (a batch
+      // read, a WIQL query) classified as a transport error rather than a
+      // conflict — a 412 on a GET is not a revision assertion failure.
       throw new CommandError(
         `the work item changed since it was read, so the update was refused (${url})`,
         EXIT_CODE.conflict,
@@ -364,21 +382,46 @@ export class AdoClient {
    * Fetch work items through the batch endpoint.
    *
    * Issues one request per {@link BATCH_LIMIT} ids rather than one per item.
+   * Delegates to {@link getWorkItemsReport} and returns only the found items,
+   * preserving the shape callers already depend on.
    *
    * @param ids - The work item ids to fetch.
    * @returns The work items, in the order the service returned them.
    */
   async getWorkItems(ids: readonly number[]): Promise<AdoWorkItem[]> {
+    return (await this.getWorkItemsReport(ids)).items;
+  }
+
+  /**
+   * Fetch work items through the batch endpoint, surfacing per-item failures.
+   *
+   * Sends `errorPolicy: "omit"` so a missing work item does not fail the batch
+   * call — the service returns 200 and simply leaves the missing id out of the
+   * response. The omitted ids are collected and returned as `missing` so a
+   * partial batch failure is surfaced per sub-request rather than failing the
+   * whole sync or silently dropping items.
+   *
+   * @param ids - The work item ids to fetch.
+   * @returns The found items and the ids the service omitted.
+   */
+  async getWorkItemsReport(ids: readonly number[]): Promise<BatchReadResult> {
     const items: AdoWorkItem[] = [];
+    const missing: number[] = [];
     for (const batch of batchIds(ids)) {
       const payload = await this.request("POST", "/_apis/wit/workitemsbatch?api-version=7.1", {
         ids: batch,
         $expand: "relations",
+        errorPolicy: "omit",
       });
       const value = (payload as { value?: readonly AdoWorkItem[] }).value;
-      if (value !== undefined) items.push(...value);
+      const found = value !== undefined ? [...value] : [];
+      items.push(...found);
+      const foundIds = new Set(found.map((item) => item.id));
+      for (const id of batch) {
+        if (!foundIds.has(id)) missing.push(id);
+      }
     }
-    return items;
+    return { items, missing };
   }
 
   /**
@@ -400,22 +443,68 @@ export class AdoClient {
    * that does not assert a revision. Making that a guard rather than a
    * convention is what keeps "no unchecked writes" true as the package grows.
    *
+   * When the asserted revision is stale the service returns 412 and the update
+   * is rejected in its entirety — nothing is mutated. Rather than surfacing that
+   * as a dead-end failure, a bounded retry re-reads the work item, replays the
+   * intended field changes onto the new revision, and asserts again. If the
+   * retry also loses the race (or the item cannot be re-read) the conflict is
+   * surfaced as a typed, actionable error naming the item and both revisions
+   * — the one the caller read at and the one the service is now at — so a
+   * concurrent agent's change is never silently overwritten.
+   *
    * @param id - The work item id.
    * @param rev - The revision the local copy was read at.
    * @param fields - Field reference names mapped to their new values.
+   * @param maxRetries - Maximum number of re-read-and-retry attempts before
+   *   surfacing the conflict. Defaults to 1.
    * @returns The updated work item as the service returned it.
    * @throws {CommandError} With {@link EXIT_CODE.conflict} when the revision
-   *   moved, so the caller can re-read and replay.
+   *   moved and retries are exhausted, naming the item and both revisions.
    */
-  async updateWorkItem(id: number, rev: number, fields: Readonly<Record<string, unknown>>): Promise<AdoWorkItem> {
-    const patch = buildUpdatePatch(rev, fields);
-    const payload = await this.request(
-      "PATCH",
-      `/_apis/wit/workitems/${id}?api-version=7.1`,
-      patch,
-      PATCH_MEDIA_TYPE,
+  async updateWorkItem(
+    id: number,
+    rev: number,
+    fields: Readonly<Record<string, unknown>>,
+    maxRetries = 1,
+  ): Promise<AdoWorkItem> {
+    let currentRev = rev;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const patch = buildUpdatePatch(currentRev, fields);
+        const payload = await this.request(
+          "PATCH",
+          `/_apis/wit/workitems/${id}?api-version=7.1`,
+          patch,
+          PATCH_MEDIA_TYPE,
+        );
+        return payload as AdoWorkItem;
+      } catch (error) {
+        if (!(error instanceof CommandError) || error.exitCode !== EXIT_CODE.conflict) {
+          throw error;
+        }
+        // Re-read to discover the current revision. This always happens, even
+        // on the final attempt, so the error names both revisions rather than
+        // just the one the caller read at.
+        const [current] = await this.getWorkItems([id]);
+        if (current === undefined || attempt >= maxRetries) {
+          throw new CommandError(
+            `work item ${id} changed since it was read: asserted rev ${rev}` +
+              (current !== undefined
+                ? ` but current rev is ${current.rev}`
+                : " and could not be re-read"),
+            EXIT_CODE.conflict,
+          );
+        }
+        currentRev = current.rev;
+      }
+    }
+    // The loop always exits via `return` or `throw` above. Reaching here means
+    // the loop condition was initially false (maxRetries < 0), so no attempt
+    // was made at all — a caller error rather than a service failure.
+    throw new CommandError(
+      `work item ${id} could not be updated: maxRetries must not be negative (got ${maxRetries})`,
+      EXIT_CODE.usage,
     );
-    return payload as AdoWorkItem;
   }
 }
 

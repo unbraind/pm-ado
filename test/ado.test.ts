@@ -34,6 +34,8 @@ import extension, {
   runCredentialPreflight,
   relationTargetId,
   type AdoWorkItem,
+  type AdoTransport,
+  type BatchReadResult,
   type JsonPatchOperation,
 } from "../index.ts";
 
@@ -48,6 +50,61 @@ function recordingTransport(responses: readonly { status: number; body: string }
     const response = responses[Math.min(index, responses.length - 1)]!;
     index += 1;
     return response;
+  };
+  return { transport, calls };
+}
+
+/**
+ * A stateful fake Azure DevOps service that tracks one work item's revision.
+ *
+ * A PATCH whose `test` op matches the current revision succeeds and bumps the
+ * revision; any other revision yields 412. A batch read returns the current
+ * state. This lets tests interleave writers against a shared service rather
+ * than scripting independent responses.
+ */
+function statefulService(itemId: number, initialRev: number, initialFields: Record<string, unknown> = {}) {
+  let rev = initialRev;
+  let fields = { ...initialFields };
+  const calls: { method: string; url: string; body: string | undefined; headers: Readonly<Record<string, string>> }[] = [];
+  const transport = async (method: string, url: string, body: string | undefined, headers: Readonly<Record<string, string>>) => {
+    calls.push({ method, url, body, headers });
+    if (method === "PATCH") {
+      const patch = JSON.parse(body!) as JsonPatchOperation[];
+      const testOp = patch[0];
+      if (testOp !== undefined && testOp.op === "test" && testOp.path === "/rev" && testOp.value === rev) {
+        for (const op of patch) {
+          if (op.op === "replace" && op.path.startsWith("/fields/")) {
+            fields[op.path.slice("/fields/".length)] = op.value;
+          }
+        }
+        rev++;
+        return { status: 200, body: JSON.stringify({ id: itemId, rev, fields }) };
+      }
+      return { status: 412, body: "" };
+    }
+    if (method === "POST" && url.includes("workitemsbatch")) {
+      return { status: 200, body: JSON.stringify({ value: [{ id: itemId, rev, fields }] }) };
+    }
+    return { status: 200, body: "{}" };
+  };
+  return { transport, calls, getRev: () => rev, getFields: () => fields };
+}
+
+/**
+ * A fake service where every PATCH fails with 412 regardless of revision.
+ *
+ * The batch read returns a fixed revision, so the loser re-reads, retries, and
+ * fails again — exhausting retries and surfacing both revisions in the error.
+ */
+function alwaysConflictService(itemId: number, currentRev: number) {
+  const calls: { method: string; url: string; body: string | undefined; headers: Readonly<Record<string, string>> }[] = [];
+  const transport = async (method: string, url: string, body: string | undefined, headers: Readonly<Record<string, string>>) => {
+    calls.push({ method, url, body, headers });
+    if (method === "PATCH") return { status: 412, body: "" };
+    if (method === "POST" && url.includes("workitemsbatch")) {
+      return { status: 200, body: JSON.stringify({ value: [{ id: itemId, rev: currentRev, fields: {} }] }) };
+    }
+    return { status: 200, body: "{}" };
   };
   return { transport, calls };
 }
@@ -73,17 +130,21 @@ test("assertsRevision rejects a document that does not lead with the assertion",
   assert.equal(assertsRevision([{ op: "test", path: "/fields/System.Rev", value: 1 }]), false);
 });
 
-test("a stale revision is reported as a conflict a caller can retry, not as a transport error", async () => {
+test("a stale revision is reported as a conflict naming the item and both revisions, not a transport error", async () => {
   // Azure DevOps answers a failed `test` with 412. That is the revision race,
-  // and it is the one remote failure a caller resolves by re-reading.
-  const { transport, calls } = recordingTransport([{ status: 412, body: "" }]);
+  // and it is the one remote failure a caller resolves by re-reading. The
+  // error must name the item id and both revisions so the caller knows what
+  // changed and by how much.
+  const { transport, calls } = alwaysConflictService(11, 4);
   const client = new AdoClient(CONFIG, transport);
   await assert.rejects(
-    () => client.updateWorkItem(11, 3, { "System.State": "Active" }),
+    () => client.updateWorkItem(11, 3, { "System.State": "Active" }, 0),
     (error: unknown) => {
       assert.ok(error instanceof CommandError);
       assert.equal(error.exitCode, EXIT_CODE.conflict);
-      assert.match(error.message, /changed since it was read/u);
+      assert.match(error.message, /11/u); // item id
+      assert.match(error.message, /asserted rev 3/u); // asserted revision
+      assert.match(error.message, /current rev is 4/u); // current revision
       return true;
     },
   );
@@ -94,22 +155,142 @@ test("a stale revision is reported as a conflict a caller can retry, not as a tr
   assert.equal(calls[0]!.method, "PATCH");
 });
 
-test("two writers racing one work item: the loser fails rather than overwrites", async () => {
+test("a 412 on a non-PATCH request is a remote error, not a conflict", async () => {
+  // A 412 on a GET or POST is not a revision assertion failure — it is a
+  // transport error. The guard on `method` in the request layer keeps the
+  // conflict exit code specific to PATCH, so a caller does not mistake a
+  // broken read for a revision race.
+  const { transport } = recordingTransport([{ status: 412, body: "" }]);
+  await assert.rejects(
+    () => new AdoClient(CONFIG, transport).queryIds("SELECT 1"),
+    (error: unknown) => error instanceof CommandError && error.exitCode === EXIT_CODE.remote,
+  );
+});
+
+test("two writers racing one work item: the loser's stale write is rejected, then retried onto the new revision", async () => {
   // The first writer wins on the revision it read. The second writer read the
   // same revision, so its assertion no longer holds and the service refuses the
   // whole document — the property that makes concurrent agents safe here.
-  const winner = recordingTransport([{ status: 200, body: JSON.stringify({ id: 5, rev: 8, fields: {} }) }]);
-  const loser = recordingTransport([{ status: 412, body: "" }]);
+  // The bounded retry re-reads the current revision, replays the intended
+  // field changes, and asserts again, so contention resolves without a human.
+  const service = statefulService(5, 7);
 
-  const first = await new AdoClient(CONFIG, winner.transport).updateWorkItem(5, 7, { "System.State": "Active" });
+  // Writer A wins: asserts rev 7, succeeds, rev becomes 8.
+  const first = await new AdoClient(CONFIG, service.transport).updateWorkItem(5, 7, { "System.State": "Active" });
   assert.equal(first.rev, 8);
 
+  // Writer B read the same rev 7. Its stale assertion fails (412) rather than
+  // silently overwriting. The retry re-reads rev 8, replays, and succeeds.
+  const second = await new AdoClient(CONFIG, service.transport).updateWorkItem(5, 7, { "System.State": "Closed" });
+  assert.equal(second.rev, 9);
+  assert.equal(service.getFields()["System.State"], "Closed");
+
+  // The loser's first PATCH asserted the stale revision and was rejected.
+  const stalePatch = JSON.parse(service.calls[1]!.body!) as JsonPatchOperation[];
+  assert.deepEqual(stalePatch[0], { op: "test", path: "/rev", value: 7 });
+  assert.equal(service.calls[1]!.method, "PATCH");
+  // The re-read is a batch call, not a per-item GET.
+  assert.ok(service.calls[2]!.url.includes("workitemsbatch"));
+  // The retry PATCH asserts the current revision and succeeds.
+  const retryPatch = JSON.parse(service.calls[3]!.body!) as JsonPatchOperation[];
+  assert.deepEqual(retryPatch[0], { op: "test", path: "/rev", value: 8 });
+});
+
+test("a conflict that cannot be resolved after exhausting retries surfaces both revisions", async () => {
+  // The service always returns 412 for PATCH, no matter the revision. The
+  // loser re-reads (getting rev 99), retries, and fails again. After exhausting
+  // retries the conflict error names the item and both revisions — the one the
+  // caller read at and the one the service is now at — so the failure is
+  // actionable rather than opaque.
+  const { transport, calls } = alwaysConflictService(5, 99);
   await assert.rejects(
-    () => new AdoClient(CONFIG, loser.transport).updateWorkItem(5, 7, { "System.State": "Closed" }),
-    (error: unknown) => error instanceof CommandError && error.exitCode === EXIT_CODE.conflict,
+    () => new AdoClient(CONFIG, transport).updateWorkItem(5, 7, { "System.State": "Active" }, 1),
+    (error: unknown) => {
+      assert.ok(error instanceof CommandError);
+      assert.equal(error.exitCode, EXIT_CODE.conflict);
+      assert.match(error.message, /5/u); // item id
+      assert.match(error.message, /asserted rev 7/u); // original asserted revision
+      assert.match(error.message, /current rev is 99/u); // current revision
+      return true;
+    },
   );
-  // The loser sent exactly one request and mutated nothing.
-  assert.equal(loser.calls.length, 1);
+  // Two PATCH attempts (original + one retry) and two re-reads (one per
+  // conflict, including the final one for the error message).
+  assert.equal(calls.filter((c) => c.method === "PATCH").length, 2);
+  assert.equal(calls.filter((c) => c.url.includes("workitemsbatch")).length, 2);
+});
+
+test("a conflict where the item cannot be re-read surfaces the original revision", async () => {
+  // If the work item was deleted between the read and the write, the re-read
+  // returns nothing. The conflict error must still surface the item id and
+  // the asserted revision, and note that the item could not be re-read.
+  const { transport } = recordingTransport([
+    { status: 412, body: "" }, // PATCH → 412 (conflict)
+    { status: 200, body: JSON.stringify({}) }, // re-read → no items (deleted)
+  ]);
+  await assert.rejects(
+    () => new AdoClient(CONFIG, transport).updateWorkItem(5, 7, { "System.State": "Active" }, 0),
+    (error: unknown) => {
+      assert.ok(error instanceof CommandError);
+      assert.equal(error.exitCode, EXIT_CODE.conflict);
+      assert.match(error.message, /5/u);
+      assert.match(error.message, /rev 7/u);
+      assert.match(error.message, /could not be re-read/u);
+      return true;
+    },
+  );
+});
+
+test("a transport error during a retry re-read is surfaced, not masked as a conflict", async () => {
+  // If the re-read itself fails with a transport error (not a 412), that error
+  // propagates directly rather than being swallowed or misclassified as a
+  // conflict. The caller sees the real failure: the service is unreachable.
+  const { transport } = recordingTransport([
+    { status: 412, body: "" }, // PATCH → 412 (conflict)
+    { status: 503, body: "" }, // re-read → 503 (transport error)
+  ]);
+  await assert.rejects(
+    () => new AdoClient(CONFIG, transport).updateWorkItem(5, 7, { "System.State": "Active" }, 0),
+    (error: unknown) => error instanceof CommandError && error.exitCode === EXIT_CODE.remote && /503/u.test(error.message),
+  );
+});
+
+test("a non-conflict write error is not retried as a conflict", async () => {
+  // A 503 on the PATCH is a transport error, not a revision race. It must
+  // propagate directly without entering the retry loop, so the caller sees a
+  // remote failure rather than a spurious conflict.
+  const { transport, calls } = recordingTransport([{ status: 503, body: "" }]);
+  await assert.rejects(
+    () => new AdoClient(CONFIG, transport).updateWorkItem(5, 7, { "System.State": "Active" }),
+    (error: unknown) => error instanceof CommandError && error.exitCode === EXIT_CODE.remote && /503/u.test(error.message),
+  );
+  // Only the failed PATCH — no re-read, no retry.
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.method, "PATCH");
+});
+
+test("a thrown transport error (not a CommandError) is propagated without retry", async () => {
+  // If the transport itself throws (a network failure before any HTTP
+  // response), the error is not a CommandError. It must propagate directly
+  // rather than being caught and misclassified.
+  const transport: AdoTransport = async () => {
+    throw new Error("network down");
+  };
+  await assert.rejects(
+    () => new AdoClient(CONFIG, transport).updateWorkItem(5, 7, { "System.State": "Active" }),
+    (error: unknown) => error instanceof Error && !(error instanceof CommandError) && /network down/u.test(error.message),
+  );
+});
+
+test("a negative maxRetries is rejected without attempting a write", async () => {
+  // A negative maxRetries means the loop never executes — no PATCH is sent.
+  // The error is a caller-side usage failure, not a service conflict.
+  const { transport, calls } = recordingTransport([{ status: 200, body: "{}" }]);
+  await assert.rejects(
+    () => new AdoClient(CONFIG, transport).updateWorkItem(5, 7, { "System.State": "Active" }, -1),
+    (error: unknown) => error instanceof CommandError && error.exitCode === EXIT_CODE.usage && /negative/u.test(error.message),
+  );
+  assert.equal(calls.length, 0, "no request may be sent when maxRetries is negative");
 });
 
 test("a project read costs one batch call per two hundred items, not one per item", async () => {
@@ -127,6 +308,28 @@ test("a project read costs one batch call per two hundred items, not one per ite
   assert.equal(calls.length, 3);
   assert.equal(items.length, 3);
   assert.ok(calls.every((call) => call.url.includes("/_apis/wit/workitemsbatch")));
+  // Each batch request uses errorPolicy: "omit" so a missing item does not
+  // fail the whole batch.
+  for (const call of calls) {
+    const body = JSON.parse(call.body!) as { errorPolicy?: string };
+    assert.equal(body.errorPolicy, "omit");
+  }
+});
+
+test("a partial batch failure surfaces missing items per sub-request rather than failing the whole sync", async () => {
+  // The batch returns 200 with only some of the requested items — the others
+  // were not found. Because errorPolicy is "omit" the service does not fail the
+  // batch call; the missing ids are surfaced per sub-request instead.
+  const { transport, calls } = recordingTransport([
+    { status: 200, body: JSON.stringify({ value: [{ id: 1, rev: 1, fields: {} }, { id: 3, rev: 1, fields: {} }] }) },
+  ]);
+  const result = await new AdoClient(CONFIG, transport).getWorkItemsReport([1, 2, 3, 4]);
+  assert.equal(result.items.length, 2);
+  assert.deepEqual(result.missing, [2, 4]);
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0]!.url.includes("workitemsbatch"));
+  const body = JSON.parse(calls[0]!.body!) as { errorPolicy?: string };
+  assert.equal(body.errorPolicy, "omit");
 });
 
 test("a batch response without a value array contributes nothing rather than throwing", async () => {

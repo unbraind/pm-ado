@@ -2,12 +2,13 @@ id: pm-ado-8ioi
 title: Certify the CLI and SDK on PM 2026.9.7
 description: "Upgrade the development CLI and SDK to published 2026.9.7 and pm-changelog to published 2026.9.6. Re-run real package quality and acceptance gates against the exact installed dependencies, preserving the manifest compatibility floor unless runtime behavior requires a higher minimum. Companion tracking: pm-cli-companion item pm-cli-website-6yiv."
 type: Chore
-status: in_progress
+status: closed
 priority: 2
 tags[3]: cli,compatibility,sdk
 created_at: "2026-09-07T20:33:29.771Z"
-updated_at: "2026-09-07T21:03:07.390Z"
-assignee: codex-pm-ecosystem
+updated_at: "2026-09-12T20:49:06.008Z"
+closed_at: "2026-09-12T20:49:05.903Z"
+completed_at: "2026-09-12T20:49:05.903Z"
 claim_principal: codex-pm-ecosystem
 author: codex-pm-ecosystem
 acceptance_criteria: Exact installed dependency versions are verified; package checks and real CLI acceptance pass without weakened gates; independent coverage and privacy limitations remain explicit
@@ -20,4 +21,5 @@ tests[1]{command,scope,timeout_seconds,provenance{author,created_at,source_kind,
   "npm run release:check",project,1200,codex-pm-ecosystem,"2026-09-07T20:33:32.478Z",local_mutation,chore/certify-pm-cli-2026-9-7
 docs[1]{path,scope,note}:
   "https://github.com/unbraind/pm-cli/releases/tag/v2026.9.7",project,Published CLI and SDK release
+close_reason: "Superseded by pm-ado-g5y6. The repository moved past 2026.9.7 to pm CLI 2026.9.10 before this item was closed, and pm-ado-g5y6 now certifies 2026.9.12, where release:check passes. Nothing this item tracked remains open."
 body: ""

@@ -6,8 +6,10 @@ status: open
 priority: 2
 tags[2]: "area:integrations","type:new-package"
 created_at: "2026-09-02T18:06:04.650Z"
-updated_at: "2026-09-02T18:06:04.650Z"
+updated_at: "2026-09-12T23:06:34.075Z"
 author: "harness:claude-code"
 acceptance_criteria: "Every remote write carries a revision assertion, proven by a test that interleaves two writers and asserts the loser fails; work item revisions reconcile with pm item history; typed relations round-trip to pm parent and dependency kinds; a full project sync uses the batch endpoint and its request count is asserted; the credential preflight aborts before any store read or network call; coverage is 100 across statements, branches, functions and lines and the docstring gate passes"
 risk: medium
+comments[1]{created_at,author,text}:
+  "2026-09-12T23:06:34.075Z",pi-agent,"Audit 2026-09-13: EXISTS — revision assertions on every write (pm-ado-8zx9 closed; buildUpdatePatch leads with test /rev, assertsRevision guard in AdoClient); batch endpoint for project sync (pm-ado-ntkc closed; BATCH_LIMIT=200, batchIds); credential preflight aborts before network (shouldFailFast, runCredentialPreflight); 130 tests pass. REMAINS — work item revisions do not reconcile with pm item history (no revisions-endpoint reading or history reconciliation code); typed relations round-trip is half done (pm-ado-1zuu still open: ADO-to-pm mapping only, no reverse write, no cycle refusal). The epic cannot close until pm-ado-1zuu and the revisions-to-history reconciliation are done."
 body: ""

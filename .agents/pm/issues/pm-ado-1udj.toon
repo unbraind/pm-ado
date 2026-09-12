@@ -2,15 +2,20 @@ id: pm-ado-1udj
 title: Consume the canonical pm-ops attestation gate rather than carrying a twentieth vendored copy
 description: "This package was scaffolded from the fleet starter, which still carries the publish-attestation gate as vendored source: scripts/shell-command-scan.ts and scripts/verify-release-publish-attestation.ts are copies, not launchers. Nineteen repositories already carry nineteen divergent versions of exactly these files, and the fleet is converging them onto canonical exports published by pm-ops so a bypass fixed once is fixed everywhere.\n\nScaffolding a new package from the starter therefore creates a twentieth copy the moment it is created. It must join the same convergence wave rather than be treated as a special case, and it cannot converge until pm-ops publishes the exports: the released pm-ops 2026.8.31 exports only the package root, docstrings and assurance, while shell-scan and attestation exist on an unmerged branch.\n\nThe docstring gate is already the shape to copy, since scripts/docstring-gate.ts is a thin launcher over the canonical pm-ops docstrings export."
 type: Issue
-status: open
+status: closed
 priority: 1
 tags[3]: "area:gates","area:supply-chain",de-vendor
 created_at: "2026-09-02T18:06:25.457Z"
-updated_at: "2026-09-02T18:06:25.892Z"
+updated_at: "2026-09-12T23:06:20.452Z"
+closed_at: "2026-09-12T23:06:20.435Z"
+completed_at: "2026-09-12T23:06:20.435Z"
 author: "harness:claude-code"
 acceptance_criteria: "Both scripts are thin launchers over the published pm-ops exports rather than copies; a test fails if the gate is a local copy rather than the resolved package export, so a later hand edit cannot re-fork the lineage"
 risk: high
-blocked_by: pm-ops must publish the shell-scan and attestation exports first
+resolution: The canonical pm-ops attestation export is published and consumed; the scanner is deleted and the verifier is a launcher with a lineage-guard test.
+expected_result: Both scripts are thin launchers over the published pm-ops exports; a test fails if the gate is re-forked to a local copy.
+actual_result: shell-command-scan.ts deleted; verify-release-publish-attestation.ts imports pm-ops/attestation; lineage-guard test passes asserting no local copy and reference-identity re-exports.
 docs[1]{path,scope,note}:
   "https://github.com/unbraind/pm-ops/pull/81",project,canonical exports plus the closed fail-opens
+close_reason: "Acceptance criteria met in current main. scripts/shell-command-scan.ts is deleted (no local scanner); scripts/verify-release-publish-attestation.ts is a thin launcher importing from pm-ops/attestation (package.json pm-ops ^2026.9.11). The blocker pm-ops PR #81 is merged (2026-09-02). Test 'the gate is the resolved package export, not a local copy' (test/verify-release-publish-attestation.test.ts) asserts no local shell-command-scan.ts exists, the launcher imports pm-ops/attestation, does not import ./shell-command-scan, and re-exports verify and auditPublishAttestation BY REFERENCE (launcherVerify === verify). All 8 attestation tests pass. Work was tracked and closed under pm-ado-ky8s."
 body: ""

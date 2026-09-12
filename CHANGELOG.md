@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Consume the canonical pm-ops attestation gate rather than carrying a twentieth vendored copy ([pm-ado-1udj](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-1udj.toon))
 - Require the existing CI matrix at the main merge boundary ([pm-ado-hawk](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-hawk.toon))
 - This package claims to be publishable while its release is gated and npm answers 404, which would render an install button that cannot work ([pm-ado-tg1f](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-tg1f.toon))
 - Fix polynomial-redos in readConfig trailing-slash regex (CodeQL alert \#1) ([pm-ado-mih0](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-mih0.toon))
@@ -20,6 +21,7 @@
 
 ### Other
 
+- Track the automated daily release for pm-ado ([pm-ado-glif](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-glif.toon))
 - Certify pm CLI 2026.9.12 and the pm-ops 2026.9.11 auditor ([pm-ado-g5y6](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-g5y6.toon))
 - Certify pm CLI 2026.9.10 and pick up the canonical auditor fixes the lockfile was holding back ([pm-ado-88lm](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-88lm.toon))
 - Scaffold the package with the fleet's mandatory gates and its own pm tracker ([pm-ado-o0ik](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-o0ik.toon))

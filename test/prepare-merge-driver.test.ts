@@ -1,17 +1,28 @@
-/** Tests the thin `prepare` launcher over the canonical `pm-ops/merge-driver`. */
-
+/**
+ * Tests for the npm `prepare` hook. `scripts/prepare-merge-driver.ts` must be the
+ * canonical pm-ops launcher byte for byte: pm-ops exercises every branch of that
+ * template against real fixtures (omit-dev skip, stale pm-ops, failing and killed
+ * installers), so any local edit here would ship behaviour nothing has tested.
+ * Running it in this checkout must then register pm's field-aware merge drivers.
+ */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 
-// Importing the launcher executes it: the `prepare` hook is a two-line
-// delegation to `runPrepareMergeDriver`, so loading this module IS running the
-// hook. Absence of `pm` on `PATH` is a supported production-install state that
-// the canonical installer turns into exit code 0, and a present `pm` that
-// installs the drivers cleanly also returns 0 - so in every supported
-// environment the import leaves `process.exitCode` at 0, and only a genuinely
-// broken CLI (a failed `pm merge install`) fails the test loudly.
-import "../scripts/prepare-merge-driver.ts";
+// npm runs tests from the package root, which is also where it runs `prepare`.
+const root = process.cwd();
+const launcher = join(root, "scripts", "prepare-merge-driver.ts");
 
-test("the prepare launcher delegates to the canonical pm-ops merge-driver export", () => {
-  assert.strictEqual(process.exitCode, 0);
+test("the prepare launcher is the unmodified pm-ops template", () => {
+  const canonical = readFileSync(join(root, "node_modules", "pm-ops", "templates", "prepare-merge-driver.ts"), "utf8");
+  assert.equal(readFileSync(launcher, "utf8"), canonical);
+});
+
+test("the prepare launcher registers pm's merge drivers in this checkout", () => {
+  const run = spawnSync(process.execPath, [launcher], { cwd: root, encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+  const drivers = spawnSync("git", ["config", "--get-regexp", "^merge\\.pm"], { cwd: root, encoding: "utf8" });
+  assert.match(drivers.stdout, /^merge\.pm/m);
 });

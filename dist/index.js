@@ -99,29 +99,40 @@ export function batchIds(ids) {
     return batches;
 }
 /**
- * Read the work item id out of a relation's REST URL.
+ * Read a same-organization work item id out of a relation's REST URL.
  *
- * Azure DevOps identifies a relation target by URL rather than by id, so the id
- * has to be recovered from the final path segment. A URL whose last segment is
- * not a positive integer is not a work item link (an attachment or an external
- * hyperlink, say) and yields `undefined` rather than `NaN`.
+ * A numeric final segment alone is unsafe: an attachment or a foreign
+ * organization's work item can use the same number as a local item. An
+ * imprecise JavaScript number can also point at a different item. Only the
+ * canonical work-item route under the configured organization is accepted.
  *
  * @param url - The relation's `url` field.
- * @returns The target work item id, or `undefined` when the URL names no item.
+ * @param orgUrl - The configured Azure DevOps organization URL.
+ * @returns The safe local work item id, or `undefined` for any other target.
  */
-export function relationTargetId(url) {
-    // `lastIndexOf` rather than `split`, because `split(...).pop()` is typed as
-    // possibly-undefined for a case that cannot happen, and guarding it would add
-    // a branch no test can reach. Both outcomes here ARE reachable: a URL with no
-    // separator is just its own final segment.
-    //
-    // The scan is deliberately not part of the pattern. Searching for the segment
-    // with an unanchored expression made this quadratic on a run of separators -
-    // CodeQL flagged exactly that. Anchoring the test to an already-extracted
-    // segment leaves nothing to backtrack over.
-    const separator = url.lastIndexOf("/");
-    const segment = separator === -1 ? url : url.slice(separator + 1);
-    return /^[1-9][0-9]*$/u.test(segment) ? Number(segment) : undefined;
+export function relationTargetId(url, orgUrl) {
+    try {
+        const organization = new URL(orgUrl);
+        const target = new URL(url);
+        const prefix = `${stripTrailingSlashes(organization.pathname)}/_apis/wit/workItems/`;
+        if (target.origin !== organization.origin ||
+            target.username !== "" ||
+            target.password !== "" ||
+            target.search !== "" ||
+            target.hash !== "" ||
+            !target.pathname.startsWith(prefix))
+            return undefined;
+        const segment = target.pathname.slice(prefix.length);
+        // Testing only the extracted segment avoids the unanchored pattern that
+        // previously made long separator runs expensive.
+        if (!/^[1-9][0-9]*$/u.test(segment))
+            return undefined;
+        const id = Number(segment);
+        return Number.isSafeInteger(id) ? id : undefined;
+    }
+    catch {
+        return undefined;
+    }
 }
 /**
  * Build the JSON Patch document for an update, led by a revision assertion.
@@ -393,14 +404,15 @@ export class AdoClient {
  * and silently discarding it would make an import look complete when it is not.
  *
  * @param item - The work item whose relations to translate.
+ * @param orgUrl - The organization whose work item identities may be mapped.
  * @returns The recognised links, and the relation names that were not mapped.
  */
-export function mapRelations(item) {
+export function mapRelations(item, orgUrl) {
     const links = [];
     const unmapped = [];
     for (const relation of item.relations ?? []) {
         const kind = RELATION_MAP[relation.rel];
-        const targetId = relationTargetId(relation.url);
+        const targetId = relationTargetId(relation.url, orgUrl);
         if (kind === undefined || targetId === undefined) {
             unmapped.push(relation.rel);
             continue;

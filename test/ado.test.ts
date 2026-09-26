@@ -379,7 +379,7 @@ test("typed relations map to pm kinds, and an unmapped edge is reported not drop
       { rel: "System.LinkTypes.Related", url: "https://x/_apis/wit/workItems/not-an-id" },
     ],
   };
-  const { links, unmapped } = mapRelations(item);
+  const { links, unmapped } = mapRelations(item, "https://x");
   assert.deepEqual(links, [
     { kind: "parent", targetId: 12 },
     { kind: "related", targetId: 34 },
@@ -388,25 +388,43 @@ test("typed relations map to pm kinds, and an unmapped edge is reported not drop
   // import cannot look complete while silently discarding edges.
   assert.deepEqual(unmapped, ["AttachedFile", "System.LinkTypes.Related"]);
 
-  assert.deepEqual(mapRelations({ id: 2, rev: 1, fields: {} }), { links: [], unmapped: [] });
+  assert.deepEqual(mapRelations({ id: 2, rev: 1, fields: {} }, "https://x"), { links: [], unmapped: [] });
   // Hierarchy-Reverse is the PARENT end; getting this backwards inverts a tree.
   assert.equal(RELATION_MAP["System.LinkTypes.Hierarchy-Reverse"], "parent");
   assert.equal(STATE_MAP.in_progress, "Active");
 });
 
-test("relationTargetId accepts only a positive integer final segment", () => {
-  // A URL with no separator is its own final segment - both branches of the
-  // lookup are reachable, which is why this does not need a guard for a case
-  // that cannot happen.
-  assert.equal(relationTargetId("42"), 42);
-  // Extracting the segment before testing it keeps the pattern anchored. An
-  // unanchored search for the segment was quadratic on a run of separators.
-  assert.equal(relationTargetId("/".repeat(64) + "7"), 7);
-  assert.equal(relationTargetId("/".repeat(64)), undefined);
-  assert.equal(relationTargetId("https://x/_apis/wit/workItems/7"), 7);
-  assert.equal(relationTargetId("https://x/_apis/wit/workItems/0"), undefined);
-  assert.equal(relationTargetId("https://x/_apis/wit/workItems/-3"), undefined);
-  assert.equal(relationTargetId(""), undefined);
+test("relation targets must identify a safe work item in the configured organization", () => {
+  const org = "https://dev.azure.com/contoso";
+  assert.equal(relationTargetId("https://dev.azure.com/contoso/_apis/wit/workItems/7", org), 7);
+  assert.equal(relationTargetId("https://dev.azure.com/contoso/_apis/wit/workItems/9007199254740991", org), Number.MAX_SAFE_INTEGER);
+  for (const url of [
+    "7",
+    "",
+    "https://dev.azure.com/other/_apis/wit/workItems/7",
+    "https://evil.example/contoso/_apis/wit/workItems/7",
+    "https://dev.azure.com/contoso/_apis/wit/attachments/7",
+    "https://dev.azure.com/contoso/_apis/wit/workItems/9007199254740993",
+    "https://dev.azure.com/contoso/_apis/wit/workItems/0",
+    "https://dev.azure.com/contoso/_apis/wit/workItems/-3",
+    "https://dev.azure.com/contoso/_apis/wit/workItems/7?api-version=7.1",
+    "https://dev.azure.com/contoso/_apis/wit/workItems/7#other",
+    "https://user:secret@dev.azure.com/contoso/_apis/wit/workItems/7",
+  ]) assert.equal(relationTargetId(url, org), undefined, url);
+  const mapped = mapRelations({
+    id: 1,
+    rev: 1,
+    fields: {},
+    relations: [
+      { rel: "System.LinkTypes.Related", url: "https://dev.azure.com/other/_apis/wit/workItems/7" },
+      { rel: "System.LinkTypes.Related", url: "https://dev.azure.com/contoso/_apis/wit/workItems/9007199254740993" },
+      { rel: "System.LinkTypes.Related", url: "https://dev.azure.com/contoso/_apis/wit/workItems/8" },
+    ],
+  }, org);
+  assert.deepEqual(mapped, {
+    links: [{ kind: "related", targetId: 8 }],
+    unmapped: ["System.LinkTypes.Related", "System.LinkTypes.Related"],
+  });
 });
 
 test("configuration is read whole or not at all, and the org URL is normalised", () => {

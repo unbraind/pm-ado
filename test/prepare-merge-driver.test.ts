@@ -33,9 +33,9 @@ const declaredDrivers = [
  * Create a consumer checkout: a fresh Git repository carrying this
  * repository's `.gitattributes` and tracker settings. `pmOps` selects what
  * `node_modules/pm-ops` is: absent (an omit-dev install), the pinned package,
- * or a stale pm-ops whose exports predate the launcher entry.
+ * a broken directory, or a stale pm-ops whose exports predate the launcher entry.
  */
-function checkout(name: string, pmOps: "absent" | "pinned" | "stale"): string {
+function checkout(name: string, pmOps: "absent" | "pinned" | "broken" | "stale"): string {
   const directory = join(scratch, name);
   mkdirSync(join(directory, ".agents", "pm"), { recursive: true });
   assert.equal(spawnSync("git", ["init", "-q"], { cwd: directory }).status, 0);
@@ -53,6 +53,7 @@ function checkout(name: string, pmOps: "absent" | "pinned" | "stale"): string {
       JSON.stringify({ name: "pm-ops", type: "module", exports: { "./merge-driver": "./merge-driver.js" } }),
     );
   }
+  if (pmOps === "broken") mkdirSync(join(directory, "node_modules", "pm-ops"), { recursive: true });
   return directory;
 }
 
@@ -100,6 +101,14 @@ test("an omit-dev checkout without pm-ops skips with one notice and registers no
   const result = prepare(directory, hostPath);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stderr, "pm-ops is not installed (omit-dev install); skipping merge-driver install\n");
+  assert.deepEqual(registeredDrivers(directory), []);
+});
+
+test("an incomplete pm-ops directory fails instead of skipping merge drivers", posixOnly, () => {
+  const directory = checkout("broken", "broken");
+  const result = prepare(directory, hostPath);
+  assert.notEqual(result.status, 0);
+  assert.doesNotMatch(result.stderr, /skipping merge-driver install/u);
   assert.deepEqual(registeredDrivers(directory), []);
 });
 

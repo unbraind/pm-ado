@@ -105,17 +105,18 @@ export declare const BATCH_LIMIT = 200;
  */
 export declare function batchIds(ids: readonly number[]): number[][];
 /**
- * Read the work item id out of a relation's REST URL.
+ * Read a same-organization work item id out of a relation's REST URL.
  *
- * Azure DevOps identifies a relation target by URL rather than by id, so the id
- * has to be recovered from the final path segment. A URL whose last segment is
- * not a positive integer is not a work item link (an attachment or an external
- * hyperlink, say) and yields `undefined` rather than `NaN`.
+ * A numeric final segment alone is unsafe: an attachment or a foreign
+ * organization's work item can use the same number as a local item. An
+ * imprecise JavaScript number can also point at a different item. Only the
+ * canonical work-item route under the configured organization is accepted.
  *
  * @param url - The relation's `url` field.
- * @returns The target work item id, or `undefined` when the URL names no item.
+ * @param orgUrl - The configured Azure DevOps organization URL.
+ * @returns The safe local work item id, or `undefined` for any other target.
  */
-export declare function relationTargetId(url: string): number | undefined;
+export declare function relationTargetId(url: string, orgUrl: string): number | undefined;
 /**
  * Build the JSON Patch document for an update, led by a revision assertion.
  *
@@ -299,9 +300,10 @@ export declare class AdoClient {
  * and silently discarding it would make an import look complete when it is not.
  *
  * @param item - The work item whose relations to translate.
+ * @param orgUrl - The organization whose work item identities may be mapped.
  * @returns The recognised links, and the relation names that were not mapped.
  */
-export declare function mapRelations(item: AdoWorkItem): {
+export declare function mapRelations(item: AdoWorkItem, orgUrl: string): {
     links: {
         kind: string;
         targetId: number;

@@ -409,6 +409,7 @@ test("relation targets must identify a safe work item in the configured organiza
     "https://dev.azure.com/contoso/_apis/wit/workItems/-3",
     "https://dev.azure.com/contoso/_apis/wit/workItems/7?api-version=7.1",
     "https://dev.azure.com/contoso/_apis/wit/workItems/7#other",
+    "https://user:secret@dev.azure.com/contoso/_apis/wit/workItems/7",
   ]) assert.equal(relationTargetId(url, org), undefined, url);
   const mapped = mapRelations({
     id: 1,

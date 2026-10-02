@@ -415,6 +415,9 @@ test("relation targets must identify a safe work item in the configured organiza
     "https://dev.azure.com/contoso/_apis/wit/workItems/7#",
     "https://dev.azure.com/contoso/_apis/wit/workItems/7?#",
     "https://user:secret@dev.azure.com/contoso/_apis/wit/workItems/7",
+    "https:///dev.azure.com/contoso/_apis/wit/workItems/7",
+    "https://dev.azure.com/other/../contoso/_apis/wit/workItems/7",
+    "https://dev.azure.com/other/%2e%2e/contoso/_apis/wit/workItems/7",
   ]) assert.equal(relationTargetId(url, org), undefined, url);
   const omittedTargetOrg = relationTargetId as (url: string, orgUrl?: string) => number | undefined;
   assert.throws(() => omittedTargetOrg("https://dev.azure.com/contoso/_apis/wit/workItems/7"), {

@@ -167,7 +167,9 @@ export function batchIds(ids: readonly number[]): number[][] {
  * imprecise JavaScript number can also point at a different item. Only the
  * canonical work-item route under the configured organization is accepted.
  * A query or fragment, including a bare `?` or `#` that WHATWG parsing stores
- * as an empty `search` or `hash`, is not that canonical route.
+ * as an empty `search` or `hash`, is not that canonical route. The raw URL
+ * must also equal its serialization, rejecting parser-normalized authority
+ * syntax and dot segments before they can be treated as canonical links.
  *
  * This argument is required. Callers of the published 2026.9.2 one-argument
  * form must pass `orgUrl`; omitting it throws rather than restoring unscoped
@@ -187,6 +189,7 @@ export function relationTargetId(url: string, orgUrl: string): number | undefine
     const target = new URL(url);
     const prefix = `${stripTrailingSlashes(organization.pathname)}/_apis/wit/workItems/`;
     if (
+      url !== target.href ||
       url.includes("?") ||
       url.includes("#") ||
       target.origin !== organization.origin ||

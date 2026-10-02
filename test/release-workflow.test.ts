@@ -475,3 +475,12 @@ test("publication is proven possible before anything is mutated", () => {
   assert.doesNotMatch(step, /-o\s+\/tmp\/[^\s"]+/);
   assert.match(step, /-o "\$\{response\}"/);
 });
+
+test("changelog generation records breaking API changes before publish", () => {
+  const pkg = readFileSync(resolve(import.meta.dirname, "../package.json"), "utf-8");
+  const invocations = [...pkg.matchAll(/pm-changelog --[^"\n]+/g), ...workflow.matchAll(/npx pm-changelog --[^\n]+/g)];
+  assert.ok(invocations.length >= 7, "package scripts and the release workflow both generate the changelog");
+  for (const invocation of invocations) {
+    assert.match(invocation[0], /--breaking-changes/, invocation[0]);
+  }
+});

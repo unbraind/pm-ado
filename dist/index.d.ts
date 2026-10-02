@@ -111,10 +111,17 @@ export declare function batchIds(ids: readonly number[]): number[][];
  * organization's work item can use the same number as a local item. An
  * imprecise JavaScript number can also point at a different item. Only the
  * canonical work-item route under the configured organization is accepted.
+ * A query or fragment, including a bare `?` or `#` that WHATWG parsing stores
+ * as an empty `search` or `hash`, is not that canonical route.
+ *
+ * This argument is required. Callers of the published 2026.9.2 one-argument
+ * form must pass `orgUrl`; omitting it throws rather than restoring unscoped
+ * numeric-suffix mapping.
  *
  * @param url - The relation's `url` field.
- * @param orgUrl - The configured Azure DevOps organization URL.
+ * @param orgUrl - The configured Azure DevOps organization URL. Required.
  * @returns The safe local work item id, or `undefined` for any other target.
+ * @throws {TypeError} When `orgUrl` is omitted or not a string.
  */
 export declare function relationTargetId(url: string, orgUrl: string): number | undefined;
 /**
@@ -301,7 +308,10 @@ export declare class AdoClient {
  *
  * @param item - The work item whose relations to translate.
  * @param orgUrl - The organization whose work item identities may be mapped.
+ *   Required. Callers of the published 2026.9.2 one-argument form must pass it;
+ *   omitting it throws instead of treating every relation as unmapped.
  * @returns The recognised links, and the relation names that were not mapped.
+ * @throws {TypeError} When `orgUrl` is omitted or not a string.
  */
 export declare function mapRelations(item: AdoWorkItem, orgUrl: string): {
     links: {

@@ -409,8 +409,18 @@ test("relation targets must identify a safe work item in the configured organiza
     "https://dev.azure.com/contoso/_apis/wit/workItems/-3",
     "https://dev.azure.com/contoso/_apis/wit/workItems/7?api-version=7.1",
     "https://dev.azure.com/contoso/_apis/wit/workItems/7#other",
+    // WHATWG parsing leaves search and hash empty for a bare delimiter, so
+    // the raw URL has to be rejected or these would map as local links.
+    "https://dev.azure.com/contoso/_apis/wit/workItems/7?",
+    "https://dev.azure.com/contoso/_apis/wit/workItems/7#",
+    "https://dev.azure.com/contoso/_apis/wit/workItems/7?#",
     "https://user:secret@dev.azure.com/contoso/_apis/wit/workItems/7",
   ]) assert.equal(relationTargetId(url, org), undefined, url);
+  const omittedTargetOrg = relationTargetId as (url: string, orgUrl?: string) => number | undefined;
+  assert.throws(() => omittedTargetOrg("https://dev.azure.com/contoso/_apis/wit/workItems/7"), {
+    name: "TypeError",
+    message: "relationTargetId requires orgUrl",
+  });
   const mapped = mapRelations({
     id: 1,
     rev: 1,
@@ -424,6 +434,18 @@ test("relation targets must identify a safe work item in the configured organiza
   assert.deepEqual(mapped, {
     links: [{ kind: "related", targetId: 8 }],
     unmapped: ["System.LinkTypes.Related", "System.LinkTypes.Related"],
+  });
+  // A JavaScript caller can omit the new required argument. That must fail
+  // explicitly instead of parking every valid relation in unmapped.
+  const omittedOrg = mapRelations as (item: AdoWorkItem, orgUrl?: string) => ReturnType<typeof mapRelations>;
+  assert.throws(() => omittedOrg({
+    id: 1,
+    rev: 1,
+    fields: {},
+    relations: [{ rel: "System.LinkTypes.Related", url: "https://dev.azure.com/contoso/_apis/wit/workItems/8" }],
+  }), {
+    name: "TypeError",
+    message: "mapRelations requires orgUrl",
   });
 });
 

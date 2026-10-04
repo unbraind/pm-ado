@@ -123,6 +123,21 @@ test("a failing pm merge install fails the install with the same status", posixO
   assert.equal(result.status, 7, result.stderr);
 });
 
+test("an invalid global lookup path preserves the installer failure", () => {
+  const directory = checkout("invalid-global-path", "absent");
+  const lookupFile = join(scratch, "lookup-file");
+  writeFileSync(lookupFile, "This is a file, not a module search directory.");
+  const result = spawnSync(process.execPath, [launcher], {
+    cwd: directory,
+    encoding: "utf8",
+    env: { ...process.env, PATH: hostPath, NODE_PATH: lookupFile },
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /MODULE_NOT_FOUND/);
+  assert.doesNotMatch(result.stderr, /skipping merge-driver install/);
+  assert.deepEqual(registeredDrivers(directory), []);
+});
+
 test("an installer killed by a signal fails the install instead of reporting success", posixOnly, () => {
   // The stub's parent is the pm-ops installer process the launcher spawned.
   const result = prepare(checkout("killed", "pinned"), stubPm("killed", 0, "kill -9 $PPID"));

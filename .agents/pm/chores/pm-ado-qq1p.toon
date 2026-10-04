@@ -6,21 +6,40 @@ status: in_progress
 priority: 1
 tags[4]: certification,cli,release,sdk
 created_at: "2026-10-04T11:50:11.236Z"
-updated_at: "2026-10-04T11:57:57.194Z"
+updated_at: "2026-10-04T12:11:57.528Z"
 author: codex-sol
 actual_result: "CLI/SDK, pm-ops and pm-changelog exact 2026.10.4; Node types 26.6.4, TypeScript 7.0.2. Full locked release:check PASS: 123/123 tests, zero skipped, 100% measured lines/branches/functions across 4 sources; docstrings, production audit, pack, changelog, attestation and version-date checks pass. Both full and production audit clean; alerts [] and no open Dependabot PRs. Canonical launcher real filesystem regression failed old template then passed published template 8/8; linked pm test launcher also 8/8. CI bun install --no-save PASS. Packed real-tracker npm/native Bun offline ado validate PASS: identical missing-three-input and synthetic-config diagnostics, token redacted, batch limit 200, revision-asserting writes flag true; scratch removed, no Azure calls. Strict PM health PASS with no warnings. Managed pm-github 2026.10.4 dry-run preview 0 synced/0 skipped/0 planned, zero linked items. Statement threshold remains unconsumed and independently unmeasured in pm-ado-5w3m; NOT READY for four-metric claim. Package stays unpublished at 2026.9.2; PM_RELEASE_APPROVED owner job guard unchanged. Final-head CI/reviews and live Azure capability acceptance remain separate."
-comments[3]{created_at,author,text}:
+comments[4]{created_at,author,text}:
   "2026-10-04T11:50:14.103Z",codex-sol,"Oriented real tracker and CI; no open Dependabot PRs or security alerts. Refresh CLI/SDK, pm-ops and pm-changelog exact published pins; preserve peer floor and PM_RELEASE_APPROVED release job guard. The only shipped command is offline ado validate; dogfood must not claim live Azure sync/import/export acceptance. Inspect ignored statement threshold and record its honest measured scope."
   "2026-10-04T11:52:54.738Z",codex-sol,"Test-first canonical launcher refresh: real invalid NODE_PATH file fixture fails old launcher (ENOTDIR replaces original MODULE_NOT_FOUND), then installed pm-ops 2026.10.4 template copied byte-for-byte makes launcher suite pass 8/8. No template edits or new skips. Independent statement threshold is declared but not consumed by the Node V8 gate; record a quality follow-up and report three measured dimensions honestly."
   "2026-10-04T11:57:56.517Z",codex-sol,"Local CI gates, clean audits, packed offline npm/Bun validation and strict health pass; statement enforcement remains a known pre-existing gap in pm-ado-5w3m. Evidence committed with code; release remains owner gated and no Azure writes or publishing. Releasing claim for orchestrator without closing; review final pushed head separately."
-files[7]{path,scope,note}:
-  .github/workflows/codeql.yml,project,Certification change
-  package-lock.json,project,Certification change
-  package.json,project,Certification change
-  README.md,project,Correct unsupported four-metric coverage claim
-  scripts/coverage-gate.ts,project,Clarify existing independently unmeasured statement threshold without changing gate
-  scripts/prepare-merge-driver.ts,project,Certification change
-  test/prepare-merge-driver.test.ts,project,Certification change
+  "2026-10-04T12:10:51.436Z",codex-sol,"Review round 1: generated installed pm-github distribution is clone-local and excluded from Git to keep consumer review focused on authored changes. Exact local managed install and zero-case dry-run command/receipt remain in certification docs. Owner publishing gate and statement-coverage follow-up remain unchanged. Initial Node 22/26 CI passed; final-head CI and substantive review receipts remain separate."
+files[9]:
+  - path: .github/workflows/codeql.yml
+    scope: project
+    note: Certification change
+  - path: .gitignore
+    scope: project
+  - path: docs/certification-2026.10.4.md
+    scope: project
+  - path: package-lock.json
+    scope: project
+    note: Certification change
+  - path: package.json
+    scope: project
+    note: Certification change
+  - path: README.md
+    scope: project
+    note: Correct unsupported four-metric coverage claim
+  - path: scripts/coverage-gate.ts
+    scope: project
+    note: Clarify existing independently unmeasured statement threshold without changing gate
+  - path: scripts/prepare-merge-driver.ts
+    scope: project
+    note: Certification change
+  - path: test/prepare-merge-driver.test.ts
+    scope: project
+    note: Certification change
 tests[2]{command,scope,timeout_seconds,pm_context_mode,workspace_context_mode,provenance{author,created_at,source_kind,source_ref},note}:
   "flock /tmp/claude-1000/heavy-gate.lock npm run release:check",project,2400,schema,source,codex-sol,"2026-10-04T11:53:58.147Z",local_mutation,chore/pm-ado-pm-cli-2026-10-4,Full unchanged current CI release gate; independent statement gap tracked separately
   node --test --test-concurrency=1 test/prepare-merge-driver.test.ts,project,120,schema,source,codex-sol,"2026-10-04T11:53:58.732Z",local_mutation,chore/pm-ado-pm-cli-2026-10-4,Real malformed global lookup fixture and byte-identity acceptance

@@ -79,3 +79,7 @@ Exact commands and observed outputs:
 ## Managed GitHub preview
 
 Installed managed `npm:pm-github@2026.10.4`; `pm github sync --repo unbraind/pm-ado --dry-run` reports no provenance-linked items and synced=0/skipped=0/planned=0. Zero-case preview evidence; no GitHub issue writes or scheduled sync. Final-head CI and substantive reviews remain separate from local evidence. The orchestrator owns merging and PM closure.
+
+## Review follow-up
+
+Managed extension payloads are clone-local installed distributions and are excluded from Git. Reproduce the read-only preview with `npx -y @unbrained/pm-cli@2026.10.4 package install npm:pm-github@2026.10.4 --project`, then `npx -y @unbrained/pm-cli@2026.10.4 github sync --repo unbraind/pm-ado --dry-run`. The installed version and zero-case receipt above remain the evidence; no write-path acceptance is claimed.

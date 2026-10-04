@@ -25,3 +25,6 @@ coverage/
 .agents/pm/checkpoints/
 !.agents/pm/search/eval-queries.json
 # pm-cli:runtime-cache:end
+
+# Managed extension distributions are installed locally; version and preview receipts live in docs.
+.agents/pm/extensions/

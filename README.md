@@ -31,9 +31,22 @@ Jira or Linear can express:
 | typed relations (`Parent`, `Child`, `Related`, `Duplicate`, `Predecessor`, `Successor`) | `parent` and dependency kinds | a real mapping rather than an ad hoc convention |
 | the work item batch endpoint (200 sub-requests per call) | — | a project sync costs a handful of round trips, not hundreds: directly an agent's latency and token budget |
 
+The relation mapper accepts only canonical work-item URLs from the configured
+organization with positive, exactly representable IDs. Foreign organizations,
+attachments, malformed URLs and imprecise IDs are reported as unmapped instead of
+being linked to a different local item. The same-organization URL check follows
+[Azure DevOps' work-item update and relation contract](https://learn.microsoft.com/en-us/rest/api/azure/devops/wit/work-items/update?view=azure-devops-rest-7.1).
+
 ## Status
 
-Early. The package is scaffolded, tracked with `pm` in this repository, and gated by
+Early. The package currently registers `pm ado validate`; it does not yet register
+`ado sync`, `ado import` or `ado export`. The client library has revision-checked
+updates, batch reads and a one-way relation mapper. Revision-to-history
+reconciliation, reverse relation writes and hierarchy-cycle refusal remain in the
+[package epic](.agents/pm/epics/pm-ado-g4v1.toon) and
+[relation feature](.agents/pm/features/pm-ado-1zuu.toon).
+
+This repository is tracked with `pm` and gated by
 the same mandatory quality gates as the rest of the fleet: 100% coverage across
 statements, branches, functions and lines, a 100% docstring gate, CodeQL, and a
 publish-attestation gate that refuses a release whose `npm publish` would run without

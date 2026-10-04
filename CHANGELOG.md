@@ -22,6 +22,7 @@
 
 ### Other
 
+- Auto-merge green Dependabot updates and group the pm toolchain into one daily PR ([pm-ado-14nn](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/tasks/pm-ado-14nn.toon))
 - Certify pm CLI 2026.9.23 and adopt the guarded pm-ops merge-driver launcher ([pm-ado-qvld](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-qvld.toon))
 - Certify pm CLI 2026.9.21 and install merge drivers through the canonical pm-ops launcher ([pm-ado-2woi](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/tasks/pm-ado-2woi.toon))
 - Certify pm CLI 2026.9.17 ([pm-ado-tzyo](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-tzyo.toon))

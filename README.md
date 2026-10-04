@@ -47,10 +47,12 @@ reconciliation, reverse relation writes and hierarchy-cycle refusal remain in th
 [relation feature](.agents/pm/features/pm-ado-1zuu.toon).
 
 This repository is tracked with `pm` and gated by
-the same mandatory quality gates as the rest of the fleet: 100% coverage across
-statements, branches, functions and lines, a 100% docstring gate, CodeQL, and a
+the same mandatory quality gates as the rest of the fleet: 100% measured Node V8
+lines, branches and functions, a 100% docstring gate, CodeQL, and a
 publish-attestation gate that refuses a release whose `npm publish` would run without
-`--provenance`.
+`--provenance`. The declared statement threshold still needs an independent
+metric and enforcement; [pm-ado-5w3m](.agents/pm/issues/pm-ado-5w3m.toon) tracks
+that gap. The current gate does not establish 100/100/100/100.
 
 Publishing to npm is **deliberately gated** behind `PM_RELEASE_APPROVED`, as it is for
 every new package in this fleet, until the repository is approved as carrying no

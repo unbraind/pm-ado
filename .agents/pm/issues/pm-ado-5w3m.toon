@@ -1,0 +1,14 @@
+id: pm-ado-5w3m
+title: Enforce the declared statement-coverage threshold instead of silently ignoring it
+description: "package.json coverageGate.thresholds.statements=100 and README claim four dimensions, but scripts/coverage-gate.ts only types/reads/passes Node thresholds for lines, branches and functions. No statement report or independent enforcement exists. Preserve the 100 threshold and add a real independently reported statement metric and meaningful failed-threshold fixture; do not equate executable-line coverage with measured statements. Certification pm-ado-qq1p records the current scope and cannot claim 100/100/100/100. This predates the SDK refresh."
+type: Issue
+status: open
+priority: 1
+tags[3]: coverage,quality-gate,release-blocker
+created_at: "2026-10-04T11:52:55.259Z"
+updated_at: "2026-10-04T11:54:42.253Z"
+author: codex-sol
+actual_result: "Static gate inspection on CLI/SDK 2026.10.4: configuration declares statements=100, but CoverageThresholds and all Node test flags cover only lines, branches and functions; LCOV parser reconciles source presence without reporting statement counters. README and gate comment corrected; threshold retained. Independent four-metric coverage remains NOT READY pending a genuine measurement/enforcement implementation."
+files[1]{path,scope,note}:
+  scripts/coverage-gate.ts,project,Declared statement threshold not consumed
+body: ""

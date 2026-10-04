@@ -1,0 +1,17 @@
+{
+  "name": "pm-github",
+  "version": "2026.10.4",
+  "description": "GitHub Issues + Projects v2 integration. Imports issues as pm items (`pm github import`), exports pm items as GitHub issues, syncs issue state, and bidirectionally syncs pm items with a GitHub Projects v2 board (`pm github project import/sync/list/fields`) — mapping pm status to the board Status column with idempotent, no-data-loss provenance.",
+  "author": "@unbraind",
+  "entry": "./dist/index.js",
+  "pm_min_version": "2026.8.20",
+  "priority": 50,
+  "capabilities": [
+    "commands",
+    "importers",
+    "schema",
+    "hooks",
+    "preflight",
+    "search"
+  ]
+}

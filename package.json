@@ -45,11 +45,11 @@
     "@unbrained/pm-cli": ">=2026.8.7"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
-    "@unbrained/pm-cli": "2026.9.26",
-    "pm-changelog": "2026.9.25",
-    "pm-ops": "2026.9.28",
-    "typescript": "^7.0.2"
+    "@types/node": "26.6.4",
+    "@unbrained/pm-cli": "2026.10.4",
+    "pm-changelog": "2026.10.4",
+    "pm-ops": "2026.10.4",
+    "typescript": "7.0.2"
   },
   "keywords": [
     "pm-cli",

@@ -42,8 +42,9 @@ import { fileURLToPath } from "node:url";
 /**
  * Minimum acceptable percentage for each coverage dimension Node reports.
  *
- * Statement coverage is not listed because V8 reports statements as lines; the
- * line figure is the statement figure for this runtime.
+ * Node V8 reports executable lines, branches and functions. The declared
+ * statement threshold has no independent measurement or enforcement here;
+ * pm-ado-5w3m tracks that gap. Lines are not an independent statement metric.
  */
 interface CoverageThresholds {
   /** Minimum percentage of executable lines that must be covered. */

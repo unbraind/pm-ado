@@ -1,4 +1,5 @@
 import type { ExtensionApi, PreflightOverrideContext } from "@unbrained/pm-cli/sdk/authoring";
+import type { Dependency, PmClient } from "@unbrained/pm-cli/sdk";
 /**
  * Semantic exit codes pm's command runtime propagates to the shell.
  *
@@ -76,6 +77,8 @@ export interface AdoRelation {
     rel: string;
     /** The target's REST URL; its final path segment is the work item id. */
     url: string;
+    /** Remote annotations retained unchanged when an existing edge survives. */
+    attributes?: Readonly<Record<string, unknown>>;
 }
 /**
  * Azure DevOps relation reference names mapped to the pm concepts they mean.
@@ -86,7 +89,74 @@ export interface AdoRelation {
  * (the reverse end of a parent-to-child link), which is the direction most
  * often got backwards.
  */
-export declare const RELATION_MAP: Readonly<Record<string, "parent" | "child" | "related" | "duplicate" | "blocked_by" | "blocks">>;
+export declare const RELATION_MAP: Readonly<Record<string, RelationKind>>;
+/** Mapping vocabulary; Duplicate uses a provenance-bearing related dependency in pm. */
+export type RelationKind = Dependency["kind"] | "duplicate" | "duplicated_by";
+/** Explicit custom reference names mapped to supported pm semantics. */
+export type CustomRelationMap = Readonly<Record<string, Dependency["kind"]>>;
+/** Identity correspondence supplied by the caller after work-item creation. */
+export type RelationIdentities = ReadonlyMap<number, string>;
+/** A remote edge the adapter cannot translate, retained for operator review. */
+export interface RelationDiagnostic {
+    /** Remote source work item id. */
+    itemId: number;
+    /** Original edge, including its reference name and URL. */
+    relation: AdoRelation;
+}
+/**
+ * Merge a remote relation batch into real pm hierarchy and dependencies.
+ *
+ * Read the complete tracker before writing; validate the entire proposed hierarchy,
+ * including existing hierarchy dependencies, so remote cycles and competing parents
+ * leave every item untouched. Reparenting detaches changed parents before attaching
+ * the validated final tree. Dependency source_kind retains exact ADO reference names,
+ * including custom types and both Duplicate directions (stored as related because the
+ * SDK mutation parser does not accept a duplicate kind). This is an additive import:
+ * absent remote links do not erase independently maintained local links.
+ *
+ * @param remote - Relation snapshots read through the batch client.
+ * @param orgUrl - Organization scope used to validate every relation target.
+ * @param identities - One-to-one remote-to-local identity table.
+ * @param pm - Caller-owned SDK client bound to the target tracker.
+ * @param custom - Explicit custom reference-name mappings.
+ * @returns Changed local IDs and original edges that could not be imported.
+ */
+export declare function importRelations(remote: readonly AdoWorkItem[], orgUrl: string, identities: RelationIdentities, pm: Pick<PmClient, "listAllComplete" | "update">, custom?: CustomRelationMap): Promise<{
+    updated: string[];
+    unmapped: RelationDiagnostic[];
+}>;
+/** A pm edge with no configured ADO representation or mapped target. */
+export interface UnmappedPmRelation {
+    /** Local source item ID. */
+    id: string;
+    /** Local dependency kind. */
+    kind: string;
+    /** Local target item ID. */
+    target: string;
+}
+/**
+ * Plan a minimal relation patch from a complete pm tracker and a remote snapshot.
+ *
+ * Existing reference names and attributes survive when their local edge survives.
+ * Unknown types, unsafe URLs and targets outside the identity table are reported
+ * and retained. Duplicate copies of recognized edges are removed by descending
+ * index; new edges are appended once. source_kind preserves custom/Duplicate
+ * identities even when multiple reference names share one pm kind. The caller
+ * passes the returned operations to updateWorkItem with remote.rev; an empty patch
+ * needs no write. Remote fields are not changed by this planner.
+ *
+ * @param remote - Revision-bearing snapshot with relations expanded.
+ * @param orgUrl - Organization used for canonical relation URLs.
+ * @param identities - One-to-one work-item/pm identity table.
+ * @param pm - Caller-owned SDK client bound to the target tracker.
+ * @param custom - Explicit custom reference-name mappings.
+ * @returns Relation operations and both remote and local unmapped-edge receipts.
+ */
+export declare function exportRelations(remote: AdoWorkItem, orgUrl: string, identities: RelationIdentities, pm: Pick<PmClient, "listAllComplete">, custom?: CustomRelationMap): Promise<{
+    operations: JsonPatchOperation[];
+    unmapped: RelationDiagnostic[];
+    unmappedLocal: UnmappedPmRelation[];
+}>;
 /** pm item statuses mapped to the Azure DevOps states they correspond to. */
 export declare const STATE_MAP: Readonly<Record<string, string>>;
 /**
@@ -138,9 +208,10 @@ export declare function relationTargetId(url: string, orgUrl: string): number | 
  *
  * @param rev - The revision the local copy was read at.
  * @param fields - Field reference names mapped to their new values.
+ * @param relations - Validated add/remove operations from the relation export planner.
  * @returns The patch document, beginning with the revision assertion.
  */
-export declare function buildUpdatePatch(rev: number, fields: Readonly<Record<string, unknown>>): JsonPatchOperation[];
+export declare function buildUpdatePatch(rev: number, fields: Readonly<Record<string, unknown>>, relations?: readonly JsonPatchOperation[]): JsonPatchOperation[];
 /**
  * Report whether a patch document asserts a revision before it changes anything.
  *
@@ -295,11 +366,12 @@ export declare class AdoClient {
      * @param id - The work item id.
      * @param rev - The revision the local copy was read at.
      * @param fields - Field reference names mapped to their new values.
+     * @param relations - Relation add/remove operations to apply in the same revision check.
      * @returns The updated work item as the service returned it.
      * @throws {CommandError} With {@link EXIT_CODE.conflict} when the revision
      *   moved, naming the item and both revisions.
      */
-    updateWorkItem(id: number, rev: number, fields: Readonly<Record<string, unknown>>): Promise<AdoWorkItem>;
+    updateWorkItem(id: number, rev: number, fields: Readonly<Record<string, unknown>>, relations?: readonly JsonPatchOperation[]): Promise<AdoWorkItem>;
 }
 /**
  * Translate a work item's relations into pm links.
@@ -312,10 +384,11 @@ export declare class AdoClient {
  * @param orgUrl - The organization whose work item identities may be mapped.
  *   Required. Callers of the published 2026.9.2 one-argument form must pass it;
  *   omitting it throws instead of treating every relation as unmapped.
+ * @param custom - Explicit custom reference-name mappings; built-in names cannot be overridden.
  * @returns The recognised links, and the relation names that were not mapped.
  * @throws {TypeError} When `orgUrl` is omitted or not a string.
  */
-export declare function mapRelations(item: AdoWorkItem, orgUrl: string): {
+export declare function mapRelations(item: AdoWorkItem, orgUrl: string, custom?: CustomRelationMap): {
     links: {
         kind: string;
         targetId: number;

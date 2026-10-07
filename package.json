@@ -17,7 +17,8 @@
     "dist/",
     "manifest.json",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "docs/typed-relations.md"
   ],
   "scripts": {
     "build": "tsc",
@@ -42,7 +43,7 @@
     "verify:release-changelog-date": "node scripts/verify-release-changelog-date.ts"
   },
   "peerDependencies": {
-    "@unbrained/pm-cli": ">=2026.8.7"
+    "@unbrained/pm-cli": ">=2026.10.4"
   },
   "devDependencies": {
     "@types/node": "26.6.4",
@@ -95,7 +96,8 @@
     },
     "docs": [
       "README.md",
-      "CHANGELOG.md"
+      "CHANGELOG.md",
+      "docs/typed-relations.md"
     ],
     "examples": [
       "README.md"

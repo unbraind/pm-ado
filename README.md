@@ -41,10 +41,14 @@ being linked to a different local item. The same-organization URL check follows
 
 Early. The package currently registers `pm ado validate`; it does not yet register
 `ado sync`, `ado import` or `ado export`. The client library has revision-checked
-updates, batch reads and a one-way relation mapper. Revision-to-history
-reconciliation, reverse relation writes and hierarchy-cycle refusal remain in the
-[package epic](.agents/pm/epics/pm-ado-g4v1.toon) and
-[relation feature](.agents/pm/features/pm-ado-1zuu.toon).
+updates, batch reads and bidirectional relation adapters backed by real pm trackers.
+Typed relations, custom reference names, idempotent patches and hierarchy-cycle
+refusal are implemented by [the relation feature](.agents/pm/features/pm-ado-1zuu.toon).
+Revision-to-history reconciliation and full sync command orchestration remain in
+the [package epic](.agents/pm/epics/pm-ado-g4v1.toon).
+
+See [typed relation usage and semantics](docs/typed-relations.md) for the SDK API,
+custom mappings, preservation rules and offline acceptance evidence.
 
 This repository is tracked with `pm` and gated by
 the same mandatory quality gates as the rest of the fleet: 100% measured Node V8

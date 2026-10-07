@@ -4,7 +4,8 @@
  * Runs `node --test` with the runtime's built-in V8 coverage against the
  * TypeScript sources directly (Node executes `.ts` natively, so the reported
  * line numbers are the ones an author edits, not compiled output), enforces a
- * per-dimension threshold, and reconciles the reported file list against the
+ * per-dimension threshold, then repeats the suite with independent Istanbul AST
+ * statement counters and enforces the statement threshold. It reconciles the reported file list against the
  * files actually on disk.
  *
  * That last step is the reason this script exists rather than a bare
@@ -35,18 +36,17 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { stripTypeScriptTypes } from "node:module";
+import istanbulInstrument from "istanbul-lib-instrument";
+import istanbulCoverage, { type CoverageMapData } from "istanbul-lib-coverage";
 import { fileURLToPath } from "node:url";
 
-/**
- * Minimum acceptable percentage for each coverage dimension Node reports.
- *
- * Node V8 reports executable lines, branches and functions. The declared
- * statement threshold has no independent measurement or enforcement here;
- * pm-ado-5w3m tracks that gap. Lines are not an independent statement metric.
- */
+/** Minimum acceptable percentage for each independently measured dimension. */
 interface CoverageThresholds {
+  /** Minimum percentage of Istanbul AST statements that must execute. */
+  readonly statements: number;
   /** Minimum percentage of executable lines that must be covered. */
   readonly lines: number;
   /** Minimum percentage of branch arms that must be taken. */
@@ -101,6 +101,7 @@ interface CommandInvocation {
 interface CoverageGateRuntime {
   readonly runner?: CommandInvocation;
   readonly compiler?: CommandInvocation;
+  readonly statementRunner?: CommandInvocation;
   readonly sourceCollector?: (rootDir: string, target: string, skipDirs: Set<string>) => string[];
 }
 
@@ -227,11 +228,109 @@ function collectSources(rootDir: string, target: string, skipDirs: Set<string>):
 }
 
 /**
+ * Measure AST statements in a separate instrumented run, preserving Node's V8
+ * measurements from the original run. Every required source must contribute a
+ * valid statement map and counters; absent or corrupt worker reports fail closed.
+ * Counts are merged across test workers and compared without percentage rounding.
+ * The generated preload substitutes only the enumerated sources and writes each
+ * worker's counters at exit. Reports are reset before every run, including failures.
+ */
+function runStatementCoverage(
+  rootDir: string,
+  required: readonly string[],
+  threshold: number,
+  stdio: "inherit" | "ignore",
+  runner: CommandInvocation,
+  tests: readonly string[],
+  env: NodeJS.ProcessEnv,
+): number {
+  const reportDir = join(rootDir, "coverage", "statements");
+  rmSync(reportDir, { recursive: true, force: true });
+  mkdirSync(reportDir, { recursive: true });
+  const instrumenter = istanbulInstrument.createInstrumenter({ esModules: true, compact: false });
+  const sources: Record<string, string> = {};
+  for (const file of required) {
+    const path = join(rootDir, file);
+    sources[path] = instrumenter.instrumentSync(stripTypeScriptTypes(readFileSync(path, "utf8")), path);
+  }
+  const sourcesPath = join(reportDir, "sources.json");
+  writeFileSync(sourcesPath, JSON.stringify(sources));
+  const preload = join(reportDir, "preload.mjs");
+  writeFileSync(preload, `
+import { registerHooks } from "node:module";
+import { readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+const sources = JSON.parse(readFileSync(process.env.PM_ADO_STATEMENT_SOURCES, "utf8"));
+const reportDir = process.env.PM_ADO_STATEMENT_REPORT_DIR;
+registerHooks({
+  /** Substitute instrumentation for configured sources only. */
+  load(url, context, nextLoad) {
+    if (url.startsWith("file:")) {
+      const path = fileURLToPath(url);
+      if (Object.hasOwn(sources, path)) return { format: "module", source: sources[path], shortCircuit: true };
+    }
+    return nextLoad(url, context);
+  }
+});
+/** Persist this worker's actual execution counters after the suite finishes. */
+process.on("exit", () => {
+  writeFileSync(join(reportDir, process.pid + ".json"), JSON.stringify(globalThis.__coverage__ ?? {}));
+});
+`);
+  const result = spawnSync(runner.executable, [...runner.args, "--import", preload, "--test", ...tests], {
+    cwd: rootDir,
+    stdio,
+    shell: runner.shell ?? false,
+    env: { ...env, NODE_OPTIONS: `${env.NODE_OPTIONS ?? ""} --import=${JSON.stringify(preload)}`, PM_ADO_STATEMENT_SOURCES: sourcesPath, PM_ADO_STATEMENT_REPORT_DIR: reportDir },
+  });
+  if (result.error) {
+    console.error(`coverage-gate: failed to start the statement runner: ${result.error.message}`);
+    return 1;
+  }
+  if (result.status !== 0) return result.status ?? 1;
+
+  const coverage = istanbulCoverage.createCoverageMap({});
+  try {
+    const reports = readdirSync(reportDir).filter((file) => /^\d+\.json$/.test(file));
+    if (reports.length === 0) throw new Error("no statement report was written");
+    for (const file of reports) {
+      const data = JSON.parse(readFileSync(join(reportDir, file), "utf8")) as CoverageMapData;
+      for (const entry of Object.values(data)) {
+        if (!entry.statementMap || !entry.s || Object.keys(entry.s).length === 0 ||
+          Object.keys(entry.statementMap).length !== Object.keys(entry.s).length ||
+          Object.keys(entry.statementMap).some((id) => !Object.hasOwn(entry.s, id)) ||
+          Object.values(entry.s).some((count) => !Number.isSafeInteger(count) || count < 0)) {
+          throw new Error("invalid or missing statement data");
+        }
+      }
+      coverage.merge(Object.fromEntries(Object.entries(data).filter(([path]) => Object.hasOwn(sources, path))));
+    }
+    for (const file of required) {
+      if (!coverage.files().includes(join(rootDir, file))) throw new Error(`missing statement data for ${file}`);
+    }
+  } catch (error) {
+    console.error(`coverage-gate: statement report failure: ${String(error)}`);
+    return 1;
+  }
+  const statements = coverage.getCoverageSummary().statements;
+  writeFileSync(join(reportDir, "coverage-final.json"), JSON.stringify(coverage.toJSON()));
+  writeFileSync(join(reportDir, "summary.json"), JSON.stringify({ statements }, null, 2));
+  console.log(`coverage-gate: statements ${statements.covered}/${statements.total} (${statements.pct}%), threshold ${threshold}%.`);
+  if (statements.covered * 100 < threshold * statements.total) {
+    console.error(`coverage-gate: statement coverage is below the ${threshold}% threshold.`);
+    return 1;
+  }
+  return 0;
+}
+
+/**
  * Runs the coverage gate against a package root.
  *
  * Reads `package.json#coverageGate`, walks the configured sources, runs the
  * test command with V8 coverage, parses the lcov report, and reconciles the
- * reported files against the required set. Returns 0 when the gate passes and a
+ * reported files against the required set before independently measuring and
+ * enforcing statements. Returns 0 when all four thresholds pass and a
  * non-zero code when it fails — the same contract `process.exit` honoured in the
  * prior top-level script form, now callable from tests without terminating the
  * test process.
@@ -255,6 +354,11 @@ export function runCoverageGate(
 
   if (!config) {
     console.error("coverage-gate: package.json has no `coverageGate` block.");
+    return 1;
+  }
+
+  if (!Number.isFinite(config.thresholds.statements) || config.thresholds.statements < 0 || config.thresholds.statements > 100) {
+    console.error("coverage-gate: statements threshold must be a number between 0 and 100.");
     return 1;
   }
 
@@ -444,6 +548,9 @@ export function runCoverageGate(
     );
     return 1;
   }
+
+  const statementCode = runStatementCoverage(rootDir, required, config.thresholds.statements, stdio, runtime.statementRunner ?? runner, config.tests, { ...cleanEnv, TZ: "UTC" });
+  if (statementCode !== 0) return statementCode;
 
   console.log(`\ncoverage-gate: ${required.length} source file(s) reported, thresholds met.`);
   return 0;

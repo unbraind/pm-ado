@@ -185,8 +185,10 @@ function assertRelationIdentities(identities: RelationIdentities, items: readonl
  *
  * Read the complete tracker before writing; validate the entire proposed hierarchy,
  * including existing hierarchy dependencies, so remote cycles and competing parents
- * leave every item untouched. Reparenting detaches changed parents before attaching
- * the validated final tree. Dependency source_kind retains exact ADO reference names,
+ * leave every item untouched. Apply parents before descendants in the validated
+ * final tree, avoiding transient cycles without detaching existing parents. If a
+ * write fails, restore completed parent changes in reverse order; failed recovery
+ * reports the exact detached IDs from a fresh tracker read. Dependency source_kind retains exact ADO reference names,
  * including custom types and both Duplicate directions (stored as related because the
  * SDK mutation parser does not accept a duplicate kind). This is an additive import:
  * absent remote links do not erase independently maintained local links.
@@ -287,18 +289,46 @@ export async function importRelations(
   if (queue.length !== incoming.size) {
     throw new CommandError("remote relations would create a hierarchy cycle", EXIT_CODE.conflict);
   }
-  const changedParents = items.filter((item) => proposed.has(item.id) && item.parent !== proposed.get(item.id));
-  for (const item of changedParents) {
-    if (item.parent !== undefined) await pm.update(item.id, { unset: ["parent"] });
-  }
+  const changedParents = new Set(items.filter((item) => proposed.has(item.id) && item.parent !== proposed.get(item.id))
+    .map((item) => item.id));
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const completed: ItemMetadata[] = [];
   const updated = new Set<string>();
-  for (const item of items) {
-    const parentChanged = changedParents.some((changed) => changed.id === item.id);
-    const dep = additions.get(item.id) ?? [];
-    if (parentChanged || dep.length > 0) {
-      await pm.update(item.id, { ...(parentChanged ? { parent: proposed.get(item.id)! } : {}), dep });
-      updated.add(item.id);
+  try {
+    // Final-tree order gives the minimal detach set: empty. Every changed
+    // ancestor has its final parent before a descendant can point back to it.
+    for (const id of queue) {
+      const item = byId.get(id);
+      if (item === undefined) continue;
+      const parentChanged = changedParents.has(id);
+      const dep = additions.get(id) ?? [];
+      if (parentChanged || dep.length > 0) {
+        await pm.update(id, { ...(parentChanged ? { parent: proposed.get(id)! } : {}), dep });
+        if (parentChanged) completed.push(item);
+        updated.add(id);
+      }
     }
+  } catch (error) {
+    const failed: string[] = [];
+    for (const item of completed.reverse()) {
+      try {
+        await pm.update(item.id, item.parent === undefined ? { unset: ["parent"] } : { parent: item.parent });
+      } catch {
+        failed.push(item.id);
+      }
+    }
+    if (failed.length > 0) {
+      const current = new Map((await pm.listAllComplete()).items.map((item) => [item.id, item.parent]));
+      const detached = items.filter((item) => item.parent !== undefined && current.get(item.id) === undefined)
+        .map((item) => item.id);
+      const failure = new CommandError(
+        `${String(error)}; parent restoration failed for: ${failed.join(", ")}; detached IDs: ${detached.join(", ") || "none"}`,
+        EXIT_CODE.conflict,
+      );
+      failure.cause = error;
+      throw failure;
+    }
+    throw error;
   }
   return { updated: [...updated], unmapped };
 }
@@ -311,6 +341,7 @@ export interface UnmappedPmRelation {
   kind: string;
   /** Local target item ID. */
   target: string;
+  source_kind?: string;
 }
 
 /**
@@ -363,9 +394,13 @@ export async function exportRelations(
         const inverseKind = kind === "blocks" ? "blocked_by" : kind === "blocked_by" ? "blocks" : "related";
         let inverse = original;
         if (kind !== "related") {
-          const customInverse = original !== undefined && Object.hasOwn(custom, original)
-            ? Object.entries(custom).find(([, value]) => value === inverseKind)?.[0] : undefined;
-          inverse = customInverse ?? Object.entries(RELATION_MAP).find(([, value]) => value === inverseKind)?.[0];
+          const customInverses = original !== undefined && Object.hasOwn(custom, original)
+            ? Object.entries(custom).filter(([, value]) => value === inverseKind) : [];
+          if (customInverses.length > 1) {
+            unmappedLocal.push({ id: source, kind: inverseKind, target: item.id, source_kind: original });
+            continue;
+          }
+          inverse = customInverses[0]?.[0] ?? Object.entries(RELATION_MAP).find(([, value]) => value === inverseKind)?.[0];
         } else if (original === "System.LinkTypes.Duplicate-Forward") {
           inverse = "System.LinkTypes.Duplicate-Reverse";
         } else if (original === "System.LinkTypes.Duplicate-Reverse") {
@@ -405,6 +440,11 @@ export async function exportRelations(
     const mapped = relationKind(relation.rel, custom);
     const targetId = relationTargetId(relation.url, orgUrl);
     if (mapped === undefined || targetId === undefined || !identities.has(targetId)) {
+      unmapped.push({ itemId: remote.id, relation });
+      continue;
+    }
+    if (unmappedLocal.some((dep) => dep.source_kind !== undefined && dep.target === identities.get(targetId) &&
+        dep.kind === storedRelationKind(mapped))) {
       unmapped.push({ itemId: remote.id, relation });
       continue;
     }

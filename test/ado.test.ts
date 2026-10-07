@@ -756,8 +756,8 @@ function edge(rel: string, id: number): AdoRelation {
 }
 
 for (const implementation of [
-  { name: "source", importRelations, exportRelations, AdoClient },
-  { name: "built", importRelations: built.importRelations, exportRelations: built.exportRelations, AdoClient: built.AdoClient },
+  { name: "source", importRelations, exportRelations, AdoClient, CommandError },
+  { name: "built", importRelations: built.importRelations, exportRelations: built.exportRelations, AdoClient: built.AdoClient, CommandError: built.CommandError },
 ]) {
   test(`${implementation.name}: typed relations round-trip through a real tracker and HTTP fixtures idempotently`, async (t) => {
     const { pm, identities, ids, pmRoot } = await relationTracker(t);
@@ -809,6 +809,106 @@ for (const implementation of [
     await implementation.importRelations(await client.getWorkItems([1, 6]), CONFIG.orgUrl, identities, pm, custom);
     const afterImport = (await pm.listAllComplete()).items.find((row) => row.id === ids[0])!.dependencies!;
     assert.equal(afterImport.filter((dep) => dep.id === ids[5] && dep.kind === "blocks").length, 1);
+  });
+
+  test(`${implementation.name}: parent update failure restores hierarchy without leaving items detached`, async (t) => {
+    for (const failAt of [2, 1, 3, 4, 5]) {
+      const { pm, identities, ids } = await relationTracker(t);
+      await pm.update(ids[1]!, { parent: ids[0] });
+      await pm.update(ids[2]!, { parent: ids[1] });
+      await pm.update(ids[4]!, { parent: ids[0] });
+      const before = new Map((await pm.listAllComplete()).items.map((item) => [item.id, item.parent]));
+      const update = pm.update.bind(pm);
+      const failure = new Error(`injected update ${failAt}`);
+      let calls = 0;
+      let failed = false;
+      const forwardUnsets: string[] = [];
+      pm.update = async (id, options) => {
+        if (!failed && options?.unset?.includes("parent")) forwardUnsets.push(id);
+        if (++calls === failAt) {
+          failed = true;
+          throw failure;
+        }
+        return update(id, options);
+      };
+      await assert.rejects(() => implementation.importRelations([
+        { id: 1, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 2)] },
+        { id: 2, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 3)] },
+        { id: 3, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 4)] },
+        { id: 5, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 6)] },
+        { id: 6, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Related", 4)] },
+      ], CONFIG.orgUrl, identities, pm), (error: unknown) => error === failure);
+      assert.deepEqual(new Map((await pm.listAllComplete()).items.map((item) => [item.id, item.parent])), before,
+        `update ${failAt}: every previous parent must be restored`);
+      assert.deepEqual(forwardUnsets, [], "final-tree ordering requires no transient detachment");
+    }
+  });
+
+  test(`${implementation.name}: failed parent compensation reports exact detached IDs and continues recovery`, async (t) => {
+    for (const detach of [false, true]) {
+      const { pm, identities, ids } = await relationTracker(t, 4);
+      await pm.update(ids[1]!, { parent: ids[0] });
+      const update = pm.update.bind(pm);
+      const failure = new Error("injected batch failure");
+      const forwardParents: string[] = [];
+      let failed = false;
+      pm.update = async (id, options) => {
+        if (!failed && options?.parent !== undefined) {
+          forwardParents.push(id);
+          if (forwardParents.length === 3) {
+            failed = true;
+            throw failure;
+          }
+        } else if (failed && id === ids[1]) {
+          if (detach) await update(id, { unset: ["parent"] });
+          throw new Error("injected restoration failure");
+        }
+        return update(id, options);
+      };
+      await assert.rejects(() => implementation.importRelations([
+        { id: 1, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 2)] },
+        { id: 2, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 3)] },
+        { id: 4, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 1)] },
+      ], CONFIG.orgUrl, identities, pm), (error: unknown) => {
+        assert.ok(error instanceof implementation.CommandError);
+        assert.equal(error.exitCode, EXIT_CODE.conflict);
+        assert.equal(error.cause, failure);
+        assert.equal(error.message, `Error: injected batch failure; parent restoration failed for: ${ids[1]}; detached IDs: ${detach ? ids[1] : "none"}`);
+        return true;
+      });
+      const rows = (await pm.listAllComplete()).items;
+      assert.equal(rows.find((item) => item.id === ids[0])!.parent, undefined,
+        "compensation must continue restoring other completed changes");
+      assert.equal(rows.find((item) => item.id === ids[1])!.parent, detach ? undefined : ids[2]);
+    }
+  });
+
+  test(`${implementation.name}: ambiguous custom inverse pairs retain provenance without guessing`, async (t) => {
+    const { pm, identities, ids } = await relationTracker(t, 3);
+    const custom = {
+      "Custom.Before": "blocks" as const, "Custom.After": "blocked_by" as const,
+      "Custom.Precedes": "blocks" as const, "Custom.Follows": "blocked_by" as const,
+    };
+    await implementation.importRelations([
+      { id: 1, rev: 1, fields: {}, relations: [edge("Custom.Precedes", 2)] },
+      { id: 2, rev: 1, fields: {}, relations: [edge("Custom.Follows", 3)] },
+    ], CONFIG.orgUrl, identities, pm, custom);
+    const reverse = await implementation.exportRelations({ id: 2, rev: 1, fields: {}, relations: [] }, CONFIG.orgUrl, identities, pm, custom);
+    assert.deepEqual(reverse.operations, [{ op: "add", path: "/relations/-", value: edge("Custom.Follows", 3) }]);
+    assert.deepEqual(reverse.unmappedLocal, [{ id: ids[1], kind: "blocked_by", target: ids[0], source_kind: "Custom.Precedes" }]);
+    const retained = { ...edge("Custom.Follows", 1), attributes: { comment: "keep ambiguous inverse" } };
+    const existing = await implementation.exportRelations({ id: 2, rev: 1, fields: {}, relations: [retained] }, CONFIG.orgUrl, identities, pm, custom);
+    assert.deepEqual(existing.operations, reverse.operations, "unresolved inverse must not remove an existing remote link");
+    assert.deepEqual(existing.unmapped, [{ itemId: 2, relation: retained }]);
+    const forward = await implementation.exportRelations({ id: 3, rev: 1, fields: {}, relations: [] }, CONFIG.orgUrl, identities, pm, custom);
+    assert.deepEqual(forward.operations, []);
+    assert.deepEqual(forward.unmappedLocal, [{ id: ids[2], kind: "blocks", target: ids[1], source_kind: "Custom.Follows" }]);
+    const fallback = await implementation.exportRelations({ id: 2, rev: 1, fields: {}, relations: [] }, CONFIG.orgUrl, identities, pm,
+      { "Custom.Precedes": "blocks", "Custom.Follows": "blocked_by", "Custom.Before": "blocks" });
+    assert.deepEqual(fallback.operations.map((op) => (op.value as AdoRelation).rel), ["Custom.Follows", "Custom.Follows"]);
+    const builtin = await implementation.exportRelations({ id: 2, rev: 1, fields: {}, relations: [] }, CONFIG.orgUrl, identities, pm,
+      { "Custom.Precedes": "blocks" });
+    assert.deepEqual(builtin.operations, [{ op: "add", path: "/relations/-", value: edge("System.LinkTypes.Dependency-Reverse", 1) }]);
   });
 
   test(`${implementation.name}: hierarchy cycles and competing remote parents leave tracker history untouched`, async (t) => {

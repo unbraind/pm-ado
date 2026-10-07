@@ -61,7 +61,12 @@ Custom hierarchy names retain their original spelling from the expanded remote
 snapshot. Distinct existing reference names survive for the same hierarchy
 edge; repeated copies of the same reference are removed. Incoming local blockers, Related and Duplicate edges export their
 inverse endpoint too. Configure both directed custom dependency endpoints when
-the remote type uses separate forward and reverse names.
+the remote type uses separate forward and reverse names. A unique custom name
+for the inverse kind is used; when none is configured, the built-in relation map
+provides the fallback. If multiple custom names map to the inverse kind, export
+reports the incoming edge in `unmappedLocal` with its original `source_kind`
+instead of guessing. Existing remote links for that ambiguous endpoint are
+retained and reported in `unmapped`.
 
 ## Preservation and refusal
 
@@ -74,7 +79,14 @@ This API does not implement deletion reconciliation or a full project sync.
 Before any import write, the adapter validates the final hierarchy across all
 items, including legacy hierarchy dependencies. Self cycles, disconnected
 cycles and competing remote parents fail with a conflict. Valid reparenting
-first detaches changed parents to avoid cycles in the intermediate tree.
+applies parent changes in the validated final tree's topological order, moving
+ancestors before descendants. This computes an empty minimal detach set and
+avoids transient cycles without unsetting existing parents. If an SDK write
+fails, completed parent changes are compensated in reverse order, restoring
+original parents (including originally parentless items). Recovery continues
+when one restoration fails; the error includes failed restoration IDs and exact
+currently detached IDs from a fresh complete tracker read, and retains the
+original failure as its cause. Successful dependency additions remain additive.
 Each SDK mutation still applies its own locking and hierarchy checks; the
 whole multi-item import is not a single transaction against concurrent writers.
 
@@ -126,3 +138,30 @@ The commands were `npm run build` followed by
 `node --test --test-name-pattern='export removes stale' test/ado.test.ts` and
 `node --test --test-name-pattern='batch hierarchy preflight' test/ado.test.ts`.
 After restoring the implementation, the combined pattern passed all three tests.
+
+
+## PR #18 data-integrity review evidence
+
+Real disposable tracker tests inject a failure at each of five SDK updates,
+forwarding every other call to the real SDK. They assert that every original
+parent is restored and no forward update detaches a parent. Separate recovery
+failures verify exact detached-ID reporting and continued compensation. Two
+custom dependency pairs sharing `blocks`/`blocked_by` exercise ambiguous inverse
+diagnostics in both directions, remote-link retention, unique-match resolution
+and the built-in fallback. All run against source and built exports.
+
+Independent temporary reverts preserved exports and rebuilt successfully:
+
+- Reverting only hierarchy ordering/compensation failed both source and built
+  tests on `update 2: every previous parent must be restored`: the earlier item
+  remained detached after the injected second update failure.
+- Reverting only inverse resolution failed both source and built tests because
+  `Custom.Precedes` incorrectly exported `Custom.After` rather than reporting
+  ambiguity with provenance.
+
+After each revert, the fix was restored and the package rebuilt. The commands
+were `npm run build` and then either
+`node --test --test-name-pattern='parent update failure' test/ado.test.ts` or
+`node --test --test-name-pattern='ambiguous custom inverse' test/ado.test.ts`.
+The restored combined regression command is
+`node --test --test-name-pattern='parent update failure|failed parent compensation|ambiguous custom inverse' test/ado.test.ts`.

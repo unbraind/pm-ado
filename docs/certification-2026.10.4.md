@@ -10,9 +10,9 @@ The new real invalid-NODE_PATH-file test fails the old launcher with ENOTDIR rep
 
 ## Gate results and coverage boundary
 
-`flock /tmp/claude-1000/heavy-gate.lock npm run release:check` passed: 123/123 tests, zero skipped, 100% measured lines/branches/functions across 4 sources; full docstring, production audit, pack contents, changelog, publish-attestation and release-date checks passed. Both `npm audit --omit=dev` and `npm audit` report zero vulnerabilities; open Dependabot alerts response was `[]`. CI's `bun install --no-save` passed under the same heavy lock. `npx pm health --strict-exit --require-merge-drivers --json` reports ok=true with no warnings. Linked launcher suite through `pm test --run --progress` passed 8/8.
+`npm run release:check` passed: 123/123 tests, zero skipped, 100% measured lines/branches/functions across 4 sources; full docstring, production audit, pack contents, changelog, publish-attestation and release-date checks passed. Both `npm audit --omit=dev` and `npm audit` report zero vulnerabilities; open Dependabot alerts response was `[]`. CI's `bun install --no-save` passed under the same heavy lock. `npx pm health --strict-exit --require-merge-drivers --json` reports ok=true with no warnings. Linked launcher suite through `pm test --run --progress` passed 8/8.
 
-The existing configuration declares statements=100, but the runner does not consume or report an independent statement metric. The README and gate comment now describe the measured scope accurately; the threshold remains unchanged. `pm-ado-5w3m` tracks actual enforcement. This candidate does not establish 100/100/100/100 and is NOT READY for that claim.
+At this certification snapshot, statements=100 was declared but independently unmeasured. The statement gate is now implemented in `pm-ado-5w3m`; see [statement-coverage evidence](statement-coverage.md) for its independent AST counters, regression tests and current gate receipts. The historical three-metric result above remains the evidence for that earlier snapshot. Thresholds and release approval controls are preserved.
 
 ## Packed real-tracker dogfood
 

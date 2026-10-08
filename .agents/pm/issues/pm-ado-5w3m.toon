@@ -2,13 +2,38 @@ id: pm-ado-5w3m
 title: Enforce the declared statement-coverage threshold instead of silently ignoring it
 description: "package.json coverageGate.thresholds.statements=100 and README claim four dimensions, but scripts/coverage-gate.ts only types/reads/passes Node thresholds for lines, branches and functions. No statement report or independent enforcement exists. Preserve the 100 threshold and add a real independently reported statement metric and meaningful failed-threshold fixture; do not equate executable-line coverage with measured statements. Certification pm-ado-qq1p records the current scope and cannot claim 100/100/100/100. This predates the SDK refresh."
 type: Issue
-status: open
+status: in_progress
 priority: 1
 tags[3]: coverage,quality-gate,release-blocker
 created_at: "2026-10-04T11:52:55.259Z"
-updated_at: "2026-10-04T11:54:42.253Z"
+updated_at: "2026-10-07T21:03:56.092Z"
 author: codex-sol
-actual_result: "Static gate inspection on CLI/SDK 2026.10.4: configuration declares statements=100, but CoverageThresholds and all Node test flags cover only lines, branches and functions; LCOV parser reconciles source presence without reporting statement counters. README and gate comment corrected; threshold retained. Independent four-metric coverage remains NOT READY pending a genuine measurement/enforcement implementation."
-files[1]{path,scope,note}:
-  scripts/coverage-gate.ts,project,Declared statement threshold not consumed
+actual_result: "Independent Istanbul AST statement gate implemented with exact unrounded threshold comparison, source reconciliation, worker/subprocess counter merging and fail-closed missing/corrupt reports. Built packed package validated in a real scratch tracker before and after; partial statement scenario now exits 1. Behavioral revert produces two assertion failures (actual 0 versus expected 1); restoring enforcement passes both. npm run release:check and bun run release:check PASS: 129/129 tests in each coverage pass, zero skips; 306/306 statements and 100% V8 lines/branches/functions across the unchanged four-source inventory; docstrings 38/38, production audit zero vulnerabilities and all pack/changelog/attestation/date gates pass. Linked pm test focused suite PASS 30/30; recording policy is disabled, result captured in comments. README and docs updated. No SDK bugs found; packed installation avoids the expected bounded local-directory scan refusal. Release approval remains gated; no publish, tag, merge or live Azure write."
+comments[4]{created_at,author,text}:
+  "2026-10-07T20:53:13.105Z",codex-sol,"Reproduced before edits: built package installed into a real scratch pm tracker; offline ado validate succeeds. A source with an unexecuted return statement passes runCoverageGate at statements=100 and other dimensions=0 (exit 0). The declared statement threshold is silently ignored. Implement an independent Istanbul AST statement counter alongside the unchanged Node V8 line/branch/function checks; preserve all thresholds and source presence checks. No Azure calls or releases."
+  "2026-10-07T20:56:35.639Z",codex-sol,"Before-change reproduction used npm pack --ignore-scripts and installed the built archive into a real scratch tracker. Direct local-directory installation was safely refused because its bounded source scan exceeded 10000 entries; packed installation succeeded. Added independent Istanbul AST statement instrumentation in a separate test pass, with unchanged V8 thresholds and source reconciliation. Regression scenario covers two of three statements on one fully covered line; statement threshold must reject it. Added worker merge, exact-boundary, corrupt/missing report and stale-report acceptance cases."
+  "2026-10-07T21:00:43.314Z",codex-sol,"Behavioral revert proof: remove only the statement measurement call and its failure check from runCoverageGate; run node --test --test-name-pattern='statement threshold rejects|statement report fails closed' test/coverage-gate.test.ts. Both tests load and FAIL assertions with actual exit 0 versus expected 1. Restore the call: both PASS. Full coverage measurement passes 129/129 tests per pass, zero skips; unchanged four-source scope reports V8 100% lines/branches/functions and independent Istanbul 306/306 statements. Linked pm test passes 30/30; configured test-result tracking is disabled, so this comment records its verified result. No SDK bug found; local-directory scan refusal was handled by packed installation."
+  "2026-10-07T21:03:55.602Z",codex-sol,"Both required npm and Bun release:check commands PASS at unchanged thresholds: 129/129 tests per coverage pass, zero skips, 306/306 independent statements and V8 100% lines/branches/functions over four sources; docstrings 38/38, production audit clean, pack/changelog/attestation/date checks pass. Rebuilt packed archive offline validation in a real scratch tracker passes, and the partial statement fixture is rejected at exit 1. README and docs describe implementation and scope; no SDK bugs found. Releasing claim without closing; orchestrator owns final review and closure."
+files[7]:
+  - path: docs/certification-2026.10.4.md
+    scope: project
+  - path: docs/statement-coverage.md
+    scope: project
+  - path: package-lock.json
+    scope: project
+  - path: package.json
+    scope: project
+  - path: README.md
+    scope: project
+  - path: scripts/coverage-gate.ts
+    scope: project
+    note: Independent statement instrumentation and exact threshold enforcement
+  - path: test/coverage-gate.test.ts
+    scope: project
+tests[3]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
+  node --test test/coverage-gate.test.ts,project,codex-sol,"2026-10-07T21:00:07.446Z",local_mutation,fix/statement-coverage-threshold
+  "npm run release:check",project,codex-sol,"2026-10-07T21:00:44.051Z",local_mutation,fix/statement-coverage-threshold
+  "bun run release:check",project,codex-sol,"2026-10-07T21:00:44.630Z",local_mutation,fix/statement-coverage-threshold
+docs[1]{path,scope}:
+  docs/statement-coverage.md,project
 body: ""

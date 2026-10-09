@@ -7,7 +7,12 @@
  * rejection such as a flag collision that aborts command registration.
  */
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
+import { PmClient, commitImportedItem, readSettings } from "@unbrained/pm-cli/sdk";
+import * as built from "../dist/index.js";
 
 import {
   createExtensionTestHarness,
@@ -27,6 +32,8 @@ import extension, {
   batchIds,
   buildUpdatePatch,
   mapRelations,
+  importRelations,
+  exportRelations,
   missingEnv,
   preflightMessage,
   shouldFailFast,
@@ -37,6 +44,7 @@ import extension, {
   type AdoTransport,
   type BatchReadResult,
   type JsonPatchOperation,
+  type AdoRelation,
 } from "../index.ts";
 
 const CONFIG = { orgUrl: "https://dev.azure.com/contoso", project: "Fabrikam", token: "pat" };
@@ -694,4 +702,402 @@ test("a patch that does not assert a revision is refused before it reaches the n
   // A well-formed patch passes.
   await client.request("PATCH", "/_apis/wit/workitems/1", buildUpdatePatch(2, { "System.Title": "x" }), PATCH_MEDIA_TYPE);
   assert.equal(calls.length, 1);
+});
+
+/** Initialize a disposable, real SDK tracker with stable remote identity correspondence. */
+async function relationTracker(t: test.TestContext, count = 6) {
+  const root = mkdtempSync(join(tmpdir(), "ado-relations-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const pmRoot = join(root, ".agents/pm");
+  const pm = new PmClient({ cwd: root, pmRoot, noExtensions: true, author: "fixture-agent" });
+  await pm.run("init", { prefix: "fixture" });
+  const identities = new Map<number, string>();
+  for (let id = 1; id <= count; id++) {
+    const { item } = await pm.create({ title: `Work item ${id}`, type: "Task" });
+    identities.set(id, item.id);
+  }
+  return { pm, pmRoot, identities, ids: [...identities.values()] };
+}
+
+/** A relation-aware HTTP fixture evaluating revision tests before applying a whole patch. */
+function relationService(initial: readonly AdoWorkItem[]) {
+  const items = new Map(initial.map((item) => [item.id, structuredClone(item)]));
+  const patches: JsonPatchOperation[][] = [];
+  const transport: AdoTransport = async (method, _url, body) => {
+    if (method === "POST") {
+      const request = JSON.parse(body!) as { ids: number[]; $expand: string };
+      assert.equal(request.$expand, "relations");
+      return { status: 200, body: JSON.stringify({ value: request.ids.flatMap((id) => items.has(id) ? [items.get(id)] : []) }) };
+    }
+    assert.equal(method, "PATCH");
+    const id = Number(new URL(_url).pathname.split("/").at(-1));
+    const current = items.get(id)!;
+    const patch = JSON.parse(body!) as JsonPatchOperation[];
+    patches.push(patch);
+    if (patch[0]!.value !== current.rev) return { status: 412, body: "" };
+    const next = structuredClone(current);
+    const relations = [...next.relations!];
+    for (const op of patch.slice(1)) {
+      if (op.path === "/relations/-") relations.push(op.value as AdoRelation);
+      else if (op.op === "remove") relations.splice(Number(op.path.split("/").at(-1)), 1);
+      else next.fields[op.path.slice("/fields/".length)] = op.value;
+    }
+    next.relations = relations;
+    next.rev++;
+    items.set(id, next);
+    return { status: 200, body: JSON.stringify(next) };
+  };
+  return { transport, patches, items };
+}
+
+/** Construct canonical synthetic work-item relations without contacting a service. */
+function edge(rel: string, id: number): AdoRelation {
+  return { rel, url: `${CONFIG.orgUrl}/_apis/wit/workItems/${id}` };
+}
+
+for (const implementation of [
+  { name: "source", importRelations, exportRelations, AdoClient, CommandError },
+  { name: "built", importRelations: built.importRelations, exportRelations: built.exportRelations, AdoClient: built.AdoClient, CommandError: built.CommandError },
+]) {
+  test(`${implementation.name}: typed relations round-trip through a real tracker and HTTP fixtures idempotently`, async (t) => {
+    const { pm, identities, ids, pmRoot } = await relationTracker(t);
+    const custom = { "Custom.Supports": "verifies" as const, "Custom.Association": "related" as const };
+    const original: AdoWorkItem[] = [
+      { id: 1, rev: 7, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Forward", 2), edge("System.LinkTypes.Dependency-Forward", 3), edge("System.LinkTypes.Related", 4), edge("System.LinkTypes.Duplicate-Forward", 4), edge("Custom.Supports", 5), edge("Custom.Association", 4)] },
+      { id: 2, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 1)] },
+      { id: 3, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Dependency-Reverse", 1)] },
+      { id: 4, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Related", 1), edge("System.LinkTypes.Duplicate-Reverse", 1), edge("Custom.Association", 1)] },
+      { id: 5, rev: 1, fields: {}, relations: [] },
+      { id: 6, rev: 1, fields: {}, relations: [{ rel: "Unknown.Type", url: "https://fixture.invalid/opaque", attributes: { comment: "keep me" } }, edge("System.LinkTypes.Related", 99)] },
+    ];
+    const fixture = relationService(original);
+    const client = new implementation.AdoClient(CONFIG, fixture.transport);
+    const remote = await client.getWorkItems([...identities.keys()]);
+    const first = await implementation.importRelations(remote, CONFIG.orgUrl, identities, pm, custom);
+    assert.equal(first.updated.length, 4);
+    assert.equal(first.unmapped.length, 2);
+    const rows = (await pm.listAllComplete()).items;
+    assert.equal(rows.find((row) => row.id === ids[1])!.parent, ids[0]);
+    const deps = rows.find((row) => row.id === ids[0])!.dependencies!;
+    assert.deepEqual(deps.map((dep) => JSON.stringify([dep.id, dep.kind, dep.source_kind])).sort(), [
+      [ids[2], "blocks", "System.LinkTypes.Dependency-Forward"],
+      [ids[3], "related", "System.LinkTypes.Related"],
+      [ids[3], "related", "System.LinkTypes.Duplicate-Forward"],
+      [ids[4], "verifies", "Custom.Supports"],
+      [ids[3], "related", "Custom.Association"],
+    ].map((dep) => JSON.stringify(dep)).sort());
+    const history = readFileSync(join(pmRoot, "history", `${ids[0]}.jsonl`), "utf8");
+    assert.deepEqual((await implementation.importRelations(remote, CONFIG.orgUrl, identities, pm, custom)).updated, []);
+    assert.equal(readFileSync(join(pmRoot, "history", `${ids[0]}.jsonl`), "utf8"), history);
+    for (const item of remote) {
+      const plan = await implementation.exportRelations(item, CONFIG.orgUrl, identities, pm, custom);
+      assert.deepEqual(plan.operations, [], `unchanged item ${item.id} must need no PATCH`);
+      assert.equal(plan.unmappedLocal.length, 0);
+    }
+    assert.equal(fixture.patches.length, 0);
+    // A locally authored dependency must export both ends, then import without duplication.
+    await pm.update(ids[0]!, { dep: [`id=${ids[5]},kind=blocks`] });
+    for (const id of [1, 6]) {
+      const snapshot = fixture.items.get(id)!;
+      const plan = await implementation.exportRelations(snapshot, CONFIG.orgUrl, identities, pm, custom);
+      assert.equal(plan.operations.length, 1);
+      const written = await client.updateWorkItem(id, snapshot.rev, {}, plan.operations);
+      assert.deepEqual(fixture.patches.at(-1)![0], { op: "test", path: "/rev", value: snapshot.rev });
+      assert.deepEqual((await implementation.exportRelations(written, CONFIG.orgUrl, identities, pm, custom)).operations, []);
+    }
+    assert.deepEqual(fixture.items.get(6)!.relations!.slice(0, 2), original[5]!.relations);
+    await implementation.importRelations(await client.getWorkItems([1, 6]), CONFIG.orgUrl, identities, pm, custom);
+    const afterImport = (await pm.listAllComplete()).items.find((row) => row.id === ids[0])!.dependencies!;
+    assert.equal(afterImport.filter((dep) => dep.id === ids[5] && dep.kind === "blocks").length, 1);
+  });
+
+  test(`${implementation.name}: parent update failure restores hierarchy without leaving items detached`, async (t) => {
+    for (const failAt of [2, 1, 3, 4, 5]) {
+      const { pm, identities, ids } = await relationTracker(t);
+      await pm.update(ids[1]!, { parent: ids[0] });
+      await pm.update(ids[2]!, { parent: ids[1] });
+      await pm.update(ids[4]!, { parent: ids[0] });
+      const before = new Map((await pm.listAllComplete()).items.map((item) => [item.id, item.parent]));
+      const update = pm.update.bind(pm);
+      const failure = new Error(`injected update ${failAt}`);
+      let calls = 0;
+      let failed = false;
+      const forwardUnsets: string[] = [];
+      pm.update = async (id, options) => {
+        if (!failed && options?.unset?.includes("parent")) forwardUnsets.push(id);
+        if (++calls === failAt) {
+          failed = true;
+          throw failure;
+        }
+        return update(id, options);
+      };
+      await assert.rejects(() => implementation.importRelations([
+        { id: 1, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 2)] },
+        { id: 2, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 3)] },
+        { id: 3, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 4)] },
+        { id: 5, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 6)] },
+        { id: 6, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Related", 4)] },
+      ], CONFIG.orgUrl, identities, pm), (error: unknown) => error === failure);
+      assert.deepEqual(new Map((await pm.listAllComplete()).items.map((item) => [item.id, item.parent])), before,
+        `update ${failAt}: every previous parent must be restored`);
+      assert.deepEqual(forwardUnsets, [], "final-tree ordering requires no transient detachment");
+    }
+  });
+
+  test(`${implementation.name}: failed parent compensation reports exact detached IDs and continues recovery`, async (t) => {
+    for (const detach of [false, true]) {
+      const { pm, identities, ids } = await relationTracker(t, 4);
+      await pm.update(ids[1]!, { parent: ids[0] });
+      const update = pm.update.bind(pm);
+      const failure = new Error("injected batch failure");
+      const forwardParents: string[] = [];
+      let failed = false;
+      pm.update = async (id, options) => {
+        if (!failed && options?.parent !== undefined) {
+          forwardParents.push(id);
+          if (forwardParents.length === 3) {
+            failed = true;
+            throw failure;
+          }
+        } else if (failed && id === ids[1]) {
+          if (detach) await update(id, { unset: ["parent"] });
+          throw new Error("injected restoration failure");
+        }
+        return update(id, options);
+      };
+      await assert.rejects(() => implementation.importRelations([
+        { id: 1, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 2)] },
+        { id: 2, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 3)] },
+        { id: 4, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 1)] },
+      ], CONFIG.orgUrl, identities, pm), (error: unknown) => {
+        assert.ok(error instanceof implementation.CommandError);
+        assert.equal(error.exitCode, EXIT_CODE.conflict);
+        assert.equal(error.cause, failure);
+        assert.equal(error.message, `Error: injected batch failure; parent restoration failed for: ${ids[1]}; detached IDs: ${detach ? ids[1] : "none"}`);
+        return true;
+      });
+      const rows = (await pm.listAllComplete()).items;
+      assert.equal(rows.find((item) => item.id === ids[0])!.parent, undefined,
+        "compensation must continue restoring other completed changes");
+      assert.equal(rows.find((item) => item.id === ids[1])!.parent, detach ? undefined : ids[2]);
+    }
+  });
+
+  test(`${implementation.name}: ambiguous custom inverse pairs retain provenance without guessing`, async (t) => {
+    const { pm, identities, ids } = await relationTracker(t, 3);
+    const custom = {
+      "Custom.Before": "blocks" as const, "Custom.After": "blocked_by" as const,
+      "Custom.Precedes": "blocks" as const, "Custom.Follows": "blocked_by" as const,
+    };
+    await implementation.importRelations([
+      { id: 1, rev: 1, fields: {}, relations: [edge("Custom.Precedes", 2)] },
+      { id: 2, rev: 1, fields: {}, relations: [edge("Custom.Follows", 3)] },
+    ], CONFIG.orgUrl, identities, pm, custom);
+    const reverse = await implementation.exportRelations({ id: 2, rev: 1, fields: {}, relations: [] }, CONFIG.orgUrl, identities, pm, custom);
+    assert.deepEqual(reverse.operations, [{ op: "add", path: "/relations/-", value: edge("Custom.Follows", 3) }]);
+    assert.deepEqual(reverse.unmappedLocal, [{ id: ids[1], kind: "blocked_by", target: ids[0], source_kind: "Custom.Precedes" }]);
+    const retained = { ...edge("Custom.Follows", 1), attributes: { comment: "keep ambiguous inverse" } };
+    const existing = await implementation.exportRelations({ id: 2, rev: 1, fields: {}, relations: [retained] }, CONFIG.orgUrl, identities, pm, custom);
+    assert.deepEqual(existing.operations, reverse.operations, "unresolved inverse must not remove an existing remote link");
+    assert.deepEqual(existing.unmapped, [{ itemId: 2, relation: retained }]);
+    const forward = await implementation.exportRelations({ id: 3, rev: 1, fields: {}, relations: [] }, CONFIG.orgUrl, identities, pm, custom);
+    assert.deepEqual(forward.operations, []);
+    assert.deepEqual(forward.unmappedLocal, [{ id: ids[2], kind: "blocks", target: ids[1], source_kind: "Custom.Follows" }]);
+    const fallback = await implementation.exportRelations({ id: 2, rev: 1, fields: {}, relations: [] }, CONFIG.orgUrl, identities, pm,
+      { "Custom.Precedes": "blocks", "Custom.Follows": "blocked_by", "Custom.Before": "blocks" });
+    assert.deepEqual(fallback.operations.map((op) => (op.value as AdoRelation).rel), ["Custom.Follows", "Custom.Follows"]);
+    const builtin = await implementation.exportRelations({ id: 2, rev: 1, fields: {}, relations: [] }, CONFIG.orgUrl, identities, pm,
+      { "Custom.Precedes": "blocks" });
+    assert.deepEqual(builtin.operations, [{ op: "add", path: "/relations/-", value: edge("System.LinkTypes.Dependency-Reverse", 1) }]);
+  });
+
+  test(`${implementation.name}: hierarchy cycles and competing remote parents leave tracker history untouched`, async (t) => {
+    const { pm, identities, ids, pmRoot } = await relationTracker(t);
+    await pm.update(ids[1]!, { parent: ids[0] });
+    await pm.update(ids[2]!, { dep: [`id=${ids[1]},kind=parent`] });
+    const before = await pm.listAllComplete();
+    const histories = ids.map((id) => readFileSync(join(pmRoot, "history", `${id}.jsonl`), "utf8"));
+    for (const snapshots of [
+      [{ id: 1, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 3)] }],
+      [{ id: 4, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 4)] }],
+      [{ id: 4, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 5), edge("System.LinkTypes.Hierarchy-Forward", 5)] }],
+      [{ id: 4, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 5), edge("System.LinkTypes.Hierarchy-Reverse", 6)] }],
+    ]) {
+      await assert.rejects(() => implementation.importRelations(snapshots, CONFIG.orgUrl, identities, pm), /cycle|conflicting remote parents/u);
+      assert.deepEqual((await pm.listAllComplete()).items, before.items);
+      assert.deepEqual(ids.map((id) => readFileSync(join(pmRoot, "history", `${id}.jsonl`), "utf8")), histories);
+    }
+  });
+}
+
+test("duplicate mapping, custom reference validation and prototype names are safe", () => {
+  const relation = edge("System.LinkTypes.Related", 2);
+  assert.equal(mapRelations({ id: 1, rev: 1, fields: {}, relations: [relation, relation] }, CONFIG.orgUrl).links.length, 1);
+  assert.deepEqual(mapRelations({ id: 1, rev: 1, fields: {}, relations: [edge("toString", 2)] }, CONFIG.orgUrl).unmapped, ["toString"]);
+  assert.deepEqual(mapRelations({ id: 1, rev: 1, fields: {}, relations: [edge("Custom.Supports", 2)] }, CONFIG.orgUrl, { "Custom.Supports": "verifies" }).links, [{ kind: "verifies", targetId: 2 }]);
+  for (const rel of ["System.LinkTypes.Related", "Custom.Bad,kind=blocks"]) {
+    assert.throws(() => mapRelations({ id: 1, rev: 1, fields: {}, relations: [edge(rel, 2)] }, CONFIG.orgUrl, { [rel]: "related" }), /invalid custom/u);
+  }
+});
+
+test("relation patch guards reject attempts to smuggle fields or revision changes", () => {
+  for (const operation of [
+    { op: "test" as const, path: "/rev", value: 2 },
+    { op: "replace" as const, path: "/fields/System.Title", value: "oops" },
+    { op: "remove" as const, path: "/relations/-1" },
+    { op: "add" as const, path: "/relations/0" },
+  ]) assert.throws(() => buildUpdatePatch(1, {}, [operation]), /relation changes/u);
+});
+
+test("reparenting a valid final tree avoids transient cycles and preserves independent dependencies", async (t) => {
+  const { pm, identities, ids } = await relationTracker(t, 3);
+  await pm.update(ids[1]!, { parent: ids[0], dep: [`id=${ids[2]},kind=implements`] });
+  const report = await importRelations([
+    { id: 1, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 2)] },
+    { id: 2, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 3)] },
+  ], CONFIG.orgUrl, identities, pm);
+  assert.equal(report.updated.length, 2);
+  const rows = (await pm.listAllComplete()).items;
+  assert.equal(rows.find((item) => item.id === ids[0])!.parent, ids[1]);
+  assert.equal(rows.find((item) => item.id === ids[1])!.parent, ids[2]);
+  assert.equal(rows.find((item) => item.id === ids[1])!.dependencies![0]!.kind, "implements");
+  assert.deepEqual((await importRelations([{ id: 3, rev: 1, fields: {} }], CONFIG.orgUrl, identities, pm)).updated, []);
+});
+
+test("relation planning rejects invalid identities, missing sources, and unexpanded exports", async (t) => {
+  const { pm, identities, ids } = await relationTracker(t, 2);
+  const remote = { id: 1, rev: 1, fields: {}, relations: [] };
+  for (const bad of [
+    new Map([[0, ids[0]!]]),
+    new Map([[Number.MAX_SAFE_INTEGER + 1, ids[0]!]]),
+    new Map([[1, "fixture-missing"]]),
+    new Map([[1, ids[0]!], [2, ids[0]!]]),
+  ]) {
+    await assert.rejects(() => importRelations([remote], CONFIG.orgUrl, bad, pm), /unique safe IDs/u);
+    await assert.rejects(() => exportRelations(remote, CONFIG.orgUrl, bad, pm), /unique safe IDs/u);
+  }
+  await assert.rejects(() => importRelations([{ ...remote, id: 99 }], CONFIG.orgUrl, identities, pm), /missing pm identity/u);
+  await assert.rejects(() => exportRelations({ ...remote, id: 99 }, CONFIG.orgUrl, identities, pm), /missing pm identity/u);
+  await assert.rejects(() => exportRelations({ id: 1, rev: 1, fields: {} }, CONFIG.orgUrl, identities, pm), /expanded/u);
+  await pm.update(ids[0]!, { dep: [`id=${ids[1]},kind=related`] });
+  await assert.rejects(() => exportRelations(remote, "https://token@fixture.invalid/org", identities, pm), /canonical organization/u);
+  const unsafe: AdoRelation = { rel: "System.LinkTypes.Related", url: "https://fixture.invalid/other/_apis/wit/workItems/2" };
+  assert.deepEqual((await importRelations([{ ...remote, relations: [unsafe] }], CONFIG.orgUrl, identities, pm)).unmapped, [{ itemId: 1, relation: unsafe }]);
+  assert.equal((await exportRelations({ ...remote, relations: [unsafe] }, CONFIG.orgUrl, identities, pm)).unmapped.length, 1);
+});
+
+test("export removes stale and duplicate entries by descending index and preserves surviving annotations", async (t) => {
+  const { pm, identities, ids } = await relationTracker(t, 3);
+  await pm.update(ids[0]!, { dep: [`id=${ids[1]},kind=related`] });
+  const retained = { ...edge("System.LinkTypes.Related", 2), attributes: { comment: "retained annotation" } };
+  const remote: AdoWorkItem = { id: 1, rev: 5, fields: {}, relations: [retained, edge("System.LinkTypes.Related", 3), retained, edge("System.LinkTypes.Dependency-Forward", 3)] };
+  const service = relationService([remote]);
+  const plan = await exportRelations(remote, CONFIG.orgUrl, identities, pm);
+  assert.deepEqual(plan.operations, [3, 2, 1].map((index) => ({ op: "remove", path: `/relations/${index}` })));
+  const client = new AdoClient(CONFIG, service.transport);
+  const updated = await client.updateWorkItem(1, 5, { "System.Title": "with relations" }, plan.operations);
+  assert.deepEqual(updated.relations, [retained]);
+  assert.equal(updated.fields["System.Title"], "with relations");
+  assert.deepEqual((await exportRelations(updated, CONFIG.orgUrl, identities, pm)).operations, []);
+  await assert.rejects(() => client.updateWorkItem(1, 5, {}, [{ op: "remove", path: "/relations/0" }]), /asserted rev 5 but current rev is 6/u);
+  assert.deepEqual(service.items.get(1)!.relations, [retained]);
+  assert.equal(service.patches.length, 2, "conflict must not replay the write");
+});
+
+test("custom hierarchy names survive without dropping distinct reference types", async (t) => {
+  const { pm, identities, ids } = await relationTracker(t, 2);
+  const custom = { "Custom.Parent": "parent" as const, "Custom.Child": "child" as const };
+  await importRelations([{ id: 2, rev: 1, fields: {}, relations: [edge("Custom.Parent", 1), edge("Custom.Parent", 1)] }], CONFIG.orgUrl, identities, pm, custom);
+  assert.equal((await pm.listAllComplete()).items.find((item) => item.id === ids[1])!.parent, ids[0]);
+  const parentRemote = { id: 2, rev: 1, fields: {}, relations: [edge("Custom.Parent", 1)] };
+  assert.deepEqual((await exportRelations(parentRemote, CONFIG.orgUrl, identities, pm, custom)).operations, []);
+  const childRemote = { id: 1, rev: 1, fields: {}, relations: [edge("Custom.Child", 2)] };
+  assert.deepEqual((await exportRelations(childRemote, CONFIG.orgUrl, identities, pm, custom)).operations, []);
+  for (const relations of [
+    [edge("Custom.Child", 2), edge("System.LinkTypes.Hierarchy-Forward", 2)],
+    [edge("System.LinkTypes.Hierarchy-Forward", 2), edge("Custom.Child", 2)],
+  ]) {
+    assert.deepEqual((await exportRelations({ ...childRemote, relations }, CONFIG.orgUrl, identities, pm, custom)).operations, []);
+    assert.deepEqual((await exportRelations({ ...childRemote, relations: [...relations, relations[0]!] }, CONFIG.orgUrl, identities, pm, custom)).operations, [{ op: "remove", path: "/relations/2" }]);
+  }
+});
+
+test("legacy hierarchy dependencies export both directions and participate in cycle checks", async (t) => {
+  const { pm, identities, ids } = await relationTracker(t, 3);
+  await pm.update(ids[0]!, { dep: [`id=${ids[1]},kind=child`] });
+  await pm.update(ids[2]!, { dep: [`id=${ids[1]},kind=parent`] });
+  const plan = await exportRelations({ id: 2, rev: 1, fields: {}, relations: [] }, CONFIG.orgUrl, identities, pm);
+  assert.deepEqual(plan.operations.map((op) => (op.value as AdoRelation).rel).sort(), ["System.LinkTypes.Hierarchy-Forward", "System.LinkTypes.Hierarchy-Reverse"]);
+  assert.deepEqual((await importRelations([], CONFIG.orgUrl, identities, pm)).updated, []);
+  await assert.rejects(() => importRelations([{ id: 1, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 3)] }], CONFIG.orgUrl, identities, pm), /cycle/u);
+});
+
+test("unmapped local kinds and targets are reported while mapped custom dependency directions round-trip", async (t) => {
+  const { pm, identities, ids } = await relationTracker(t, 3);
+  const custom = { "Custom.Before": "blocks" as const, "Custom.After": "blocked_by" as const, "Custom.Checks": "verifies" as const };
+  await importRelations([{ id: 1, rev: 1, fields: {}, relations: [edge("Custom.Before", 2), edge("Custom.Checks", 2)] }], CONFIG.orgUrl, identities, pm, custom);
+  let plan = await exportRelations({ id: 2, rev: 1, fields: {}, relations: [] }, CONFIG.orgUrl, identities, pm, custom);
+  assert.deepEqual(plan.operations.map((op) => (op.value as AdoRelation).rel), ["Custom.After"]);
+  await pm.update(ids[0]!, { dep: [`id=${ids[1]},kind=supersedes`, `id=${ids[2]},kind=related`] });
+  plan = await exportRelations({ id: 1, rev: 1, fields: {}, relations: [] }, CONFIG.orgUrl, new Map([[1, ids[0]!], [2, ids[1]!]]), pm, custom);
+  assert.deepEqual(plan.unmappedLocal.map((edge) => edge.kind).sort(), ["related", "supersedes"]);
+});
+
+test("all custom SDK hierarchy and association aliases normalize before storage", async (t) => {
+  const { pm, identities, ids } = await relationTracker(t, 6);
+  const custom = { "Custom.Epic": "epic" as const, "Custom.ChildOf": "child_of" as const, "Custom.Task": "task" as const, "Custom.ParentChild": "parent_child" as const, "Custom.Related": "related_to" as const };
+  await importRelations([
+    { id: 2, rev: 1, fields: {}, relations: [edge("Custom.Epic", 1), edge("Custom.ChildOf", 1), edge("Custom.Task", 3), edge("Custom.ParentChild", 4), edge("Custom.Related", 5)] },
+  ], CONFIG.orgUrl, identities, pm, custom);
+  const rows = (await pm.listAllComplete()).items;
+  assert.equal(rows.find((row) => row.id === ids[1])!.parent, ids[0]);
+  assert.equal(rows.find((row) => row.id === ids[2])!.parent, ids[1]);
+  assert.equal(rows.find((row) => row.id === ids[3])!.parent, ids[1]);
+  assert.equal(rows.find((row) => row.id === ids[1])!.dependencies![0]!.kind, "related");
+});
+
+test("legacy imported dependencies without provenance or resolved targets remain observable", async (t) => {
+  const { pm, identities, pmRoot } = await relationTracker(t, 1);
+  const { items } = await pm.listAllComplete();
+  const id = "fixture-legacy";
+  const result = await commitImportedItem({
+    pmRoot, id, itemPath: join(pmRoot, "tasks", `${id}.toon`),
+    document: {
+      metadata: { ...items[0]!, id, dependencies: [
+        { id: "fixture-absent-parent", kind: "parent", created_at: "2026-01-01T00:00:00.000Z" },
+        { id: "fixture-absent-child", kind: "child", created_at: "2026-01-01T00:00:00.000Z" },
+      ] },
+      body: "",
+    },
+    author: "fixture-agent", message: "Legacy external fixture",
+    settings: await readSettings(pmRoot), conflictWarningPrefix: "fixture_import_conflict",
+  });
+  assert.equal(result.committed, true);
+  assert.deepEqual((await importRelations([], CONFIG.orgUrl, identities, pm)).updated, []);
+  const rows = (await pm.listAllComplete()).items;
+  assert.equal(rows.find((row) => row.id === id)!.dependencies!.length, 2);
+});
+
+test("batch hierarchy preflight refuses a disconnected cycle before even the first local mutation", async (t) => {
+  const { pm, identities, ids, pmRoot } = await relationTracker(t, 4);
+  const histories = ids.map((id) => readFileSync(join(pmRoot, "history", `${id}.jsonl`), "utf8"));
+  await assert.rejects(() => importRelations([
+    { id: 3, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 4)] },
+    { id: 4, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 3)] },
+  ], CONFIG.orgUrl, identities, pm), /cycle/u);
+  assert.deepEqual(ids.map((id) => readFileSync(join(pmRoot, "history", `${id}.jsonl`), "utf8")), histories,
+    "even the first otherwise valid parent assignment must not persist");
+  assert.ok((await pm.listAllComplete()).items.every((item) => item.parent === undefined));
+});
+
+test("missing custom configuration reports provenance instead of adding a lossy built-in alias", async (t) => {
+  const { pm, identities, ids } = await relationTracker(t, 2);
+  const remote = { id: 1, rev: 1, fields: {}, relations: [edge("Custom.Association", 2)] };
+  await importRelations([remote], CONFIG.orgUrl, identities, pm, { "Custom.Association": "related" });
+  const plan = await exportRelations(remote, CONFIG.orgUrl, identities, pm);
+  assert.deepEqual(plan.operations, []);
+  assert.equal(plan.unmapped.length, 1);
+  assert.deepEqual(plan.unmappedLocal, [{ id: ids[0], kind: "related", target: ids[1] }]);
+  await pm.update(ids[0]!, { dep: [`id=${ids[1]},kind=blocks,source_kind=System.LinkTypes.Related`] });
+  assert.equal((await exportRelations(remote, CONFIG.orgUrl, identities, pm)).unmappedLocal.length, 2);
 });

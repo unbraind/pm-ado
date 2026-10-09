@@ -48,11 +48,11 @@
     "@types/istanbul-lib-coverage": "2.0.6",
     "@types/istanbul-lib-instrument": "1.7.8",
     "@types/node": "26.6.4",
-    "@unbrained/pm-cli": "2026.10.5",
+    "@unbrained/pm-cli": "2026.10.6",
     "istanbul-lib-coverage": "3.2.2",
     "istanbul-lib-instrument": "6.0.3",
     "pm-changelog": "2026.10.4",
-    "pm-ops": "2026.10.4",
+    "pm-ops": "2026.10.5",
     "typescript": "7.0.2"
   },
   "keywords": [

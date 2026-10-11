@@ -51,12 +51,16 @@ See [typed relation usage and semantics](docs/typed-relations.md) for the SDK AP
 custom mappings, preservation rules and offline acceptance evidence.
 
 This repository is tracked with `pm` and gated by
-the same mandatory quality gates as the rest of the fleet: 100% measured Node V8
+the same mandatory quality gates as the rest of the fleet: 100% independent Istanbul statement coverage and 100% measured Node V8
 lines, branches and functions, a 100% docstring gate, CodeQL, and a
 publish-attestation gate that refuses a release whose `npm publish` would run without
-`--provenance`. The declared statement threshold still needs an independent
-metric and enforcement; [pm-ado-5w3m](.agents/pm/issues/pm-ado-5w3m.toon) tracks
-that gap. The current gate does not establish 100/100/100/100.
+`--provenance`. The coverage gate runs the suite twice: once with Node V8
+coverage, then with AST statement instrumentation across the same required source
+inventory. Missing or invalid statement counters fail even at a zero threshold;
+worker counters are merged and the configured threshold is compared without
+rounding. [Statement-coverage evidence](docs/statement-coverage.md) records the
+regression scenario, revert proof and measured four-source scope. These local
+checks do not establish live Azure integration or release approval.
 
 Publishing to npm is **deliberately gated** behind `PM_RELEASE_APPROVED`, as it is for
 every new package in this fleet, until the repository is approved as carrying no

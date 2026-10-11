@@ -4,7 +4,7 @@
   "description": "Azure DevOps client foundation for pm-cli. Its work-item updates assert System.Rev, batch reads surface missing items, and same-organization typed relations map to pm links. Full sync commands and revision-to-history reconciliation are planned.",
   "author": "@unbraind",
   "entry": "./dist/index.js",
-  "pm_min_version": "2026.8.7",
+  "pm_min_version": "2026.10.4",
   "priority": 50,
   "capabilities": [
     "commands",

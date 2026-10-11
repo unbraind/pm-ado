@@ -67,9 +67,321 @@ export const RELATION_MAP = {
     "System.LinkTypes.Hierarchy-Forward": "child",
     "System.LinkTypes.Related": "related",
     "System.LinkTypes.Duplicate-Forward": "duplicate",
+    "System.LinkTypes.Duplicate-Reverse": "duplicated_by",
     "System.LinkTypes.Dependency-Reverse": "blocked_by",
     "System.LinkTypes.Dependency-Forward": "blocks",
 };
+/** Resolve explicit custom mappings without accepting inherited object properties. */
+function relationKind(rel, custom) {
+    if (Object.hasOwn(custom, rel)) {
+        if (!/^[A-Za-z0-9_.-]+$/u.test(rel) || Object.hasOwn(RELATION_MAP, rel)) {
+            throw new CommandError(`invalid custom relation reference: ${rel}`);
+        }
+        return custom[rel];
+    }
+    return Object.hasOwn(RELATION_MAP, rel) ? RELATION_MAP[rel] : undefined;
+}
+/** Canonicalize SDK hierarchy aliases and store Duplicate with its original reference name. */
+function storedRelationKind(kind) {
+    if (kind === "duplicate" || kind === "duplicated_by" || kind === "related_to")
+        return "related";
+    if (kind === "child_of" || kind === "epic")
+        return "parent";
+    if (kind === "parent_child" || kind === "task")
+        return "child";
+    return kind;
+}
+/** Reject ambiguous or dangling identity tables before planning either direction. */
+function assertRelationIdentities(identities, items) {
+    const local = new Set(items.map((item) => item.id));
+    const seen = new Set();
+    for (const [remote, id] of identities) {
+        if (!Number.isSafeInteger(remote) || remote <= 0 || !local.has(id) || seen.has(id)) {
+            throw new CommandError("relation identities must be unique safe IDs naming existing pm items");
+        }
+        seen.add(id);
+    }
+}
+/**
+ * Merge a remote relation batch into real pm hierarchy and dependencies.
+ *
+ * Read the complete tracker before writing; validate the entire proposed hierarchy,
+ * including existing hierarchy dependencies, so remote cycles and competing parents
+ * leave every item untouched. Apply parents before descendants in the validated
+ * final tree, avoiding transient cycles without detaching existing parents. If a
+ * write fails, restore completed parent changes in reverse order; failed recovery
+ * reports the exact detached IDs from a fresh tracker read. Dependency source_kind retains exact ADO reference names,
+ * including custom types and both Duplicate directions (stored as related because the
+ * SDK mutation parser does not accept a duplicate kind). This is an additive import:
+ * absent remote links do not erase independently maintained local links.
+ *
+ * @param remote - Relation snapshots read through the batch client.
+ * @param orgUrl - Organization scope used to validate every relation target.
+ * @param identities - One-to-one remote-to-local identity table.
+ * @param pm - Caller-owned SDK client bound to the target tracker.
+ * @param custom - Explicit custom reference-name mappings.
+ * @returns Changed local IDs and original edges that could not be imported.
+ */
+export async function importRelations(remote, orgUrl, identities, pm, custom = {}) {
+    const { items } = await pm.listAllComplete();
+    assertRelationIdentities(identities, items);
+    const parents = new Map(items.map((item) => [item.id, item.parent]));
+    const proposed = new Map();
+    const additions = new Map();
+    const seen = new Set(items.flatMap((item) => (item.dependencies ?? []).map((dep) => JSON.stringify([item.id, dep.id, dep.kind, dep.source_kind]))));
+    const native = new Set(items.flatMap((item) => (item.dependencies ?? [])
+        .filter((dep) => relationKind(dep.source_kind ?? "", custom) === undefined)
+        .map((dep) => JSON.stringify([item.id, dep.id, storedRelationKind(dep.kind)]))));
+    const unmapped = [];
+    for (const item of remote) {
+        const source = identities.get(item.id);
+        if (source === undefined)
+            throw new CommandError(`missing pm identity for work item ${item.id}`);
+        for (const relation of item.relations ?? []) {
+            const mapped = relationKind(relation.rel, custom);
+            const targetId = relationTargetId(relation.url, orgUrl);
+            const target = targetId === undefined ? undefined : identities.get(targetId);
+            if (mapped === undefined || target === undefined) {
+                unmapped.push({ itemId: item.id, relation });
+                continue;
+            }
+            const kind = storedRelationKind(mapped);
+            if (kind === "parent" || kind === "child") {
+                const child = kind === "parent" ? source : target;
+                const parent = kind === "parent" ? target : source;
+                const previous = proposed.get(child);
+                if (previous !== undefined && previous !== parent) {
+                    throw new CommandError(`conflicting remote parents for ${child}`, EXIT_CODE.conflict);
+                }
+                proposed.set(child, parent);
+                parents.set(child, parent);
+            }
+            else {
+                const key = JSON.stringify([source, target, kind, relation.rel]);
+                const nativeEquivalent = RELATION_MAP[relation.rel] === kind && native.has(JSON.stringify([source, target, kind]));
+                if (!seen.has(key) && !nativeEquivalent) {
+                    const deps = additions.get(source) ?? [];
+                    deps.push(`id=${target},kind=${kind},source_kind=${relation.rel}`);
+                    additions.set(source, deps);
+                    seen.add(key);
+                }
+            }
+        }
+    }
+    // Include legacy hierarchy dependencies as well as the parent field. Kahn's
+    // algorithm avoids recursion depth limits and checks disconnected components.
+    const children = new Map();
+    const incoming = new Map();
+    const edges = [];
+    for (const [child, parent] of parents) {
+        incoming.set(child, 0);
+        if (parent !== undefined)
+            edges.push([parent, child]);
+    }
+    for (const item of items) {
+        for (const dep of item.dependencies ?? []) {
+            const kind = storedRelationKind(dep.kind);
+            if (kind === "parent")
+                edges.push([dep.id, item.id]);
+            if (kind === "child")
+                edges.push([item.id, dep.id]);
+        }
+    }
+    for (const [parent, child] of edges) {
+        const outgoing = children.get(parent) ?? new Set();
+        if (!outgoing.has(child)) {
+            outgoing.add(child);
+            children.set(parent, outgoing);
+            incoming.set(child, (incoming.get(child) ?? 0) + 1);
+        }
+        if (!incoming.has(parent))
+            incoming.set(parent, 0);
+    }
+    const queue = [...incoming].filter(([, count]) => count === 0).map(([id]) => id);
+    for (let index = 0; index < queue.length; index++) {
+        for (const child of children.get(queue[index]) ?? []) {
+            const count = incoming.get(child) - 1;
+            incoming.set(child, count);
+            if (count === 0)
+                queue.push(child);
+        }
+    }
+    if (queue.length !== incoming.size) {
+        throw new CommandError("remote relations would create a hierarchy cycle", EXIT_CODE.conflict);
+    }
+    const changedParents = new Set(items.filter((item) => proposed.has(item.id) && item.parent !== proposed.get(item.id))
+        .map((item) => item.id));
+    const byId = new Map(items.map((item) => [item.id, item]));
+    const completed = [];
+    const updated = new Set();
+    try {
+        // Final-tree order gives the minimal detach set: empty. Every changed
+        // ancestor has its final parent before a descendant can point back to it.
+        for (const id of queue) {
+            const item = byId.get(id);
+            if (item === undefined)
+                continue;
+            const parentChanged = changedParents.has(id);
+            const dep = additions.get(id) ?? [];
+            if (parentChanged || dep.length > 0) {
+                await pm.update(id, { ...(parentChanged ? { parent: proposed.get(id) } : {}), dep });
+                if (parentChanged)
+                    completed.push(item);
+                updated.add(id);
+            }
+        }
+    }
+    catch (error) {
+        const failed = [];
+        for (const item of completed.reverse()) {
+            try {
+                await pm.update(item.id, item.parent === undefined ? { unset: ["parent"] } : { parent: item.parent });
+            }
+            catch {
+                failed.push(item.id);
+            }
+        }
+        if (failed.length > 0) {
+            const current = new Map((await pm.listAllComplete()).items.map((item) => [item.id, item.parent]));
+            const detached = items.filter((item) => item.parent !== undefined && current.get(item.id) === undefined)
+                .map((item) => item.id);
+            const failure = new CommandError(`${String(error)}; parent restoration failed for: ${failed.join(", ")}; detached IDs: ${detached.join(", ") || "none"}`, EXIT_CODE.conflict);
+            failure.cause = error;
+            throw failure;
+        }
+        throw error;
+    }
+    return { updated: [...updated], unmapped };
+}
+/**
+ * Plan a minimal relation patch from a complete pm tracker and a remote snapshot.
+ *
+ * Existing reference names and attributes survive when their local edge survives.
+ * Unknown types, unsafe URLs and targets outside the identity table are reported
+ * and retained. Duplicate copies of recognized edges are removed by descending
+ * index; new edges are appended once. source_kind preserves custom/Duplicate
+ * identities even when multiple reference names share one pm kind. The caller
+ * passes the returned operations to updateWorkItem with remote.rev; an empty patch
+ * needs no write. Remote fields are not changed by this planner.
+ *
+ * @param remote - Revision-bearing snapshot with relations expanded.
+ * @param orgUrl - Organization used for canonical relation URLs.
+ * @param identities - One-to-one work-item/pm identity table.
+ * @param pm - Caller-owned SDK client bound to the target tracker.
+ * @param custom - Explicit custom reference-name mappings.
+ * @returns Relation operations and both remote and local unmapped-edge receipts.
+ */
+export async function exportRelations(remote, orgUrl, identities, pm, custom = {}) {
+    if (remote.relations === undefined)
+        throw new CommandError("export requires an expanded relations snapshot");
+    const { items } = await pm.listAllComplete();
+    assertRelationIdentities(identities, items);
+    const source = identities.get(remote.id);
+    if (source === undefined)
+        throw new CommandError(`missing pm identity for work item ${remote.id}`);
+    const local = items.find((item) => item.id === source);
+    const reverse = new Map([...identities].map(([id, pmId]) => [pmId, id]));
+    const desired = new Map();
+    const unmappedLocal = [];
+    const candidates = [
+        ...(local.parent === undefined ? [] : [{ id: local.parent, kind: "parent" }]),
+        ...items.filter((item) => item.parent === source).map((item) => ({ id: item.id, kind: "child" })),
+        ...(local.dependencies ?? []),
+    ];
+    // ADO exposes both ends of dependency links. Materialize the inverse from
+    // incoming pm dependencies even when only one end was imported or authored.
+    for (const item of items) {
+        for (const dep of item.dependencies ?? []) {
+            if (dep.id !== source)
+                continue;
+            const kind = storedRelationKind(dep.kind);
+            const original = dep.source_kind;
+            if (kind === "blocks" || kind === "blocked_by" || kind === "related") {
+                const inverseKind = kind === "blocks" ? "blocked_by" : kind === "blocked_by" ? "blocks" : "related";
+                let inverse = original;
+                if (kind !== "related") {
+                    const customInverses = original !== undefined && Object.hasOwn(custom, original)
+                        ? Object.entries(custom).filter(([, value]) => value === inverseKind) : [];
+                    if (customInverses.length > 1) {
+                        unmappedLocal.push({ id: source, kind: inverseKind, target: item.id, source_kind: original });
+                        continue;
+                    }
+                    inverse = customInverses[0]?.[0] ?? Object.entries(RELATION_MAP).find(([, value]) => value === inverseKind)?.[0];
+                }
+                else if (original === "System.LinkTypes.Duplicate-Forward") {
+                    inverse = "System.LinkTypes.Duplicate-Reverse";
+                }
+                else if (original === "System.LinkTypes.Duplicate-Reverse") {
+                    inverse = "System.LinkTypes.Duplicate-Forward";
+                }
+                candidates.push({ ...dep, id: item.id, kind: inverseKind, source_kind: inverse });
+            }
+            else if (kind === "parent" || kind === "child") {
+                candidates.push({ ...dep, id: item.id, kind: kind === "parent" ? "child" : "parent", source_kind: undefined });
+            }
+        }
+    }
+    for (const dep of candidates) {
+        const kind = storedRelationKind(dep.kind);
+        const provenance = "source_kind" in dep ? dep.source_kind : undefined;
+        const provenanceKind = provenance === undefined ? undefined : relationKind(provenance, custom);
+        if (provenance !== undefined && !provenance.includes(":") &&
+            (provenanceKind === undefined || storedRelationKind(provenanceKind) !== kind)) {
+            unmappedLocal.push({ id: source, kind, target: dep.id });
+            continue;
+        }
+        const rel = provenanceKind !== undefined && storedRelationKind(provenanceKind) === kind
+            ? provenance
+            : Object.entries({ ...RELATION_MAP, ...custom }).find(([, value]) => value === kind)?.[0];
+        const targetId = reverse.get(dep.id);
+        if (rel === undefined || targetId === undefined) {
+            unmappedLocal.push({ id: source, kind, target: dep.id });
+            continue;
+        }
+        const url = `${stripTrailingSlashes(orgUrl)}/_apis/wit/workItems/${targetId}`;
+        if (relationTargetId(url, orgUrl) !== targetId)
+            throw new CommandError("export requires a canonical organization URL");
+        desired.set(`${rel}:${targetId}`, { rel, url });
+    }
+    const retained = new Set();
+    const remove = [];
+    const unmapped = [];
+    for (const [index, relation] of remote.relations.entries()) {
+        const mapped = relationKind(relation.rel, custom);
+        const targetId = relationTargetId(relation.url, orgUrl);
+        if (mapped === undefined || targetId === undefined || !identities.has(targetId)) {
+            unmapped.push({ itemId: remote.id, relation });
+            continue;
+        }
+        if (unmappedLocal.some((dep) => dep.source_kind !== undefined && dep.target === identities.get(targetId) &&
+            dep.kind === storedRelationKind(mapped))) {
+            unmapped.push({ itemId: remote.id, relation });
+            continue;
+        }
+        const key = `${relation.rel}:${targetId}`;
+        // Hierarchy has no dependency provenance. Preserve every existing distinct
+        // reference name for a surviving edge, without inventing a built-in alias.
+        if (storedRelationKind(mapped) === "parent" || storedRelationKind(mapped) === "child") {
+            const equivalent = [...desired].find(([, value]) => storedRelationKind(relationKind(value.rel, custom)) === storedRelationKind(mapped) &&
+                relationTargetId(value.url, orgUrl) === targetId);
+            if (equivalent !== undefined && equivalent[0] !== key) {
+                if (!retained.has(equivalent[0]))
+                    desired.delete(equivalent[0]);
+                desired.set(key, relation);
+            }
+        }
+        if (desired.has(key) && !retained.has(key))
+            retained.add(key);
+        else
+            remove.push(index);
+    }
+    const operations = remove.reverse().map((index) => ({ op: "remove", path: `/relations/${index}` }));
+    for (const [key, relation] of desired) {
+        if (!retained.has(key))
+            operations.push({ op: "add", path: "/relations/-", value: relation });
+    }
+    return { operations, unmapped, unmappedLocal };
+}
 /** pm item statuses mapped to the Azure DevOps states they correspond to. */
 export const STATE_MAP = {
     open: "New",
@@ -159,12 +471,20 @@ export function relationTargetId(url, orgUrl) {
  *
  * @param rev - The revision the local copy was read at.
  * @param fields - Field reference names mapped to their new values.
+ * @param relations - Validated add/remove operations from the relation export planner.
  * @returns The patch document, beginning with the revision assertion.
  */
-export function buildUpdatePatch(rev, fields) {
+export function buildUpdatePatch(rev, fields, relations = []) {
     const patch = [{ op: "test", path: "/rev", value: rev }];
     for (const [name, value] of Object.entries(fields)) {
         patch.push({ op: "replace", path: `/fields/${name}`, value });
+    }
+    for (const operation of relations) {
+        if (!(operation.op === "add" && operation.path === "/relations/-") &&
+            !(operation.op === "remove" && /^\/relations\/(0|[1-9][0-9]*)$/u.test(operation.path))) {
+            throw new CommandError("relation changes must add or remove relation entries");
+        }
+        patch.push(operation);
     }
     return patch;
 }
@@ -382,13 +702,14 @@ export class AdoClient {
      * @param id - The work item id.
      * @param rev - The revision the local copy was read at.
      * @param fields - Field reference names mapped to their new values.
+     * @param relations - Relation add/remove operations to apply in the same revision check.
      * @returns The updated work item as the service returned it.
      * @throws {CommandError} With {@link EXIT_CODE.conflict} when the revision
      *   moved, naming the item and both revisions.
      */
-    async updateWorkItem(id, rev, fields) {
+    async updateWorkItem(id, rev, fields, relations = []) {
         try {
-            const patch = buildUpdatePatch(rev, fields);
+            const patch = buildUpdatePatch(rev, fields, relations);
             const payload = await this.request("PATCH", `/_apis/wit/workitems/${id}?api-version=7.1`, patch, PATCH_MEDIA_TYPE);
             return payload;
         }
@@ -420,23 +741,28 @@ export class AdoClient {
  * @param orgUrl - The organization whose work item identities may be mapped.
  *   Required. Callers of the published 2026.9.2 one-argument form must pass it;
  *   omitting it throws instead of treating every relation as unmapped.
+ * @param custom - Explicit custom reference-name mappings; built-in names cannot be overridden.
  * @returns The recognised links, and the relation names that were not mapped.
  * @throws {TypeError} When `orgUrl` is omitted or not a string.
  */
-export function mapRelations(item, orgUrl) {
+export function mapRelations(item, orgUrl, custom = {}) {
     if (typeof orgUrl !== "string") {
         throw new TypeError("mapRelations requires orgUrl");
     }
     const links = [];
     const unmapped = [];
+    const seen = new Set();
     for (const relation of item.relations ?? []) {
-        const kind = RELATION_MAP[relation.rel];
+        const kind = relationKind(relation.rel, custom);
         const targetId = relationTargetId(relation.url, orgUrl);
         if (kind === undefined || targetId === undefined) {
             unmapped.push(relation.rel);
             continue;
         }
-        links.push({ kind, targetId });
+        const key = `${relation.rel}:${targetId}`;
+        if (!seen.has(key))
+            links.push({ kind, targetId });
+        seen.add(key);
     }
     return { links, unmapped };
 }

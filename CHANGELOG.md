@@ -2,8 +2,13 @@
 
 ## 2026.9.2 - 2026-09-02
 
+### Breaking Changes
+
+- Map typed work item relations onto pm parent and dependency kinds in both directions ([pm-ado-1zuu](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-1zuu.toon))
+
 ### Added
 
+- Map typed work item relations onto pm parent and dependency kinds in both directions ([pm-ado-1zuu](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-1zuu.toon))
 - Read a project through the work item batch endpoint instead of one request per item ([pm-ado-ntkc](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-ntkc.toon))
 - Assert System.Rev on every write so a concurrent agent cannot silently overwrite another ([pm-ado-8zx9](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-8zx9.toon))
 

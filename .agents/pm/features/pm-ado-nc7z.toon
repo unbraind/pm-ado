@@ -1,0 +1,37 @@
+id: pm-ado-nc7z
+title: "Import, export and reconcile Azure DevOps work items with revision-checked commands"
+description: "Register ado import, export and sync with SDK mutations, idempotent field mapping, stored revision snapshots, per-field three-way conflicts, and read-only dry-run plans. Prove the real commands against a local REST contract server and disposable trackers; live Azure acceptance remains pending credentials."
+type: Feature
+status: in_progress
+priority: 1
+tags: []
+created_at: "2026-10-15T17:57:02.648Z"
+updated_at: "2026-10-15T18:31:13.521Z"
+author: codex-agent
+parent: pm-ado-g4v1
+comments[7]{created_at,author,text}:
+  "2026-10-15T17:57:18.457Z",codex-agent,"Design: register typed import/export/sync commands using the host output envelope and SDK mutations. Persist ado_rev plus an ado_sync_base JSON field as the last agreed field snapshot; reconcile each mapped field against remote and local values before applying either side. Revision conflicts retain the entire local item and history. Dry-run shares planning and performs only read requests. Reuse typed relation adapters and expose their preservation diagnostics. Validate through a local REST contract server and real disposable trackers; no live Azure credentials are available."
+  "2026-10-15T18:10:27.787Z",codex-agent,"Offline command suite: 17/17 scenarios pass against a real local REST server and disposable SDK trackers, including explicit export asserting the stored revision, mixed remote/local field reconciliation, 412 refusal with unchanged item/history bytes, state-map overrides, batch/limit selection and relations after new identity allocation. Host observations: extension commands use --output-format for TOON; listAllComplete may populate ignored derived metadata caches. Dry-run assertions cover authoritative item/history/settings/schema files and the complete HTTP request log. Live Azure acceptance remains pending credentials."
+  "2026-10-15T18:23:43.811Z",codex-agent,"Behavioral revert proofs in runSyncCommand: (1) replace explicit export stored-revision selection with the freshly read remote revision, rebuild, then node --test --test-name-pattern=\"412 export conflict\" test/sync.test.ts: build exit 0, test exit 1 on behavioral assertion actual CLI exit 0 versus required 4; (2) remove only the dry-run write guard, rebuild, then node --test --test-name-pattern=\"dry-run import/export/sync write neither\" test/sync.test.ts: build exit 0, test exit 1 on changed tracker-file bytes. Restore both guards and rebuild: node --test --test-name-pattern=\"412 export conflict|dry-run import/export/sync write neither\" test/sync.test.ts passes 2/2, zero skips. These failures preserve registration and exports and are not import/compilation failures."
+  "2026-10-15T18:23:46.361Z",codex-agent,"Additional acceptance covers terminal-state import/update, explicit export filter refusal, shared-state mapping idempotency, tag commas, new-identity relation races, and recovery after failed relation import. The host SDK routes a repeated terminal status through closure handling; unchanged status is omitted from provenance-only updates. A new import records its sync base only after relation import succeeds. No history is rewritten; the pinned SDK version and publish approval gate are unchanged."
+  "2026-10-15T18:26:53.742Z",codex-agent,"The linked test was executed with pm test pm-ado-nc7z --run --progress: 26/26 command scenarios passed, zero failures, skips, cancellations or todos; the linked command exited 0 and pm reported a trusted local-source test with no context mismatch. Both source registration and actual CLI parsing/rendering/exit paths use the real host and real disposable trackers. Final npm and Bun release gates will also retain the existing thresholds and source inventory."
+  "2026-10-15T18:29:41.872Z",codex-agent,"Full offline coverage proof: npm run coverage passes 177/177 tests in the V8 pass and 177/177 in the independent statement pass, zero failures/skips/cancellations/todos. All five required source files have 100% V8 lines/branches/functions; independent statements are 801/801 (100%). The source inventory settings and all thresholds are unchanged. Behavioral guard reverts and the 26/26 pm-linked command run are recorded above. Final unchanged-head npm and Bun release gates remain linked and will be reported in the PR; live Azure acceptance requires credentials. Implementation and documentation are ready for delivery; item remains in_progress for orchestrator verification."
+  "2026-10-15T18:31:13.521Z",codex-agent,"Final diagnostic checks pass 2/2: conflicts during new-identity relation publication include the intended relation differences, and disappearing work items report remote_rev=null with explicit null remote field values. The conflicting local item/history remain unchanged. Final npm/Bun release checks will run on the committed tree, with their exact counts in the PR receipt."
+files[8]{path,scope}:
+  dist/sync.js,project
+  index.ts,project
+  manifest.json,project
+  package-lock.json,project
+  package.json,project
+  sync.ts,project
+  test/ado.test.ts,project
+  test/sync.test.ts,project
+tests[3]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
+  "npm run build && npm run build:test && node --test test/sync.test.ts",project,codex-agent,"2026-10-15T18:10:53.247Z",local_mutation,feat/ado-import-export-sync
+  "npm run release:check",project,codex-agent,"2026-10-15T18:26:58.755Z",local_mutation,feat/ado-import-export-sync
+  "bun run release:check",project,codex-agent,"2026-10-15T18:27:00.901Z",local_mutation,feat/ado-import-export-sync
+docs[3]{path,scope}:
+  docs/sync.md,project
+  docs/typed-relations.md,project
+  README.md,project
+body: ""

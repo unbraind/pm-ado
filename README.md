@@ -20,7 +20,7 @@ rather than silently overwriting their edit. That is a compare-and-swap on a rem
 tracker, and it is the primitive `pm` already organises itself around for multi-agent
 work. Every other integration in this fleet performs last-write-wins updates and can
 lose a concurrent edit. `pm-ado` does not have to, so it does not: **every** remote
-write asserts a revision.
+update asserts a revision. Creation allocates its first revision on the server.
 
 Three further Azure DevOps capabilities map onto `pm` primitives more directly than
 Jira or Linear can express:
@@ -39,13 +39,17 @@ being linked to a different local item. The same-organization URL check follows
 
 ## Status
 
-Early. The package currently registers `pm ado validate`; it does not yet register
-`ado sync`, `ado import` or `ado export`. The client library has revision-checked
-updates, batch reads and bidirectional relation adapters backed by real pm trackers.
-Typed relations, custom reference names, idempotent patches and hierarchy-cycle
-refusal are implemented by [the relation feature](.agents/pm/features/pm-ado-1zuu.toon).
-Revision-to-history reconciliation and full sync command orchestration remain in
-the [package epic](.agents/pm/epics/pm-ado-g4v1.toon).
+The package registers `pm ado validate`, `pm ado import`, `pm ado export` and
+`pm ado sync`. Commands use the host SDK for item mutations, expanded batch
+reads, revision-checked updates, typed relation adapters and a dedicated base
+snapshot for per-field three-way reconciliation. Conflicts have structured
+receipts and nonzero exits; dry-run previews perform no item or remote writes.
+
+[Sync command usage, field maps and conflict semantics](docs/sync.md) document the
+implemented behavior and preservation boundaries. The command suite is accepted
+against a local Azure REST contract server and real disposable pm trackers.
+**Live Azure acceptance is pending organization credentials.** The
+[package epic](.agents/pm/epics/pm-ado-g4v1.toon) remains open.
 
 See [typed relation usage and semantics](docs/typed-relations.md) for the SDK API,
 custom mappings, preservation rules and offline acceptance evidence.

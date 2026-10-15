@@ -2,7 +2,8 @@
 
 [pm-ado-1zuu](../.agents/pm/features/pm-ado-1zuu.toon) implements import and
 export of typed work-item links through the package library. The CLI registers
-`ado validate`; full project sync orchestration is separate work.
+`ado validate`, `ado import`, `ado export` and `ado sync`; see
+[command reconciliation semantics](sync.md).
 
 | ADO reference name | Local representation | Export direction |
 | --- | --- | --- |

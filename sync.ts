@@ -51,6 +51,8 @@ interface Plan {
   import_fields: string[];
   /** Fields exported to Azure. */
   export_fields: string[];
+  /** Provenance fields already persisted after a successful remote creation. */
+  linked_fields?: string[];
 }
 /** Internal plan retaining snapshots without exposing private item bodies by default. */
 interface Entry {
@@ -135,7 +137,9 @@ export function localValues(item: ItemMetadata): Values {
 /** Decode and validate the dedicated base; missing legacy bases never imply a winner. */
 function readBase(item: ItemMetadata, sample: Values): Values | undefined {
   if (item.ado_sync_base === undefined) return undefined;
-  const parsed: unknown = JSON.parse(String(item.ado_sync_base));
+  let parsed: unknown;
+  try { parsed = JSON.parse(String(item.ado_sync_base)); }
+  catch { throw new CommandError(`Invalid ado_sync_base for ${item.id}: expected valid JSON`); }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new CommandError("Invalid ado_sync_base");
   const base = parsed as Values;
   for (const [key, value] of Object.entries(sample)) {
@@ -227,7 +231,9 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
     }
     const wiql = buildWiql(ctx.options, config.project);
     const client = new AdoClient(config, transport);
-    const { items } = await pm.listAllComplete();
+    const snapshot = await pm.listAllComplete();
+    const { items } = snapshot;
+    const snapshotReader = { listAllComplete: async () => snapshot };
     const identities = new Map<number, string>();
     for (const item of items) {
       if (item.ado_id === undefined) continue;
@@ -262,7 +268,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
       entries.push(entry);
       if (remote === undefined) { plan.action = "create_remote"; plan.export_fields = Object.keys(values); azureFields(values, plan.export_fields, exportStates); continue; }
       if (local === undefined) { plan.action = "create_local"; plan.import_fields = Object.keys(values); entry.pullRelations = true; continue; }
-      const relationPlan = await exportRelations(remote, config.orgUrl, identities, pm);
+      const relationPlan = await exportRelations(remote, config.orgUrl, identities, snapshotReader);
       diagnostics.push(...relationPlan.unmapped, ...relationPlan.unmappedLocal);
       const r: Values = { ...remoteFields!, relations: relationValues(remote.relations!, config, identities) };
       const l: Values = { ...localFields!, relations: relationValues(applyRelations(remote, relationPlan.operations), config, identities) };
@@ -312,6 +318,12 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
             for (const name of ["System.AreaPath", "System.IterationPath"]) if (fields[name] === "") delete fields[name];
             // Creation has no prior revision; the server allocates identity and rev 1.
             remote = await client.createWorkItem(option(ctx.options, "type") ?? process.env.ADO_WORK_ITEM_TYPE ?? "Task", fields);
+            // Creation is not idempotent: retain its identity before any later work can fail.
+            plan.ado_id = remote.id;
+            const field = [`ado_id=${remote.id}`, `ado_rev=${remote.rev}`, `ado_project=${config.project}`,
+              `ado_org_url=${config.orgUrl}`, `ado_url=${config.orgUrl}/_apis/wit/workItems/${remote.id}`];
+            await pm.update(local!.id, { field, message: `Linked to Azure DevOps work item ${remote.id}` });
+            plan.linked_fields = field.map((value) => value.slice(0, value.indexOf("=")));
             Object.assign(values, remoteValues(remote, states));
             identities.set(remote.id, local!.id);
           } else if (plan.export_fields.length) {

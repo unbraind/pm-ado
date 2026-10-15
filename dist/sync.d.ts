@@ -37,6 +37,8 @@ interface Plan {
     import_fields: string[];
     /** Fields exported to Azure. */
     export_fields: string[];
+    /** Provenance fields already persisted after a successful remote creation. */
+    linked_fields?: string[];
 }
 /** Escape WIQL literals; explicit WIQL cannot be combined with generated filters. */
 export declare function buildWiql(options: Record<string, unknown>, project: string): string;

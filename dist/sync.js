@@ -86,7 +86,13 @@ export function localValues(item) {
 function readBase(item, sample) {
     if (item.ado_sync_base === undefined)
         return undefined;
-    const parsed = JSON.parse(String(item.ado_sync_base));
+    let parsed;
+    try {
+        parsed = JSON.parse(String(item.ado_sync_base));
+    }
+    catch {
+        throw new CommandError(`Invalid ado_sync_base for ${item.id}: expected valid JSON`);
+    }
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
         throw new CommandError("Invalid ado_sync_base");
     const base = parsed;
@@ -180,7 +186,9 @@ export async function runSyncCommand(ctx, mode) {
         }
         const wiql = buildWiql(ctx.options, config.project);
         const client = new AdoClient(config, transport);
-        const { items } = await pm.listAllComplete();
+        const snapshot = await pm.listAllComplete();
+        const { items } = snapshot;
+        const snapshotReader = { listAllComplete: async () => snapshot };
         const identities = new Map();
         for (const item of items) {
             if (item.ado_id === undefined)
@@ -233,7 +241,7 @@ export async function runSyncCommand(ctx, mode) {
                 entry.pullRelations = true;
                 continue;
             }
-            const relationPlan = await exportRelations(remote, config.orgUrl, identities, pm);
+            const relationPlan = await exportRelations(remote, config.orgUrl, identities, snapshotReader);
             diagnostics.push(...relationPlan.unmapped, ...relationPlan.unmappedLocal);
             const r = { ...remoteFields, relations: relationValues(remote.relations, config, identities) };
             const l = { ...localFields, relations: relationValues(applyRelations(remote, relationPlan.operations), config, identities) };
@@ -304,6 +312,12 @@ export async function runSyncCommand(ctx, mode) {
                                 delete fields[name];
                         // Creation has no prior revision; the server allocates identity and rev 1.
                         remote = await client.createWorkItem(option(ctx.options, "type") ?? process.env.ADO_WORK_ITEM_TYPE ?? "Task", fields);
+                        // Creation is not idempotent: retain its identity before any later work can fail.
+                        plan.ado_id = remote.id;
+                        const field = [`ado_id=${remote.id}`, `ado_rev=${remote.rev}`, `ado_project=${config.project}`,
+                            `ado_org_url=${config.orgUrl}`, `ado_url=${config.orgUrl}/_apis/wit/workItems/${remote.id}`];
+                        await pm.update(local.id, { field, message: `Linked to Azure DevOps work item ${remote.id}` });
+                        plan.linked_fields = field.map((value) => value.slice(0, value.indexOf("=")));
                         Object.assign(values, remoteValues(remote, states));
                         identities.set(remote.id, local.id);
                     }

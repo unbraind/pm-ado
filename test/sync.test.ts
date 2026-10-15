@@ -128,7 +128,7 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
     process.env = { ...env };
     try {
       const result = await harness.runCommand({ command: `ado ${mode}`, pmRoot: options.withoutSdk ? undefined : pmRoot, options });
-      return result.result as { ok: boolean; code?: string; exit_code?: number; error?: string; plans: { action: string; import_fields: string[]; export_fields: string[] }[]; conflicts: { stored_rev: number; remote_rev: number; fields: Record<string, unknown> }[]; diagnostics: unknown[] };
+      return result.result as { ok: boolean; code?: string; exit_code?: number; error?: string; plans: { action: string; import_fields: string[]; export_fields: string[]; ado_id: number | null; linked_fields?: string[] }[]; conflicts: { stored_rev: number; remote_rev: number; fields: Record<string, unknown> }[]; diagnostics: unknown[] };
     } finally { process.env = before; process.chdir(cwd); }
   };
   /** Invoke the actual CLI parser, renderer and exit handling in a child process. */
@@ -368,7 +368,16 @@ test("legacy bases fail safely, equal legacy fields bootstrap, and malformed bas
   for (const base of ["{", "null", "[]", JSON.stringify({ ...parsed, tags: [7] }), JSON.stringify({ ...parsed, title: 7 }), JSON.stringify({ ...parsed, tags: "wrong" })]) {
     await f.setFields(item.id, { ado_sync_base: base });
     const before = snapshot(f.pmRoot);
-    assert.equal((await f.command("sync")).ok, false, base);
+    const result = await f.command("sync");
+    assert.equal(result.exit_code, 2, base);
+    assert.equal(result.code, "ADO_USAGE", base);
+    if (base === "{") {
+      assert.match(result.error!, new RegExp(item.id, "u"));
+      assert.match(result.error!, /ado_sync_base/u);
+      const cliResult = await f.host(["ado", "sync", "--json"]);
+      assert.equal(cliResult.code, 2);
+      assert.equal(JSON.parse(cliResult.stdout).code, "ADO_USAGE");
+    }
     assert.deepEqual(snapshot(f.pmRoot), before);
   }
 });
@@ -523,11 +532,10 @@ test("relation-only export removals use revision-checked JSON Patch", async (t) 
   assert.ok(f.requests.some((req) => Array.isArray(req.body) && (req.body as JsonPatchOperation[]).some((op) => op.op === "remove")));
 });
 
-test("creation relation races preserve unlinked local items and report revisions and fields", async (t) => {
+test("creation relation races retain identities across export retries and report revisions and fields", async (t) => {
   const f = await fixture(t, []);
   const a = await f.pm.create({ title: "Unlinked A", type: "Task" });
   await f.pm.create({ title: "Unlinked B", type: "Task", parent: a.item.id });
-  const before = snapshot(f.pmRoot);
   f.race();
   const result = await f.command("export");
   assert.equal(result.code, "ADO_CONFLICT", JSON.stringify(result));
@@ -535,7 +543,7 @@ test("creation relation races preserve unlinked local items and report revisions
   assert.equal(result.conflicts[0]!.remote_rev, 2);
   assert.ok(result.conflicts[0]!.fields.title);
   assert.ok(result.conflicts[0]!.fields.relations);
-  assert.deepEqual(snapshot(f.pmRoot), before);
+  await assertRetainedCreates(f, result);
 });
 
 test("Azure can omit empty relation collections in successful create responses and diagnostic reads", async (t) => {
@@ -586,16 +594,14 @@ test("export refuses import-only filters instead of silently exporting a broader
   }
 });
 
-test("relation publication failure after creation leaves local identities unassigned", async (t) => {
+test("relation publication server error after creation retains identities across export retries", async (t) => {
   const f = await fixture(t, []);
   const parent = await f.pm.create({ title: "Pending parent", type: "Task" });
   await f.pm.create({ title: "Pending child", type: "Task", parent: parent.item.id });
-  const before = snapshot(f.pmRoot);
-  f.failPatch(400);
+  f.failPatch(500);
   const result = await f.command("export");
   assert.equal(result.code, "ADO_REMOTE");
-  assert.deepEqual(snapshot(f.pmRoot), before);
-  assert.equal(f.items.size, 2, "successful remote creates remain visible after a later failure");
+  await assertRetainedCreates(f, result);
 });
 
 test("terminal states import and failed new relation imports do not persist a false sync base", async (t) => {
@@ -623,4 +629,61 @@ test("terminal states import and failed new relation imports do not persist a fa
   const recovered = await f.command("import");
   assert.equal(recovered.ok, true, JSON.stringify(recovered));
   assert.ok((await f.pm.listAllComplete()).items.find((item) => item.ado_id === 2)!.ado_sync_base);
+});
+
+/** Verify durable SDK links/history before retrying a partially completed export. */
+async function assertRetainedCreates(f: Awaited<ReturnType<typeof fixture>>, result: Awaited<ReturnType<Awaited<ReturnType<typeof fixture>>["command"]>>) {
+  const created = result.plans.filter((plan) => plan.action === "create_remote");
+  assert.ok(created.length > 0);
+  const linked = (await f.pm.listAllComplete()).items;
+  for (const plan of created) {
+    const item = linked.find((candidate) => candidate.ado_id === plan.ado_id)!;
+    assert.ok(item, "successful creates must be linked before the run stops");
+    assert.equal(item.ado_rev, 1);
+    assert.equal(item.ado_project, "Project");
+    assert.equal(item.ado_org_url, f.org);
+    assert.equal(item.ado_url, `${f.org}/_apis/wit/workItems/${plan.ado_id}`);
+    assert.equal(item.ado_sync_base, undefined, "partial publication must not invent a shared base");
+    assert.deepEqual(plan.linked_fields, ["ado_id", "ado_rev", "ado_project", "ado_org_url", "ado_url"]);
+    const history = readFileSync(join(f.pmRoot, "history", `${item.id}.jsonl`), "utf8");
+    assert.match(history, /Linked to Azure DevOps work item/u);
+  }
+  const count = f.items.size;
+  await f.command("export");
+  assert.equal(f.items.size, count, "retry must not allocate another work item");
+  const posts = f.requests.filter((req) => req.method === "POST" && req.path.includes("/workitems/"));
+  assert.equal(posts.length, created.length, "exactly one remote create per exported local item across both runs");
+  for (const plan of created) assert.equal((await f.pm.listAllComplete()).items.filter((item) => item.ado_id === plan.ado_id).length, 1);
+}
+
+test("another entry's 412 retains created identity across export retries and preserves the existing linked item", async (t) => {
+  const f = await fixture(t);
+  await f.command("import");
+  const existing = await row(f.pm);
+  await f.pm.update(existing.id, { title: "Pending linked edit" });
+  await f.pm.create({ title: "New unlinked item", type: "Task" });
+  const before = Object.fromEntries(Object.entries(snapshot(f.pmRoot)).filter(([key]) => key.includes(existing.id)));
+  f.race();
+  const result = await f.command("export");
+  assert.equal(result.code, "ADO_CONFLICT");
+  await assertRetainedCreates(f, result);
+  assert.equal(f.items.size, 2, "the one new local item creates exactly one remote work item");
+  assert.deepEqual(Object.fromEntries(Object.entries(snapshot(f.pmRoot)).filter(([key]) => key.includes(existing.id))), before);
+});
+
+test("planning three linked pairs reads the real SDK tracker once", async (t) => {
+  const f = await fixture(t, [workItem(1), workItem(2), workItem(3)]);
+  assert.equal((await f.command("import")).ok, true);
+  const reader = PmClient.prototype.listAllComplete;
+  let reads = 0;
+  t.mock.method(PmClient.prototype, "listAllComplete", function (this: PmClient, ...args: Parameters<typeof reader>) {
+    reads++;
+    return reader.apply(this, args);
+  });
+  const before = snapshot(f.pmRoot);
+  const result = await f.command("sync", { dryRun: true });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.plans.length, 3);
+  assert.equal(reads, 1, "planning must reuse its initial complete tracker snapshot");
+  assert.deepEqual(snapshot(f.pmRoot), before);
 });

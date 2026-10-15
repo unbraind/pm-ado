@@ -86,7 +86,13 @@ Export creates unlinked work items with `POST .../workitems/$<type>` using Azure
 JSON Patch media type and `add` field operations. Creation has no existing
 revision to assert: Azure allocates its ID and initial revision. Empty area and
 iteration values are omitted so the server can apply its defaults. New identities
-are allocated before their relation patches are sent.
+are allocated before their relation patches are sent. Each successful create
+immediately records `ado_id`, `ado_rev`, `ado_project`, `ado_org_url` and `ado_url`
+through an SDK update with append-only history. Its plan reports the remote ID
+and `linked_fields` already persisted, including on a later failure. This link
+has no `ado_sync_base` until reconciliation finishes, so a retry uses the linked
+pair instead of creating a duplicate. A linked pair without a base can reconcile
+through export or report differing fields through sync.
 
 Every update, including relation patches, starts with `test /rev`. Field updates
 use `add`, which sets existing fields and also handles optional fields absent
@@ -108,7 +114,8 @@ Sync plans an import followed by an export per field, before changing either sid
 
 The base is the dedicated `ado_sync_base` snapshot from the last successful
 synchronization, not the latest edit timestamp. Without a base, matching fields
-bootstrap safely and differing fields conflict. Malformed bases fail closed.
+bootstrap safely and differing fields conflict. Malformed base JSON fails with
+exit 2 (`ADO_USAGE`), naming the item and `ado_sync_base`.
 After reconciliation, sync asserts the current remote revision it just compared,
 so disjoint local and remote edits can be combined in one checked patch. A race
 after that comparison is still a 412 and imports nothing into that local item.
@@ -126,7 +133,8 @@ includes the item plan; inspect both stores before retrying a partial failure.
 ## Preview and conflict receipts
 
 `--dry-run` performs the WIQL/batch reads needed for a real plan and returns item
-identities, directions and changed field names. It performs no work-item
+identities, directions and changed field names. Planning reads the complete
+tracker once and shares that snapshot with relation planning. It performs no work-item
 create/PATCH, no SDK item mutation and no changes to authoritative tracker
 files (documents, history, settings or schemas). The host SDK may populate its
 ignored derived metadata caches on reads; these are outside tracker history.
@@ -182,3 +190,11 @@ instead of 4. Removing only the dry-run write guard also builds successfully,
 then fails the tracker-file byte comparison. Restoring both guards and rebuilding
 passes both focused tests. The exact commands and outcomes are recorded in
 [pm-ado-nc7z](../.agents/pm/features/pm-ado-nc7z.toon).
+
+Review-round regressions also prove that partial creates retain their SDK links
+across two exports after another entry's 412, a new relation's revision conflict,
+and a server error during relation publication. Moving the link mutation back
+to final publication fails all three regressions. Reverting malformed-base JSON
+handling returns exit 3 instead of 2; reverting snapshot reuse reads the real SDK
+tracker four times instead of once for three linked pairs. Each behavioral
+revert builds successfully before its regression fails.

@@ -18,7 +18,8 @@
     "manifest.json",
     "README.md",
     "CHANGELOG.md",
-    "docs/typed-relations.md"
+    "docs/typed-relations.md",
+    "docs/sync.md"
   ],
   "scripts": {
     "build": "tsc",
@@ -43,7 +44,7 @@
     "verify:release-changelog-date": "node scripts/verify-release-changelog-date.ts"
   },
   "peerDependencies": {
-    "@unbrained/pm-cli": ">=2026.10.4"
+    "@unbrained/pm-cli": ">=2026.10.12"
   },
   "devDependencies": {
     "@types/istanbul-lib-coverage": "2.0.6",
@@ -101,7 +102,8 @@
     "docs": [
       "README.md",
       "CHANGELOG.md",
-      "docs/typed-relations.md"
+      "docs/typed-relations.md",
+      "docs/sync.md"
     ],
     "examples": [
       "README.md"

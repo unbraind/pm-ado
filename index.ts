@@ -19,6 +19,7 @@ import type {
   ExtensionModule,
   PreflightOverrideContext,
 } from "@unbrained/pm-cli/sdk/authoring";
+import { runSyncCommand, SYNC_FLAGS } from "./sync.ts";
 import type { Dependency, ItemMetadata, PmClient } from "@unbrained/pm-cli/sdk";
 
 /**
@@ -60,6 +61,22 @@ export class CommandError extends Error {
     super(message);
     this.name = "CommandError";
     this.exitCode = exitCode;
+  }
+}
+
+/** Revision refusal carrying the diagnostic snapshot without retrying a write. */
+export class RevisionConflict extends CommandError {
+  /** Revision asserted by the rejected patch. */
+  readonly assertedRev: number;
+  /** Fresh remote snapshot, absent if the work item disappeared. */
+  readonly current: AdoWorkItem | undefined;
+
+  /** Preserve the refused revision and its single diagnostic re-read. */
+  constructor(id: number, rev: number, current: AdoWorkItem | undefined) {
+    super(`work item ${id} changed since it was read: asserted rev ${rev}` +
+      (current !== undefined ? ` but current rev is ${current.rev}` : " and could not be re-read"), EXIT_CODE.conflict);
+    this.assertedRev = rev;
+    this.current = current;
   }
 }
 
@@ -564,16 +581,18 @@ export function relationTargetId(url: string, orgUrl: string): number | undefine
  * @param rev - The revision the local copy was read at.
  * @param fields - Field reference names mapped to their new values.
  * @param relations - Validated add/remove operations from the relation export planner.
+ * @param fieldOperation - Use add when optional target fields may not exist yet.
  * @returns The patch document, beginning with the revision assertion.
  */
 export function buildUpdatePatch(
   rev: number,
   fields: Readonly<Record<string, unknown>>,
   relations: readonly JsonPatchOperation[] = [],
+  fieldOperation: "add" | "replace" = "replace",
 ): JsonPatchOperation[] {
   const patch: JsonPatchOperation[] = [{ op: "test", path: "/rev", value: rev }];
   for (const [name, value] of Object.entries(fields)) {
-    patch.push({ op: "replace", path: `/fields/${name}`, value });
+    patch.push({ op: fieldOperation, path: `/fields/${name}`, value });
   }
   for (const operation of relations) {
     if (!(operation.op === "add" && operation.path === "/relations/-") &&
@@ -724,7 +743,7 @@ export class AdoClient {
     // with a revision assertion is an unchecked write, and an unchecked write
     // is the failure this package exists to make impossible - so it is refused
     // before it reaches the network, whatever produced it.
-    if (contentType === PATCH_MEDIA_TYPE && !(Array.isArray(body) && assertsRevision(body as JsonPatchOperation[]))) {
+    if (method === "PATCH" && !(Array.isArray(body) && assertsRevision(body as JsonPatchOperation[]))) {
       throw new CommandError(
         "refusing to send a work item patch that does not assert a revision",
         EXIT_CODE.usage,
@@ -806,18 +825,25 @@ export class AdoClient {
    * Run a WIQL query and return the work item ids it selects.
    *
    * @param wiql - The query text.
+   * @param limit - Optional server-side result limit.
    * @returns The selected work item ids.
    */
-  async queryIds(wiql: string): Promise<number[]> {
-    const payload = await this.request("POST", "/_apis/wit/wiql?api-version=7.1", { query: wiql });
+  async queryIds(wiql: string, limit?: number): Promise<number[]> {
+    const payload = await this.request("POST", `/_apis/wit/wiql?api-version=7.1${limit === undefined ? "" : `&$top=${limit}`}`, { query: wiql });
     const rows = (payload as { workItems?: readonly { id?: number }[] }).workItems ?? [];
     return rows.flatMap((row) => (typeof row.id === "number" ? [row.id] : []));
+  }
+
+  /** Create a work item; Azure allocates its first identity and revision. */
+  async createWorkItem(type: string, fields: Readonly<Record<string, unknown>>): Promise<AdoWorkItem> {
+    const patch = Object.entries(fields).map(([name, value]) => ({ op: "add", path: `/fields/${name}`, value }));
+    return await this.request("POST", `/_apis/wit/workitems/$${encodeURIComponent(type)}?api-version=7.1&$expand=relations`, patch, PATCH_MEDIA_TYPE) as AdoWorkItem;
   }
 
   /**
    * Update a work item, asserting the revision it was read at.
    *
-   * This is the only write path in the package, and it refuses to send a patch
+   * This is the update write path, and it refuses to send a patch
    * that does not assert a revision. Making that a guard rather than a
    * convention is what keeps "no unchecked writes" true as the package grows.
    *
@@ -848,10 +874,10 @@ export class AdoClient {
     relations: readonly JsonPatchOperation[] = [],
   ): Promise<AdoWorkItem> {
     try {
-      const patch = buildUpdatePatch(rev, fields, relations);
+      const patch = buildUpdatePatch(rev, fields, relations, "add");
       const payload = await this.request(
         "PATCH",
-        `/_apis/wit/workitems/${id}?api-version=7.1`,
+        `/_apis/wit/workitems/${id}?api-version=7.1&$expand=relations`,
         patch,
         PATCH_MEDIA_TYPE,
       );
@@ -868,11 +894,7 @@ export class AdoClient {
       // revision assertion exists to prevent. The caller re-reads, decides what
       // its change means against the newer state, and writes again.
       const [current] = await this.getWorkItems([id]);
-      throw new CommandError(
-        `work item ${id} changed since it was read: asserted rev ${rev}` +
-          (current !== undefined ? ` but current rev is ${current.rev}` : " and could not be re-read"),
-        EXIT_CODE.conflict,
-      );
+      throw new RevisionConflict(id, rev, current);
     }
   }
 }
@@ -1017,6 +1039,7 @@ export default defineExtension({
       { name: "ado_url", type: "string", optional: true },
       { name: "ado_rev", type: "number", optional: true },
       { name: "ado_project", type: "string", optional: true },
+      ...["ado_org_url", "ado_type", "ado_area_path", "ado_iteration_path", "ado_sync_base"].map((name) => ({ name, type: "string" as const, optional: true })),
     ]);
 
     // preflight — abort a network-bound command before any store read or remote
@@ -1038,6 +1061,15 @@ export default defineExtension({
           process.exit.bind(process) as (code: number) => never,
         ),
     });
+
+    for (const mode of ["import", "export", "sync"] as const) {
+      api.registerCommand({
+        name: `ado ${mode}`,
+        description: `${mode} Azure DevOps work items with revision-checked reconciliation`,
+        flags: SYNC_FLAGS,
+        handler: (ctx: CommandHandlerContext) => runSyncCommand(ctx, mode),
+      });
+    }
 
     api.registerCommand({
       name: "ado validate",

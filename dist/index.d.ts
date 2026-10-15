@@ -35,6 +35,15 @@ export declare class CommandError extends Error {
      */
     constructor(message: string, exitCode?: number);
 }
+/** Revision refusal carrying the diagnostic snapshot without retrying a write. */
+export declare class RevisionConflict extends CommandError {
+    /** Revision asserted by the rejected patch. */
+    readonly assertedRev: number;
+    /** Fresh remote snapshot, absent if the work item disappeared. */
+    readonly current: AdoWorkItem | undefined;
+    /** Preserve the refused revision and its single diagnostic re-read. */
+    constructor(id: number, rev: number, current: AdoWorkItem | undefined);
+}
 /** The media type Azure DevOps requires for a work item patch document. */
 export declare const PATCH_MEDIA_TYPE = "application/json-patch+json";
 /** One operation in an Azure DevOps JSON Patch document. */
@@ -212,9 +221,10 @@ export declare function relationTargetId(url: string, orgUrl: string): number | 
  * @param rev - The revision the local copy was read at.
  * @param fields - Field reference names mapped to their new values.
  * @param relations - Validated add/remove operations from the relation export planner.
+ * @param fieldOperation - Use add when optional target fields may not exist yet.
  * @returns The patch document, beginning with the revision assertion.
  */
-export declare function buildUpdatePatch(rev: number, fields: Readonly<Record<string, unknown>>, relations?: readonly JsonPatchOperation[]): JsonPatchOperation[];
+export declare function buildUpdatePatch(rev: number, fields: Readonly<Record<string, unknown>>, relations?: readonly JsonPatchOperation[], fieldOperation?: "add" | "replace"): JsonPatchOperation[];
 /**
  * Report whether a patch document asserts a revision before it changes anything.
  *
@@ -344,13 +354,16 @@ export declare class AdoClient {
      * Run a WIQL query and return the work item ids it selects.
      *
      * @param wiql - The query text.
+     * @param limit - Optional server-side result limit.
      * @returns The selected work item ids.
      */
-    queryIds(wiql: string): Promise<number[]>;
+    queryIds(wiql: string, limit?: number): Promise<number[]>;
+    /** Create a work item; Azure allocates its first identity and revision. */
+    createWorkItem(type: string, fields: Readonly<Record<string, unknown>>): Promise<AdoWorkItem>;
     /**
      * Update a work item, asserting the revision it was read at.
      *
-     * This is the only write path in the package, and it refuses to send a patch
+     * This is the update write path, and it refuses to send a patch
      * that does not assert a revision. Making that a guard rather than a
      * convention is what keeps "no unchecked writes" true as the package grows.
      *

@@ -81,7 +81,7 @@ function statefulService(itemId: number, initialRev: number, initialFields: Reco
       const testOp = patch[0];
       if (testOp !== undefined && testOp.op === "test" && testOp.path === "/rev" && testOp.value === rev) {
         for (const op of patch) {
-          if (op.op === "replace" && op.path.startsWith("/fields/")) {
+          if ((op.op === "replace" || op.op === "add") && op.path.startsWith("/fields/")) {
             fields[op.path.slice("/fields/".length)] = op.value;
           }
         }

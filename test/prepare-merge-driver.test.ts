@@ -66,9 +66,9 @@ function stubPm(name: string, status: number, body = ""): string {
   return bin;
 }
 
-/** Run the launcher as npm's `prepare` hook would: as the entry point, from `cwd`, with `path` as PATH. */
-function prepare(cwd: string, path: string): SpawnSyncReturns<string> {
-  return spawnSync(process.execPath, [launcher], { cwd, encoding: "utf8", env: { ...process.env, PATH: path } });
+/** Run npm's prepare entry point from `cwd`, with `path` as PATH and an explicit lifecycle command. */
+function prepare(cwd: string, path: string, command = "ci"): SpawnSyncReturns<string> {
+  return spawnSync(process.execPath, [launcher], { cwd, encoding: "utf8", env: { ...process.env, PATH: path, npm_command: command } });
 }
 
 /** The merge drivers registered in a checkout's LOCAL Git config, by name. */
@@ -143,3 +143,18 @@ test("an installer killed by a signal fails the install instead of reporting suc
   const result = prepare(checkout("killed", "pinned"), stubPm("killed", 0, "kill -9 $PPID"));
   assert.equal(result.status, 1, result.stderr);
 });
+
+for (const command of ["pack", "publish"]) {
+  test(`npm ${command} prepare preserves the configured checkout`, posixOnly, () => {
+    const directory = checkout(`artifact-${command}`, "pinned");
+    const installed = prepare(directory, hostPath);
+    assert.equal(installed.status, 0, installed.stderr);
+    assert.deepEqual(registeredDrivers(directory), declaredDrivers);
+    const before = readFileSync(join(directory, ".git", "config"), "utf8");
+
+    const artifact = prepare(directory, hostPath, command);
+    assert.equal(artifact.status, 0, artifact.stderr);
+    assert.equal(readFileSync(join(directory, ".git", "config"), "utf8"), before);
+    assert.deepEqual(registeredDrivers(directory), declaredDrivers);
+  });
+}

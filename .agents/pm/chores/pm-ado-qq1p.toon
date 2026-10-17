@@ -6,15 +6,20 @@ status: in_progress
 priority: 1
 tags[4]: certification,cli,release,sdk
 created_at: "2026-10-04T11:50:11.236Z"
-updated_at: "2026-10-15T17:57:20.118Z"
+updated_at: "2026-10-17T09:55:02.730Z"
 author: codex-sol
 actual_result: "CLI/SDK, pm-ops and pm-changelog exact 2026.10.4; Node types 26.6.4, TypeScript 7.0.2. Full locked release:check PASS: 123/123 tests, zero skipped, 100% measured lines/branches/functions across 4 sources; docstrings, production audit, pack, changelog, attestation and version-date checks pass. Both full and production audit clean; alerts [] and no open Dependabot PRs. Canonical launcher real filesystem regression failed old template then passed published template 8/8; linked pm test launcher also 8/8. CI bun install --no-save PASS. Packed real-tracker npm/native Bun offline ado validate PASS: identical missing-three-input and synthetic-config diagnostics, token redacted, batch limit 200, revision-asserting writes flag true; scratch removed, no Azure calls. Strict PM health PASS with no warnings. Managed pm-github 2026.10.4 dry-run preview 0 synced/0 skipped/0 planned, zero linked items. Statement threshold remains unconsumed and independently unmeasured in pm-ado-5w3m; NOT READY for four-metric claim. Package stays unpublished at 2026.9.2; PM_RELEASE_APPROVED owner job guard unchanged. Final-head CI/reviews and live Azure capability acceptance remain separate."
-comments[5]{created_at,author,text}:
+comments[10]{created_at,author,text}:
   "2026-10-04T11:50:14.103Z",codex-sol,"Oriented real tracker and CI; no open Dependabot PRs or security alerts. Refresh CLI/SDK, pm-ops and pm-changelog exact published pins; preserve peer floor and PM_RELEASE_APPROVED release job guard. The only shipped command is offline ado validate; dogfood must not claim live Azure sync/import/export acceptance. Inspect ignored statement threshold and record its honest measured scope."
   "2026-10-04T11:52:54.738Z",codex-sol,"Test-first canonical launcher refresh: real invalid NODE_PATH file fixture fails old launcher (ENOTDIR replaces original MODULE_NOT_FOUND), then installed pm-ops 2026.10.4 template copied byte-for-byte makes launcher suite pass 8/8. No template edits or new skips. Independent statement threshold is declared but not consumed by the Node V8 gate; record a quality follow-up and report three measured dimensions honestly."
   "2026-10-04T11:57:56.517Z",codex-sol,"Local CI gates, clean audits, packed offline npm/Bun validation and strict health pass; statement enforcement remains a known pre-existing gap in pm-ado-5w3m. Evidence committed with code; release remains owner gated and no Azure writes or publishing. Releasing claim for orchestrator without closing; review final pushed head separately."
   "2026-10-04T12:10:51.436Z",codex-sol,"Review round 1: generated installed pm-github distribution is clone-local and excluded from Git to keep consumer review focused on authored changes. Exact local managed install and zero-case dry-run command/receipt remain in certification docs. Owner publishing gate and statement-coverage follow-up remain unchanged. Initial Node 22/26 CI passed; final-head CI and substantive review receipts remain separate."
   "2026-10-15T17:57:20.117Z",codex-agent,"The 2026.10.4 certification target is obsolete: the current main package pins PM CLI/SDK 2026.10.12 and includes merged PR #25. New command acceptance is tracked separately under the sync epic; this item remains open as requested."
+  "2026-10-17T09:26:33.413Z",codex-agent,"Investigating the pm-toolchain Dependabot failure against current main and the last green CI job. Reusing this dependency certification item. Will retain dependency ownership with Dependabot, reproduce the exact dependency and generated-template diff in a scratch worktree, add behavioral regression evidence, and verify npm and Bun release checks with isolated Git identity."
+  "2026-10-17T09:29:26.267Z",codex-agent,"Shared root cause with pm-beads#144: Dependabot refreshes the canonical prepare template for pm-ops 2026.10.12, adding pack/publish branches at line 28. Install-only tests leave the notice and both artifact conditions unexecuted (launcher 98.65% lines, 75% branches). Add lifecycle behavior tests on real configured Git checkouts, compatible with both template generations; retain byte equality and all broken-install refusal tests. Pins and thresholds unchanged."
+  "2026-10-17T09:40:08.235Z",codex-agent,"Revert proof: the exact Dependabot #30 dependency and generated-template diff on current main reproduced 179 passing tests but 99.96% lines and 99.87% branches overall. LCOV identifies prepare-merge-driver.ts line 28 and BRDA line 27 as uncovered. Keeping both new artifact tests and reverting only the prepare helper lifecycle environment injection reproduces 98.65% launcher lines and 75% branches (exit 1). Restoring that helper starts full npm and Bun release validation. Current-pin focused tests passed 10/10, including a successful pm-linked retry with a 900-second timeout after the default 120-second limit expired under host load."
+  "2026-10-17T09:48:43.531Z",codex-agent,"The shared host reached process timeouts during full local validation. Focused behavioral revert evidence is complete; full fix-plus-Dependabot dependency validation is moving to a temporary read-only GitHub Actions validation branch running npm run release:check and bun run release:check with isolated Git identity. The temporary workflow and dependency overlay will remain outside the fix PR."
+  "2026-10-17T09:54:51.427Z",codex-agent,"Complete fix-plus-Dependabot validation passed both env HOME=$(mktemp -d) GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 npm run release:check and the equivalent bun run release:check. Each passed 181/181 tests with zero failures/skips/cancellations/todos and 100-percent configured coverage. Proof: https://github.com/unbraind/pm-ado/actions/runs/39022613591 . Behavioral revert evidence and shared launcher root cause are recorded in docs/dependabot-root-cause.md. Pins and thresholds remain unchanged. Implementation is ready for PR CI; releasing the claim without closing the item."
 files[9]:
   - path: .github/workflows/codeql.yml
     scope: project
@@ -41,9 +46,35 @@ files[9]:
   - path: test/prepare-merge-driver.test.ts
     scope: project
     note: Certification change
-tests[2]{command,scope,timeout_seconds,pm_context_mode,workspace_context_mode,provenance{author,created_at,source_kind,source_ref},note}:
-  "flock /tmp/claude-1000/heavy-gate.lock npm run release:check",project,2400,schema,source,codex-sol,"2026-10-04T11:53:58.147Z",local_mutation,chore/pm-ado-pm-cli-2026-10-4,Full unchanged current CI release gate; independent statement gap tracked separately
-  node --test --test-concurrency=1 test/prepare-merge-driver.test.ts,project,120,schema,source,codex-sol,"2026-10-04T11:53:58.732Z",local_mutation,chore/pm-ado-pm-cli-2026-10-4,Real malformed global lookup fixture and byte-identity acceptance
-docs[1]{path,scope,note}:
-  docs/certification-2026.10.4.md,project,Exact offline dogfood and gate receipts with statement gap
+tests[2]:
+  - command: node --test --test-concurrency=1 test/prepare-merge-driver.test.ts
+    scope: project
+    timeout_seconds: 900
+    pm_context_mode: schema
+    workspace_context_mode: source
+    provenance:
+      author: codex-sol
+      created_at: "2026-10-04T11:53:58.732Z"
+      source_kind: local_mutation
+      source_ref: chore/pm-ado-pm-cli-2026-10-4
+    updated_by: codex-agent
+    updated_at: "2026-10-17T09:51:53.223Z"
+    note: "Real malformed lookup, canonical template and artifact lifecycle regression"
+  - command: "flock \"$(node -p 'require(\"node:os\").tmpdir()')/pm-heavy-gate.lock\" npm run release:check"
+    scope: project
+    timeout_seconds: 2400
+    pm_context_mode: schema
+    workspace_context_mode: source
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-17T09:54:25.697Z"
+      source_kind: local_mutation
+      source_ref: fix/toolchain-gate-drift
+    note: Full release gate with a portable temporary lock path
+docs[2]:
+  - path: docs/certification-2026.10.4.md
+    scope: project
+    note: Exact offline dogfood and gate receipts with statement gap
+  - path: docs/dependabot-root-cause.md
+    scope: project
 body: ""

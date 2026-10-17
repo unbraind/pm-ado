@@ -2,12 +2,17 @@ id: pm-ado-fiw8
 title: Enable the gated GitHub issue sync
 description: Add a SHA-pinned scheduled caller for the audited gated issue import into this package tracker. Keep dependency versions and gate thresholds unchanged.
 type: Chore
-status: in_progress
+status: closed
 priority: 2
 tags[3]: changed,github-sync,maintenance
 created_at: "2026-10-14T11:11:12.940Z"
-updated_at: "2026-10-15T17:57:19.370Z"
+updated_at: "2026-10-17T08:03:27.990Z"
+closed_at: "2026-10-17T08:03:27.985Z"
+completed_at: "2026-10-15T14:07:33.000Z"
 author: codex-agent
+resolution: "Delivered by https://github.com/unbraind/pm-ado/pull/25 (merge 4e8c60f33ad9, head fe95d08b4238)"
+expected_result: "Delivered by the linked pull request, merged after its head check gate passed."
+actual_result: "Merged at 2026-10-15T14:07:33Z; no readable required checks, so every completed head check run had to succeed, be neutral or be skipped; successful checks: CodeQL, CodeRabbit, codeql, test (22), test (26)"
 comments[5]{created_at,author,text}:
   "2026-10-14T11:11:41.280Z",codex-agent,"Plan: add the scheduled thin caller pinned to the audited workflow SHA and matching published extension version. Preserve dependencies, merge-driver scripts, and thresholds. Verify both release gates and audits; leave the item open for orchestrator review. No TypeScript functions change, so a function revert regression test does not apply."
   "2026-10-14T11:13:31.593Z",codex-agent,"Plan: add the independently authored scheduled thin caller pinned to the audited workflow SHA and matching published extension version. Preserve dependencies, merge-driver scripts, and thresholds. Verify npm and Bun release gates and audits; leave the item open for orchestrator review. No TypeScript functions change, so a function revert regression test does not apply."
@@ -21,4 +26,5 @@ tests[2]{command,scope,timeout_seconds,pm_context_mode,workspace_context_mode,pr
   "env -u PM_PATH -u PM_AUTHOR HOME=$(mktemp -d) GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 bun run release:check",project,2400,tracker,source,codex-agent,"2026-10-14T11:13:38.409Z",local_mutation,chore/gated-issue-sync-and-braces-free-gates
 docs[1]{path,scope,note}:
   CHANGELOG.md,project,Regenerated package changelog
+close_reason: "{\"pr\":25,\"url\":\"https://github.com/unbraind/pm-ado/pull/25\",\"merge_commit_sha\":\"4e8c60f33ad9885d66e6b2b92edbc4cf896d897c\",\"head_sha\":\"fe95d08b42383658f2b6aa44c0c73fd1374a8cce\",\"merged_at\":\"2026-10-15T14:07:33Z\",\"checks\":[\"CodeQL\",\"CodeRabbit\",\"codeql\",\"test (22)\",\"test (26)\"]}"
 body: ""

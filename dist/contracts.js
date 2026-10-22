@@ -1,0 +1,257 @@
+/** Read-only Azure project metadata discovery; this module never plans or applies writes. */
+import { createHash } from "node:crypto";
+import { CommandError, EXIT_CODE, RELATION_MAP, STATE_MAP, stripTrailingSlashes } from "./index.js";
+import { ADO_FIELD_MAP, IMPORT_STATE_MAP, azureFields, localValues, stateMap } from "./sync.js";
+/** An actionable failure that contains no remote response body or credentials. */
+export class ContractRefusal extends Error {
+    /** Semantic shell exit used by the host command runtime. */
+    exitCode;
+    /** Machine-readable reason for refusing discovery. */
+    code;
+    /** Specific next step for the caller. */
+    remedy;
+    /** Record a stable refusal code and remedy without exposing server details. */
+    constructor(code, remedy, exitCode = EXIT_CODE.remote) {
+        super(`Azure contract discovery refused: ${code}`);
+        this.name = "ContractRefusal";
+        this.exitCode = exitCode;
+        this.code = code;
+        this.remedy = remedy;
+    }
+    /** Preserve typed refusals, classify known configuration errors, and sanitize other failures. */
+    static from(error) {
+        return error instanceof ContractRefusal ? error : error instanceof CommandError && error.exitCode === EXIT_CODE.usage
+            ? new ContractRefusal("configuration", "Check the configured state-map JSON before retrying.", EXIT_CODE.usage)
+            : new ContractRefusal("remote_failure", "Check the local SDK schema, complete tracker read and field conversion before retrying; no writes were attempted.");
+    }
+}
+/** Fail closed when remote metadata no longer has the documented shape. */
+function schema(condition) {
+    if (!condition)
+        throw new ContractRefusal("invalid_schema", "Refresh discovery against Azure REST 7.1; inspect changed metadata before planning sync.");
+}
+/** Narrow JSON objects before reading any server-controlled property. */
+function record(value) {
+    schema(typeof value === "object" && value !== null && !Array.isArray(value));
+    return value;
+}
+/** Require a nonempty metadata identifier without interpreting it as a URL. */
+function name(value) {
+    schema(typeof value === "string" && value.trim().length > 0);
+    return value;
+}
+/** Validate optional REST booleans instead of silently treating changed types as false. */
+function flag(value) {
+    schema(value === undefined || typeof value === "boolean");
+    return value === undefined ? null : value;
+}
+/** Parse arrays of metadata objects and refuse duplicate identifiers. */
+function rows(value, key) {
+    schema(Array.isArray(value));
+    const result = value.map(record);
+    const keys = result.map((row) => name(row[key]));
+    schema(new Set(keys).size === keys.length);
+    return result;
+}
+/** Compare strings by UTF-16 code units, independently of the process ICU locale. */
+function compareCodeUnits(left, right) {
+    return left < right ? -1 : Number(left > right);
+}
+/** Sort JSON recursively so schema fingerprints survive server ordering and locale changes. */
+function canonical(value) {
+    if (Array.isArray(value))
+        return value.map(canonical).sort((a, b) => compareCodeUnits(JSON.stringify(a), JSON.stringify(b)));
+    if (value !== null && typeof value === "object")
+        return Object.fromEntries(Object.entries(value).sort(([a], [b]) => compareCodeUnits(a, b)).map(([key, entry]) => [key, canonical(entry)]));
+    return value;
+}
+/**
+ * Discover project WIT metadata using GET only, without an SDK mutation or git dependency.
+ * Metadata cannot prove effective edit/link permissions or conditional process rules.
+ * A schema fingerprint covers selected remote metadata, excluding tracker contents and maps.
+ */
+export async function discoverProjectContract(config, request, options = {}) {
+    let org;
+    try {
+        org = new URL(config.orgUrl);
+    }
+    catch {
+        throw new ContractRefusal("configuration", "Set ADO_ORG_URL to an absolute HTTPS organization URL.", EXIT_CODE.usage);
+    }
+    if ((org.protocol !== "https:" && !(org.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(org.hostname))) || org.username || org.password || org.search || org.hash ||
+        !config.project.trim() || [".", ".."].includes(config.project) || !config.token.trim() ||
+        (options.type !== undefined && (!options.type.trim() || [".", ".."].includes(options.type)))) {
+        throw new ContractRefusal("configuration", "Select a nonempty project/type, a token with Work Items read, and a credential-free HTTPS organization URL.", EXIT_CODE.usage);
+    }
+    const base = stripTrailingSlashes(config.orgUrl);
+    const project = `${base}/${encodeURIComponent(config.project)}`;
+    /** Read a fixed REST endpoint, refusing redirects and suppressing remote secrets. */
+    const get = async (root, path) => {
+        let response;
+        try {
+            response = await request("GET", `${root}/_apis/wit/${path}api-version=7.1`, undefined, { Accept: "application/json", Authorization: `Basic ${Buffer.from(`:${config.token}`).toString("base64")}` });
+        }
+        catch {
+            throw new ContractRefusal("remote_failure", "Check Azure reachability and retry discovery; no writes were attempted.");
+        }
+        if (response.status === 401 || response.status === 403)
+            throw new ContractRefusal("permission_denied", "Grant Work Items read (vso.work) and project visibility; retry discovery with that identity.");
+        if (response.status === 404)
+            throw new ContractRefusal("not_found", "Verify the selected organization, project and type are visible to this identity.");
+        if (response.status < 200 || response.status >= 300)
+            throw new ContractRefusal("remote_failure", "Check Azure service availability and retry discovery; no writes were attempted.");
+        let data;
+        try {
+            data = JSON.parse(response.body);
+        }
+        catch {
+            throw new ContractRefusal("invalid_schema", "Expected REST 7.1 JSON metadata; check the endpoint and retry.");
+        }
+        const envelope = record(data);
+        const result = rows(envelope.value, "referenceName");
+        // A truncated metadata list must never masquerade as a complete contract.
+        schema(envelope.count === result.length);
+        return result;
+    };
+    const definitions = await get(project, "fields?");
+    for (const field of definitions) {
+        name(field.type);
+        schema(typeof field.readOnly === "boolean");
+    }
+    const byRef = new Map(definitions.map((field) => [String(field.referenceName), field]));
+    const remoteTypes = await get(project, "workitemtypes?");
+    const enabledTypes = new Map(remoteTypes.map((type) => [name(type.name), flag(type.isDisabled) !== true]));
+    const selected = remoteTypes.filter((type) => options.type === undefined || type.name === options.type);
+    if (selected.length === 0)
+        throw new ContractRefusal("not_found", "Choose a work item type returned by discovery for this project.");
+    const types = [];
+    for (const type of selected) {
+        const typeName = name(type.name);
+        const fields = await get(project, `workitemtypes/${encodeURIComponent(typeName)}/fields?$expand=all&`);
+        const normalized = fields.map((field) => {
+            const ref = String(field.referenceName);
+            const definition = byRef.get(ref);
+            schema(definition !== undefined);
+            schema(typeof field.alwaysRequired === "boolean");
+            schema(field.allowedValues === undefined || Array.isArray(field.allowedValues));
+            return { ref, type: String(definition.type), writable: !definition.readOnly, required: field.alwaysRequired,
+                allowed: (field.allowedValues ?? []), default: field.defaultValue ?? null,
+                depends_on: rows(field.dependentFields ?? [], "referenceName").map((entry) => String(entry.referenceName)).sort() };
+        }).sort((a, b) => compareCodeUnits(a.ref, b.ref));
+        types.push({ name: typeName, disabled: flag(type.isDisabled) === true,
+            states: rows(type.states, "name").map((state) => String(state.name)).sort(), fields: normalized });
+    }
+    types.sort((a, b) => compareCodeUnits(a.name, b.name));
+    const relations = (await get(base, "workitemrelationtypes?")).map((row) => {
+        const attributes = record(row.attributes);
+        const ref = String(row.referenceName);
+        schema(attributes.usage === undefined || typeof attributes.usage === "string");
+        return { ref, enabled: flag(attributes.enabled), editable: flag(attributes.editable), usage: attributes.usage ?? null,
+            mapped: Object.hasOwn(RELATION_MAP, ref) ? RELATION_MAP[ref] : null };
+    }).sort((a, b) => compareCodeUnits(a.ref, b.ref));
+    const fingerprint = createHash("sha256").update(JSON.stringify(canonical({ organization: base, project: config.project, types, relations }))).digest("hex");
+    if (options.expectedFingerprint !== undefined && options.expectedFingerprint !== fingerprint)
+        throw new ContractRefusal("schema_changed", "Re-read the project contract and review mapping changes before planning sync.", EXIT_CODE.conflict);
+    const issues = [];
+    /** Aggregate identical diagnostics without copying tracker bodies or identities. */
+    const issue = (code, target, remedy) => {
+        const previous = issues.find((entry) => entry.code === code && entry.target === target);
+        if (previous)
+            previous.count++;
+        else
+            issues.push({ code, target, count: 1, remedy });
+    };
+    const exportStates = options.exportStates ?? STATE_MAP;
+    const importStates = options.importStates ?? IMPORT_STATE_MAP;
+    for (const type of types) {
+        if (type.disabled)
+            issue("item_type", type.name, "Select an enabled Azure work item type.");
+        for (const [local, ref] of Object.entries(ADO_FIELD_MAP)) {
+            const field = type.fields.find((entry) => entry.ref === ref);
+            const target = `${type.name}/${ref}`;
+            if (!field) {
+                issue("missing_field", target, "Select a type exposing this sync field or extend the adapter mapping.");
+                continue;
+            }
+            if (!field.writable)
+                issue("read_only", target, "Exclude this field from writes or change the Azure process before exporting.");
+            const expected = local === "priority" ? ["integer"] : ["string", "html", "plainText", "treePath"];
+            if (!expected.includes(field.type))
+                issue("field_type", target, "Review the remote field type and the adapter conversion before exporting.");
+        }
+        for (const field of type.fields) {
+            if (field.writable && field.required && field.default === null && !Object.values(ADO_FIELD_MAP).includes(field.ref))
+                issue("required_unmapped", `${type.name}/${field.ref}`, "Supply a process default or add an explicit adapter mapping for this required field.");
+        }
+        for (const [status, state] of Object.entries(exportStates))
+            if (!type.states.includes(state))
+                issue("export_state", `${type.name}/${status}`, "Configure ADO_EXPORT_STATE_MAP with a state exposed by this type.");
+        for (const state of type.states)
+            if (!Object.hasOwn(importStates, state) || (options.localStatuses !== undefined && !options.localStatuses.includes(importStates[state])))
+                issue("import_state", `${type.name}/${state}`, "Configure ADO_STATUS_MAP for this Azure state using a status in the local SDK schema.");
+    }
+    for (const ref of Object.keys(RELATION_MAP)) {
+        const relation = relations.find((entry) => entry.ref === ref);
+        if (!relation || relation.enabled !== true || relation.editable !== true || relation.usage !== "workItemLink")
+            issue("relation_unavailable", ref, "Review enabled/editable workItemLink metadata and project link permissions before exporting relations.");
+    }
+    const items = options.items ?? [];
+    let skippedItems = 0;
+    for (const item of items) {
+        const typeName = String(item.ado_type ?? options.type ?? "Task");
+        if (options.type !== undefined && typeName !== options.type && enabledTypes.get(typeName) === true) {
+            skippedItems++;
+            continue;
+        }
+        const type = types.find((entry) => entry.name === typeName && !entry.disabled);
+        if (!type) {
+            issue("item_type", typeName, "Select or map an enabled Azure type for these tracker items.");
+            continue;
+        }
+        if (!Object.hasOwn(exportStates, item.status)) {
+            issue("export_state", `${typeName}/${item.status}`, "Configure ADO_EXPORT_STATE_MAP for this local status.");
+            continue;
+        }
+        const values = azureFields(localValues(item), Object.keys(ADO_FIELD_MAP), exportStates);
+        for (const field of type.fields) {
+            if (!Object.hasOwn(values, field.ref))
+                continue;
+            const value = values[field.ref];
+            if ((field.required && value === "" && field.default === null) || (field.allowed.length > 0 && !field.allowed.some((allowed) => JSON.stringify(allowed) === JSON.stringify(value))))
+                issue("item_value", `${typeName}/${field.ref}`, "Provide a required/allowed value through the existing mapping before planning export.");
+        }
+    }
+    return { ok: true, preview: true, project: config.project, fingerprint, compatible: issues.length === 0,
+        permissions: { metadata_read: "allowed", field_write: "unknown", relation_write: "unknown", remedy: "Have a project administrator verify effective edit/link ACLs and conditional process rules. Metadata discovery does not authorize writes." },
+        types, relations, issues, checked_items: items.length - skippedItems, skipped_items: skippedItems };
+}
+/** Fetch discovery metadata without following redirects or changing the sync transport. */
+async function contractTransport(method, url, body, headers) {
+    const response = await fetch(url, { method, headers, body, redirect: "error", signal: AbortSignal.timeout(30_000) });
+    return { status: response.status, body: await response.text() };
+}
+/** Run through the host SDK and renderer; failures carry stable codes and shell exits. */
+export async function runContractCommand(ctx) {
+    try {
+        const project = ctx.options.project;
+        if (typeof project !== "string" || !project.trim() || !process.env.ADO_ORG_URL?.trim() || !process.env.ADO_TOKEN?.trim())
+            throw new ContractRefusal("configuration", "Pass --project explicitly and set ADO_ORG_URL plus ADO_TOKEN with Work Items read.", EXIT_CODE.usage);
+        const type = ctx.options.type;
+        const expected = ctx.options.expectFingerprint ?? ctx.options["expect-fingerprint"];
+        if ((type !== undefined && typeof type !== "string") || (expected !== undefined && (typeof expected !== "string" || !/^[a-f0-9]{64}$/u.test(expected))))
+            throw new ContractRefusal("configuration", "Pass a type name and a 64-character SHA-256 --expect-fingerprint.", EXIT_CODE.usage);
+        const checkTracker = ctx.options.checkTracker === true || ctx.options["check-tracker"] === true;
+        const pm = ctx.sdk?.client;
+        if (checkTracker && pm === undefined)
+            throw new ContractRefusal("configuration", "Use a host-bound pm SDK to read the complete tracker, or omit --check-tracker.", EXIT_CODE.usage);
+        const localSchema = checkTracker ? await pm.schema("list") : undefined;
+        return await discoverProjectContract({ orgUrl: process.env.ADO_ORG_URL.trim(), project: project.trim(), token: process.env.ADO_TOKEN.trim() }, contractTransport, { type, expectedFingerprint: expected, localStatuses: localSchema ? [...localSchema.statuses.builtin, ...localSchema.statuses.custom].map((status) => status.id) : undefined, exportStates: stateMap(process.env.ADO_EXPORT_STATE_MAP, STATE_MAP), importStates: stateMap(process.env.ADO_STATUS_MAP, IMPORT_STATE_MAP),
+            items: checkTracker ? (await pm.listAllComplete()).items : undefined });
+    }
+    catch (error) {
+        const refusal = ContractRefusal.from(error);
+        process.exitCode = refusal.exitCode;
+        return { ok: false, preview: true, code: refusal.code, remedy: refusal.remedy, exit_code: refusal.exitCode };
+    }
+}
+//# sourceMappingURL=contracts.js.map

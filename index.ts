@@ -20,6 +20,9 @@ import type {
   PreflightOverrideContext,
 } from "@unbrained/pm-cli/sdk/authoring";
 import { runSyncCommand, SYNC_FLAGS } from "./sync.ts";
+import { runContractCommand } from "./contracts.ts";
+export { discoverProjectContract, ContractRefusal } from "./contracts.ts";
+export type { ProjectContract, ContractOptions, ContractType, ContractField, ContractRelation, ContractIssue, ContractRefusalCode } from "./contracts.ts";
 import type { Dependency, ItemMetadata, PmClient } from "@unbrained/pm-cli/sdk";
 
 /**
@@ -1070,6 +1073,19 @@ export default defineExtension({
         handler: (ctx: CommandHandlerContext) => runSyncCommand(ctx, mode),
       });
     }
+
+    api.registerCommand({
+      name: "ado contract",
+      description: "Discover a selected Azure project field/type/state contract without writes",
+      examples: ["pm ado contract --project Example --type Task --check-tracker"],
+      flags: [
+        { long: "--project", value_name: "name", value_type: "string", description: "Explicit Azure project name or ID (required)" },
+        { long: "--type", value_name: "name", value_type: "string", description: "Return one work item type; default all project types" },
+        { long: "--check-tracker", value_type: "boolean", description: "Read the complete local tracker through the SDK and check mapped values" },
+        { long: "--expect-fingerprint", value_name: "sha256", value_type: "string", description: "Refuse if the selected remote schema changed" },
+      ],
+      handler: runContractCommand,
+    });
 
     api.registerCommand({
       name: "ado validate",

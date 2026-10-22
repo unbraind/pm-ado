@@ -26,7 +26,7 @@ function option(options, name) {
     return value;
 }
 /** Parse an optional JSON state map and reject unusable configuration before reads. */
-function stateMap(raw, defaults) {
+export function stateMap(raw, defaults) {
     if (raw === undefined)
         return { ...defaults };
     let parsed;
@@ -103,11 +103,15 @@ function readBase(item, sample) {
     }
     return base;
 }
+/** Exact field mapping used by reconciliation and remote-contract discovery. */
+export const ADO_FIELD_MAP = {
+    title: "System.Title", description: "System.Description", status: "System.State",
+    priority: "Microsoft.VSTS.Common.Priority", tags: "System.Tags", assignee: "System.AssignedTo",
+    ado_area_path: "System.AreaPath", ado_iteration_path: "System.IterationPath",
+};
 /** Convert agreed canonical values to Azure reference names for changed fields only. */
-function azureFields(values, keys, states) {
-    const names = { title: "System.Title", description: "System.Description", status: "System.State",
-        priority: "Microsoft.VSTS.Common.Priority", tags: "System.Tags", assignee: "System.AssignedTo",
-        ado_area_path: "System.AreaPath", ado_iteration_path: "System.IterationPath" };
+export function azureFields(values, keys, states) {
+    const names = ADO_FIELD_MAP;
     return Object.fromEntries(keys.filter((key) => key !== "relations").map((key) => {
         let value = values[key];
         if (key === "status") {
@@ -159,7 +163,7 @@ function revisionConflict(entry, error, config, identities, states) {
             .map((key) => [key, { local: local[key], remote: remote[key] ?? null }])) };
 }
 /** Execute the real REST transport; failures are converted to stable command receipts. */
-async function transport(method, url, body, headers) {
+export async function transport(method, url, body, headers) {
     const response = await fetch(url, { method, headers, body, signal: AbortSignal.timeout(30_000) });
     return { status: response.status, body: await response.text() };
 }

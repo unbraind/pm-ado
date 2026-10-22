@@ -85,3 +85,43 @@ through a sync.
 ## Licence
 
 MIT — see [LICENSE](./LICENSE).
+
+## Project field-contract discovery
+
+Run `pm ado contract --project Example --type Task --check-tracker --json` before
+planning a sync. The project must be selected explicitly; `ADO_PROJECT` is not a
+fallback for discovery. Set `ADO_ORG_URL` and `ADO_TOKEN` with **Work Items read**.
+Omit `--type` to discover every project type, including custom and disabled types;
+use it to keep agent output small. The host renders JSON or compact TOON
+(`--output-format toon`). The command returns metadata without work item bodies.
+
+The typed `discoverProjectContract` SDK export returns writable/read-only fields,
+required/allowed/default values, dependent fields, states, relation capabilities
+and mapping incompatibilities. `--check-tracker` reads a complete certified SDK
+snapshot and aggregates incompatible values/types. With `--type`, enabled items
+of other remote types are counted in `skipped_items`; unknown/disabled types
+still produce incompatibilities. `checked_items` counts assessed items. It shares
+the existing sync field conversions and state maps (`ADO_STATUS_MAP`, `ADO_EXPORT_STATE_MAP`).
+Discovery uses only GET requests and makes no item/history/settings mutations.
+The host may populate disposable derived read caches.
+
+`ok` means discovery succeeded; `compatible` means no known mapping issue was
+found. Effective field/link write ACLs and conditional process rules remain
+**unknown**: relation `enabled`/`editable` flags do not grant caller permissions.
+Have a project administrator verify these before authorizing writes. Discovery
+is an explicit pre-planning step; it does not change the existing sync commands.
+
+Save the returned fingerprint and pass `--expect-fingerprint <sha256>` on a fresh
+discovery to refuse schema drift. Permission, scope, schema and configuration
+failures return typed codes plus remedies. SDK schema/tracker read failures use
+`remote_failure`, not a configuration remedy. Shell exits are 2 (configuration),
+3 (metadata/permission/network), or 4 (schema drift). Mapping incompatibilities
+are successful diagnostic results; inspect `compatible` before planning.
+See the [SDK and CLI example](docs/field-contracts.md).
+
+## Without git
+
+`ado validate`, `ado contract`, `ado import`, `ado export` and `ado sync` work in
+plain trackers without git. Network operations still need Azure configuration;
+contract discovery requires an explicit project. Package release/changelog and
+GitHub workflows need a git checkout and are separate from tracker operations.

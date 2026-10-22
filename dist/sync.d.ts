@@ -40,12 +40,23 @@ interface Plan {
     /** Provenance fields already persisted after a successful remote creation. */
     linked_fields?: string[];
 }
+/** Parse an optional JSON state map and reject unusable configuration before reads. */
+export declare function stateMap(raw: string | undefined, defaults: Readonly<Record<string, string>>): Record<string, string>;
 /** Escape WIQL literals; explicit WIQL cannot be combined with generated filters. */
 export declare function buildWiql(options: Record<string, unknown>, project: string): string;
 /** Project Azure fields into the same normalized shape as local metadata. */
 export declare function remoteValues(item: AdoWorkItem, mapping: Readonly<Record<string, string>>): Values;
 /** Project pm fields, preserving unrelated metadata outside this mapping. */
 export declare function localValues(item: ItemMetadata): Values;
+/** Exact field mapping used by reconciliation and remote-contract discovery. */
+export declare const ADO_FIELD_MAP: Readonly<Record<string, string>>;
+/** Convert agreed canonical values to Azure reference names for changed fields only. */
+export declare function azureFields(values: Values, keys: readonly string[], states: Record<string, string>): Record<string, unknown>;
+/** Execute the real REST transport; failures are converted to stable command receipts. */
+export declare function transport(method: string, url: string, body: string | undefined, headers: Readonly<Record<string, string>>): Promise<{
+    status: number;
+    body: string;
+}>;
 /** Build and apply one command plan using only the host-bound SDK client. */
 export declare function runSyncCommand(ctx: CommandHandlerContext, mode: "import" | "export" | "sync"): Promise<{
     ok: boolean;

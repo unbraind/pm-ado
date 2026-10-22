@@ -7,11 +7,12 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { PmClient } from "@unbrained/pm-cli/sdk";
 import { createExtensionTestHarness } from "@unbrained/pm-cli/sdk/testing";
 import * as built from "../dist/index.js";
-import extension, { ContractRefusal, discoverProjectContract, RELATION_MAP, type AdoTransport, type ProjectContract } from "../index.ts";
+import extension, { AdoClient, CommandError, ContractRefusal, discoverProjectContract, RELATION_MAP, type AdoTransport, type ProjectContract } from "../index.ts";
 import { ADO_FIELD_MAP, transport } from "../sync.ts";
 
 const config = { orgUrl: "https://dev.azure.com/example", project: "Example Project", token: "synthetic-secret" };
@@ -256,10 +257,99 @@ test("handler validates configuration, maps and schema pins with typed shell exi
   assert.ok(invalidStatus.issues.some((issue) => issue.code === "import_state"));
 });
 
-test("HTTP transport refuses redirects instead of forwarding credentials", async (t) => {
-  const server = createServer((_req, res) => { res.writeHead(302, { Location: "https://example.invalid/secret" }); res.end(); });
+test("discovery refuses redirects while shared sync client transport preserves redirect following", async (t) => {
+  const f = await hostFixture(t);
+  let followed = 0;
+  let initial = 0;
+  const server = createServer((req, res) => {
+    if (req.url === "/redirected") {
+      followed++; res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ count: 0, value: [] }));
+    } else { initial++; res.writeHead(302, { Location: "/redirected" }); res.end(); }
+  });
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
   const address = server.address(); assert.ok(address && typeof address !== "string");
+  const orgUrl = `http://127.0.0.1:${address.port}`;
   t.after(async () => { await new Promise<void>((done) => server.close(() => done())); });
-  await refused(discoverProjectContract({ ...config, orgUrl: `http://127.0.0.1:${address.port}` }, transport), "remote_failure");
+  const read = await new AdoClient({ ...config, orgUrl }, transport).request("GET", "/_apis/wit/fields?api-version=7.1");
+  assert.deepEqual(read, { count: 0, value: [] }); assert.equal(followed, 1);
+  const refusal = await f.command({ project: config.project }, false, { ADO_ORG_URL: orgUrl }) as { code: string; exit_code: number };
+  assert.equal(refusal.code, "remote_failure"); assert.equal(refusal.exit_code, 3);
+  assert.equal(followed, 1, "discovery must not follow the redirect"); assert.equal(initial, 2);
+});
+
+/** Discover identical Unicode metadata under two actual process default ICU locales. */
+test("fingerprints and output ordering are independent of process ICU locale", async () => {
+  const f = fixture();
+  for (const ref of ["Custom.ä", "Custom.z", "Custom.A"]) {
+    f.fields.push({ referenceName: ref, type: "string", readOnly: false });
+    f.typeFields.push({ referenceName: ref, alwaysRequired: false, allowedValues: [{ ä: 1, z: 2 }, "ä", "z", "z"] });
+  }
+  for (const name of ["ä Task", "z Task"]) f.types.push({ name, referenceName: name, states: [{ name: "New" }] });
+  f.relations.push({ referenceName: "Custom.ä", attributes: {} }, { referenceName: "Custom.z", attributes: {} });
+  const script = `import { discoverProjectContract } from ${JSON.stringify(pathToFileURL(join(repo, "dist/index.js")).href)};
+    const data = JSON.parse(process.argv[1]);
+    const contract = await discoverProjectContract(data.config, async (_method, url) => {
+      const path = new URL(url).pathname.split("/_apis/wit/")[1];
+      const value = path === "fields" ? data.fields : path === "workitemtypes" ? data.types : path === "workitemrelationtypes" ? data.relations : data.typeFields;
+      return { status: 200, body: JSON.stringify({ count: value.length, value }) };
+    });
+    console.log(JSON.stringify({ locale: Intl.DateTimeFormat().resolvedOptions().locale, contract }));`;
+  const input = JSON.stringify({ config, fields: f.fields, typeFields: f.typeFields, types: f.types, relations: f.relations });
+  const results: { locale: string; contract: ProjectContract }[] = [];
+  for (const locale of ["en_US.UTF-8", "sv_SE.UTF-8"]) {
+    const result = await run(process.execPath, ["--input-type=module", "-e", script, input], { env: { ...process.env, LANG: locale, LC_ALL: locale }, maxBuffer: 4 * 1024 * 1024 });
+    results.push(JSON.parse(result.stdout) as { locale: string; contract: ProjectContract });
+  }
+  assert.notEqual(results[0]!.locale, results[1]!.locale, "the regression must exercise distinct process locales");
+  assert.deepEqual(results[0]!.contract, results[1]!.contract);
+});
+
+test("type-filtered tracker checks skip enabled out-of-scope types but diagnose unknown and disabled types", async (t) => {
+  const f = await hostFixture(t);
+  f.types.push({ name: "Bug", referenceName: "Custom.Bug", isDisabled: false, states: [{ name: "New" }] },
+    { name: "Disabled", referenceName: "Custom.Disabled", isDisabled: true, states: [{ name: "New" }] });
+  const first = (await f.pm.listAllComplete()).items[0]!;
+  const items = [{ ...first, ado_type: "Task" }, { ...first, ado_type: "Bug" }];
+  const scoped = await discoverProjectContract(config, f.request, { type: "Task", items });
+  assert.equal(scoped.compatible, true); assert.deepEqual(scoped.issues, []);
+  assert.equal(scoped.checked_items, 1); assert.equal(scoped.skipped_items, 1);
+  const invalid = await discoverProjectContract(config, f.request, { type: "Task", items: [...items,
+    { ...first, ado_type: "Missing" }, { ...first, ado_type: "Disabled" }] });
+  assert.equal(invalid.checked_items, 3); assert.equal(invalid.skipped_items, 1);
+  assert.deepEqual(invalid.issues.map((issue) => [issue.code, issue.target]), [["item_type", "Missing"], ["item_type", "Disabled"]]);
+  const unscoped = await discoverProjectContract(config, f.request, { items });
+  assert.equal(unscoped.checked_items, 2); assert.equal(unscoped.skipped_items, 0);
+  // Persist a real provider type through the host SDK, then exercise CLI accounting.
+  const cwd = process.cwd(); process.chdir(f.root);
+  try { await f.pm.update(first.id, { field: ["ado_type=Bug"] }); }
+  finally { process.chdir(cwd); }
+  const cli = await f.cli(["--project", config.project, "--type", "Task", "--check-tracker", "--json"]);
+  assert.equal(cli.code, 0, cli.stderr);
+  const output = JSON.parse(cli.stdout) as ProjectContract;
+  assert.equal(output.compatible, true); assert.equal(output.checked_items, 0); assert.equal(output.skipped_items, 1);
+});
+
+test("complete-tracker SDK failures retain non-configuration refusal categories", async (t) => {
+  const trackerFixture = await hostFixture(t);
+  const file = readdirSync(trackerFixture.pmRoot, { recursive: true, encoding: "utf8" }).find((path) => path.endsWith(`/${trackerFixture.item.item.id}.toon`));
+  assert.ok(file);
+  writeFileSync(join(trackerFixture.pmRoot, file), "invalid [tracker data");
+  const trackerFailure = await trackerFixture.command({ project: config.project, checkTracker: true }) as { code: string; exit_code: number; remedy: string };
+  assert.equal(trackerFailure.code, "remote_failure"); assert.equal(trackerFailure.exit_code, 3);
+  assert.match(trackerFailure.remedy, /complete tracker read/u); assert.equal(trackerFixture.calls.length, 0);
+  const invalidMap = await trackerFixture.command({ project: config.project }, false, { ADO_STATUS_MAP: "{invalid map" }) as { code: string; exit_code: number };
+  assert.equal(invalidMap.code, "configuration"); assert.equal(invalidMap.exit_code, 2);
+});
+
+
+test("refusal normalization preserves typed failures and classifies other errors without leaking details", () => {
+  const typed = new ContractRefusal("schema_changed", "Review metadata", 4);
+  assert.equal(ContractRefusal.from(typed), typed);
+  const configuration = ContractRefusal.from(new CommandError("server-secret"));
+  assert.equal(configuration.code, "configuration"); assert.equal(configuration.exitCode, 2);
+  for (const error of [new CommandError("server-secret", 3), new TypeError("server-secret"), new Error("server-secret")]) {
+    const failure = ContractRefusal.from(error);
+    assert.equal(failure.code, "remote_failure"); assert.equal(failure.exitCode, 3);
+    assert.doesNotMatch(failure.message + failure.remedy, /server-secret/u);
+  }
 });

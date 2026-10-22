@@ -98,8 +98,10 @@ use it to keep agent output small. The host renders JSON or compact TOON
 The typed `discoverProjectContract` SDK export returns writable/read-only fields,
 required/allowed/default values, dependent fields, states, relation capabilities
 and mapping incompatibilities. `--check-tracker` reads a complete certified SDK
-snapshot and aggregates incompatible values/types. It shares the existing sync
-field conversions and state maps (`ADO_STATUS_MAP`, `ADO_EXPORT_STATE_MAP`).
+snapshot and aggregates incompatible values/types. With `--type`, enabled items
+of other remote types are counted in `skipped_items`; unknown/disabled types
+still produce incompatibilities. `checked_items` counts assessed items. It shares
+the existing sync field conversions and state maps (`ADO_STATUS_MAP`, `ADO_EXPORT_STATE_MAP`).
 Discovery uses only GET requests and makes no item/history/settings mutations.
 The host may populate disposable derived read caches.
 
@@ -111,7 +113,8 @@ is an explicit pre-planning step; it does not change the existing sync commands.
 
 Save the returned fingerprint and pass `--expect-fingerprint <sha256>` on a fresh
 discovery to refuse schema drift. Permission, scope, schema and configuration
-failures return typed codes plus remedies; shell exits are 2 (configuration),
+failures return typed codes plus remedies. SDK schema/tracker read failures use
+`remote_failure`, not a configuration remedy. Shell exits are 2 (configuration),
 3 (metadata/permission/network), or 4 (schema drift). Mapping incompatibilities
 are successful diagnostic results; inspect `compatible` before planning.
 See the [SDK and CLI example](docs/field-contracts.md).

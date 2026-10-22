@@ -212,7 +212,7 @@ function revisionConflict(entry: Entry, error: RevisionConflict, config: AdoConf
 
 /** Execute the real REST transport; failures are converted to stable command receipts. */
 export async function transport(method: string, url: string, body: string | undefined, headers: Readonly<Record<string, string>>) {
-  const response = await fetch(url, { method, headers, body, signal: AbortSignal.timeout(30_000), redirect: "error" });
+  const response = await fetch(url, { method, headers, body, signal: AbortSignal.timeout(30_000) });
   return { status: response.status, body: await response.text() };
 }
 

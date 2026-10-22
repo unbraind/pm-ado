@@ -13,6 +13,8 @@ export declare class ContractRefusal extends Error {
     readonly remedy: string;
     /** Record a stable refusal code and remedy without exposing server details. */
     constructor(code: ContractRefusalCode, remedy: string, exitCode?: number);
+    /** Preserve typed refusals, classify known configuration errors, and sanitize other failures. */
+    static from(error: unknown): ContractRefusal;
 }
 /** Per-type metadata, normalized independently of friendly names and REST URLs. */
 export interface ContractField {
@@ -91,8 +93,10 @@ export interface ProjectContract {
     relations: ContractRelation[];
     /** Known mapping incompatibilities with actionable remedies. */
     issues: ContractIssue[];
-    /** Number of complete SDK snapshot items checked. */
+    /** Number of snapshot items assessed, including unknown or disabled type diagnoses. */
     checked_items: number;
+    /** Enabled items outside the selected type, excluded from compatibility checks. */
+    skipped_items: number;
 }
 /** Optional type filter, schema pin, configured maps and complete SDK tracker snapshot. */
 export interface ContractOptions {

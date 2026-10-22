@@ -164,7 +164,7 @@ function revisionConflict(entry, error, config, identities, states) {
 }
 /** Execute the real REST transport; failures are converted to stable command receipts. */
 export async function transport(method, url, body, headers) {
-    const response = await fetch(url, { method, headers, body, signal: AbortSignal.timeout(30_000), redirect: "error" });
+    const response = await fetch(url, { method, headers, body, signal: AbortSignal.timeout(30_000) });
     return { status: response.status, body: await response.text() };
 }
 /** Build and apply one command plan using only the host-bound SDK client. */

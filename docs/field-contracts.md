@@ -9,11 +9,14 @@ pm ado contract --project Example --type Task --output-format toon
 pm ado contract --project Example --type Task --expect-fingerprint <sha256> --json
 ```
 
-The response includes `preview: true`, `checked_items`, `compatible`, `issues`
-with typed `code`, `target`, aggregate `count` and `remedy`, plus a fingerprint.
+The response includes `preview: true`, `checked_items`, `skipped_items`,
+`compatible`, `issues` with typed `code`, `target`, aggregate `count` and `remedy`, plus a fingerprint.
 For example, `read_only` on `Task/System.Title` means exporting title would be
 incompatible; `required_unmapped` on `Task/Custom.CostCenter` means the adapter
-needs a mapping or the process needs a default. No sync plan is constructed.
+needs a mapping or the process needs a default. With `--type`, enabled items
+of other project types are skipped and counted separately. Unknown or disabled
+types remain incompatibilities; they count as assessed items. No sync plan is
+constructed.
 
 ```ts
 import { discoverProjectContract, ContractRefusal } from "pm-ado";
@@ -43,15 +46,19 @@ SDK callers can pass `items: (await pm.listAllComplete()).items` from an existin
 host-bound client, and their existing `exportStates`/`importStates` maps. The
 adapter never reimplements tracker scanning, output rendering, or state/field
 conversion. The optional `expectedFingerprint` rejects changed metadata with
-`schema_changed` and exit 4. Fingerprints are order-independent and scoped to
-the organization, project and selected type metadata, excluding local items and
+`schema_changed` and exit 4. Fingerprints are order-independent, use
+locale-independent UTF-16 code-unit ordering, and are scoped to the organization,
+project and selected type metadata, excluding local items and
 configured maps. They are observations, not a transactional lock on Azure.
 
 Only GET requests are sent. The REST transport supplied by SDK callers must
-reject redirects, enforce timeouts and preserve the response status. The CLI
-transport already does so. A failed endpoint refuses the whole discovery rather
-than presenting a partial contract as complete. No server response body,
-credential or authorization header is included in refusal output.
+reject redirects, enforce timeouts and preserve the response status. The
+discovery CLI transport already does so, while the existing sync transport keeps
+its redirect behavior. A failed endpoint refuses the whole discovery rather than
+presenting a partial contract as complete. No server response body,
+credential or authorization header is included in refusal output. Configuration
+validation errors retain exit 2; SDK schema/tracker reads and unexpected conversion
+failures return `remote_failure` with exit 3 and a local-read remedy.
 
 Known limits: allowed values are only enumerations Azure exposes; identity,
 area/iteration and state-dependent rules can require further administrator

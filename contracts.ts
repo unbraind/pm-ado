@@ -2,8 +2,8 @@
 import { createHash } from "node:crypto";
 import type { CommandHandlerContext } from "@unbrained/pm-cli/sdk/authoring";
 import type { ItemMetadata, SchemaListResult } from "@unbrained/pm-cli/sdk";
-import { EXIT_CODE, RELATION_MAP, STATE_MAP, stripTrailingSlashes, type AdoConfig, type AdoTransport } from "./index.ts";
-import { ADO_FIELD_MAP, IMPORT_STATE_MAP, azureFields, localValues, stateMap, transport } from "./sync.ts";
+import { CommandError, EXIT_CODE, RELATION_MAP, STATE_MAP, stripTrailingSlashes, type AdoConfig, type AdoTransport } from "./index.ts";
+import { ADO_FIELD_MAP, IMPORT_STATE_MAP, azureFields, localValues, stateMap } from "./sync.ts";
 
 /** Stable refusal vocabulary for SDK callers and host-rendered CLI results. */
 export type ContractRefusalCode = "configuration" | "permission_denied" | "not_found" | "remote_failure" | "invalid_schema" | "schema_changed";
@@ -23,6 +23,13 @@ export class ContractRefusal extends Error {
     this.exitCode = exitCode;
     this.code = code;
     this.remedy = remedy;
+  }
+
+  /** Preserve typed refusals, classify known configuration errors, and sanitize other failures. */
+  static from(error: unknown): ContractRefusal {
+    return error instanceof ContractRefusal ? error : error instanceof CommandError && error.exitCode === EXIT_CODE.usage
+      ? new ContractRefusal("configuration", "Check the configured state-map JSON before retrying.", EXIT_CODE.usage)
+      : new ContractRefusal("remote_failure", "Check the local SDK schema, complete tracker read and field conversion before retrying; no writes were attempted.");
   }
 }
 
@@ -102,8 +109,10 @@ export interface ProjectContract {
   relations: ContractRelation[];
   /** Known mapping incompatibilities with actionable remedies. */
   issues: ContractIssue[];
-  /** Number of complete SDK snapshot items checked. */
+  /** Number of snapshot items assessed, including unknown or disabled type diagnoses. */
   checked_items: number;
+  /** Enabled items outside the selected type, excluded from compatibility checks. */
+  skipped_items: number;
 }
 
 /** Optional type filter, schema pin, configured maps and complete SDK tracker snapshot. */
@@ -154,10 +163,15 @@ function rows(value: unknown, key: string): Record<string, unknown>[] {
   return result;
 }
 
-/** Sort JSON recursively so schema fingerprints survive server ordering changes. */
+/** Compare strings by UTF-16 code units, independently of the process ICU locale. */
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : Number(left > right);
+}
+
+/** Sort JSON recursively so schema fingerprints survive server ordering and locale changes. */
 function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
-  if (value !== null && typeof value === "object") return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => [key, canonical(entry)]));
+  if (Array.isArray(value)) return value.map(canonical).sort((a, b) => compareCodeUnits(JSON.stringify(a), JSON.stringify(b)));
+  if (value !== null && typeof value === "object") return Object.fromEntries(Object.entries(value).sort(([a], [b]) => compareCodeUnits(a, b)).map(([key, entry]) => [key, canonical(entry)]));
   return value;
 }
 
@@ -198,6 +212,7 @@ export async function discoverProjectContract(config: AdoConfig, request: AdoTra
   for (const field of definitions) { name(field.type); schema(typeof field.readOnly === "boolean"); }
   const byRef = new Map(definitions.map((field) => [String(field.referenceName), field]));
   const remoteTypes = await get(project, "workitemtypes?");
+  const enabledTypes = new Map(remoteTypes.map((type) => [name(type.name), flag(type.isDisabled) !== true]));
   const selected = remoteTypes.filter((type) => options.type === undefined || type.name === options.type);
   if (selected.length === 0) throw new ContractRefusal("not_found", "Choose a work item type returned by discovery for this project.");
   const types: ContractType[] = [];
@@ -213,18 +228,18 @@ export async function discoverProjectContract(config: AdoConfig, request: AdoTra
       return { ref, type: String(definition.type), writable: !definition.readOnly, required: field.alwaysRequired,
         allowed: (field.allowedValues ?? []) as unknown[], default: field.defaultValue ?? null,
         depends_on: rows(field.dependentFields ?? [], "referenceName").map((entry) => String(entry.referenceName)).sort() };
-    }).sort((a, b) => a.ref.localeCompare(b.ref));
+    }).sort((a, b) => compareCodeUnits(a.ref, b.ref));
     types.push({ name: typeName, disabled: flag(type.isDisabled) === true,
       states: rows(type.states, "name").map((state) => String(state.name)).sort(), fields: normalized });
   }
-  types.sort((a, b) => a.name.localeCompare(b.name));
+  types.sort((a, b) => compareCodeUnits(a.name, b.name));
   const relations = (await get(base, "workitemrelationtypes?")).map((row): ContractRelation => {
     const attributes = record(row.attributes);
     const ref = String(row.referenceName);
     schema(attributes.usage === undefined || typeof attributes.usage === "string");
     return { ref, enabled: flag(attributes.enabled), editable: flag(attributes.editable), usage: (attributes.usage as string | undefined) ?? null,
       mapped: Object.hasOwn(RELATION_MAP, ref) ? RELATION_MAP[ref] : null };
-  }).sort((a, b) => a.ref.localeCompare(b.ref));
+  }).sort((a, b) => compareCodeUnits(a.ref, b.ref));
   const fingerprint = createHash("sha256").update(JSON.stringify(canonical({ organization: base, project: config.project, types, relations }))).digest("hex");
   if (options.expectedFingerprint !== undefined && options.expectedFingerprint !== fingerprint) throw new ContractRefusal("schema_changed", "Re-read the project contract and review mapping changes before planning sync.", EXIT_CODE.conflict);
   const issues: ContractIssue[] = [];
@@ -257,8 +272,10 @@ export async function discoverProjectContract(config: AdoConfig, request: AdoTra
     if (!relation || relation.enabled !== true || relation.editable !== true || relation.usage !== "workItemLink") issue("relation_unavailable", ref, "Review enabled/editable workItemLink metadata and project link permissions before exporting relations.");
   }
   const items = options.items ?? [];
+  let skippedItems = 0;
   for (const item of items) {
     const typeName = String(item.ado_type ?? options.type ?? "Task");
+    if (options.type !== undefined && typeName !== options.type && enabledTypes.get(typeName) === true) { skippedItems++; continue; }
     const type = types.find((entry) => entry.name === typeName && !entry.disabled);
     if (!type) { issue("item_type", typeName, "Select or map an enabled Azure type for these tracker items."); continue; }
     if (!Object.hasOwn(exportStates, item.status)) { issue("export_state", `${typeName}/${item.status}`, "Configure ADO_EXPORT_STATE_MAP for this local status."); continue; }
@@ -271,7 +288,13 @@ export async function discoverProjectContract(config: AdoConfig, request: AdoTra
   }
   return { ok: true, preview: true, project: config.project, fingerprint, compatible: issues.length === 0,
     permissions: { metadata_read: "allowed", field_write: "unknown", relation_write: "unknown", remedy: "Have a project administrator verify effective edit/link ACLs and conditional process rules. Metadata discovery does not authorize writes." },
-    types, relations, issues, checked_items: items.length };
+    types, relations, issues, checked_items: items.length - skippedItems, skipped_items: skippedItems };
+}
+
+/** Fetch discovery metadata without following redirects or changing the sync transport. */
+async function contractTransport(method: string, url: string, body: string | undefined, headers: Readonly<Record<string, string>>) {
+  const response = await fetch(url, { method, headers, body, redirect: "error", signal: AbortSignal.timeout(30_000) });
+  return { status: response.status, body: await response.text() };
 }
 
 /** Run through the host SDK and renderer; failures carry stable codes and shell exits. */
@@ -286,11 +309,11 @@ export async function runContractCommand(ctx: CommandHandlerContext) {
     const pm = ctx.sdk?.client;
     if (checkTracker && pm === undefined) throw new ContractRefusal("configuration", "Use a host-bound pm SDK to read the complete tracker, or omit --check-tracker.", EXIT_CODE.usage);
     const localSchema = checkTracker ? await pm!.schema("list") as SchemaListResult : undefined;
-    return await discoverProjectContract({ orgUrl: process.env.ADO_ORG_URL.trim(), project: project.trim(), token: process.env.ADO_TOKEN.trim() }, transport,
+    return await discoverProjectContract({ orgUrl: process.env.ADO_ORG_URL.trim(), project: project.trim(), token: process.env.ADO_TOKEN.trim() }, contractTransport,
       { type, expectedFingerprint: expected, localStatuses: localSchema ? [...localSchema.statuses.builtin, ...localSchema.statuses.custom].map((status) => status.id) : undefined, exportStates: stateMap(process.env.ADO_EXPORT_STATE_MAP, STATE_MAP), importStates: stateMap(process.env.ADO_STATUS_MAP, IMPORT_STATE_MAP),
         items: checkTracker ? (await pm!.listAllComplete()).items : undefined });
   } catch (error) {
-    const refusal = error instanceof ContractRefusal ? error : new ContractRefusal("configuration", "Check state-map JSON and the complete SDK tracker read before retrying.", EXIT_CODE.usage);
+    const refusal = ContractRefusal.from(error);
     process.exitCode = refusal.exitCode;
     return { ok: false, preview: true, code: refusal.code, remedy: refusal.remedy, exit_code: refusal.exitCode };
   }

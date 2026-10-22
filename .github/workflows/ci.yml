@@ -99,3 +99,28 @@ jobs:
 
       - name: Verify Bun can install the package graph
         run: bun install --no-save
+
+  release-gate:
+    name: release gate (${{ matrix.runtime }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [npm, bun]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+      - uses: oven-sh/setup-bun@v2.2.0
+      - run: npm ci
+      - name: Complete release gate with isolated Git identity
+        shell: bash
+        env:
+          GATE_RUNTIME: ${{ matrix.runtime }}
+        run: |
+          env HOME="$(mktemp -d)" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 "$GATE_RUNTIME" run release:check

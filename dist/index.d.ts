@@ -1,4 +1,6 @@
 import type { ExtensionApi, PreflightOverrideContext } from "@unbrained/pm-cli/sdk/authoring";
+export { discoverProjectContract, ContractRefusal } from "./contracts.ts";
+export type { ProjectContract, ContractOptions, ContractType, ContractField, ContractRelation, ContractIssue, ContractRefusalCode } from "./contracts.ts";
 import type { Dependency, PmClient } from "@unbrained/pm-cli/sdk";
 /**
  * Semantic exit codes pm's command runtime propagates to the shell.

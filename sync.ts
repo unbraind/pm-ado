@@ -82,7 +82,7 @@ function option(options: Record<string, unknown>, name: string): string | undefi
 }
 
 /** Parse an optional JSON state map and reject unusable configuration before reads. */
-function stateMap(raw: string | undefined, defaults: Readonly<Record<string, string>>): Record<string, string> {
+export function stateMap(raw: string | undefined, defaults: Readonly<Record<string, string>>): Record<string, string> {
   if (raw === undefined) return { ...defaults };
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { throw new CommandError("State map must be valid JSON"); }
@@ -149,11 +149,16 @@ function readBase(item: ItemMetadata, sample: Values): Values | undefined {
   return base;
 }
 
+/** Exact field mapping used by reconciliation and remote-contract discovery. */
+export const ADO_FIELD_MAP: Readonly<Record<string, string>> = {
+  title: "System.Title", description: "System.Description", status: "System.State",
+  priority: "Microsoft.VSTS.Common.Priority", tags: "System.Tags", assignee: "System.AssignedTo",
+  ado_area_path: "System.AreaPath", ado_iteration_path: "System.IterationPath",
+};
+
 /** Convert agreed canonical values to Azure reference names for changed fields only. */
-function azureFields(values: Values, keys: readonly string[], states: Record<string, string>): Record<string, unknown> {
-  const names: Record<string, string> = { title: "System.Title", description: "System.Description", status: "System.State",
-    priority: "Microsoft.VSTS.Common.Priority", tags: "System.Tags", assignee: "System.AssignedTo",
-    ado_area_path: "System.AreaPath", ado_iteration_path: "System.IterationPath" };
+export function azureFields(values: Values, keys: readonly string[], states: Record<string, string>): Record<string, unknown> {
+  const names = ADO_FIELD_MAP;
   return Object.fromEntries(keys.filter((key) => key !== "relations").map((key) => {
     let value: unknown = values[key];
     if (key === "status") {
@@ -206,8 +211,8 @@ function revisionConflict(entry: Entry, error: RevisionConflict, config: AdoConf
 }
 
 /** Execute the real REST transport; failures are converted to stable command receipts. */
-async function transport(method: string, url: string, body: string | undefined, headers: Readonly<Record<string, string>>) {
-  const response = await fetch(url, { method, headers, body, signal: AbortSignal.timeout(30_000) });
+export async function transport(method: string, url: string, body: string | undefined, headers: Readonly<Record<string, string>>) {
+  const response = await fetch(url, { method, headers, body, signal: AbortSignal.timeout(30_000), redirect: "error" });
   return { status: response.status, body: await response.text() };
 }
 

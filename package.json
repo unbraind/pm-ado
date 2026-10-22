@@ -19,7 +19,8 @@
     "README.md",
     "CHANGELOG.md",
     "docs/typed-relations.md",
-    "docs/sync.md"
+    "docs/sync.md",
+    "docs/field-contracts.md"
   ],
   "scripts": {
     "build": "tsc",
@@ -103,7 +104,8 @@
       "README.md",
       "CHANGELOG.md",
       "docs/typed-relations.md",
-      "docs/sync.md"
+      "docs/sync.md",
+      "docs/field-contracts.md"
     ],
     "examples": [
       "README.md"

@@ -1,0 +1,33 @@
+id: pm-ado-field-contracts
+title: Discover Azure project field contracts before planning sync
+description: "Expose a typed read-only Azure project field/type/state contract, required and allowed values, relation capabilities and mapping incompatibilities through SDK and agent-sized CLI output."
+type: Feature
+status: in_progress
+priority: 2
+tags: []
+created_at: "2026-10-22T15:20:40.187Z"
+updated_at: "2026-10-22T15:35:32.649Z"
+assignee: codex-agent
+claim_principal: codex-agent
+author: codex-agent
+acceptance_criteria: "Synthetic REST contracts cover read-only fields, custom types, missing permissions and schema changes; preview performs no remote or tracker mutations.; Typed SDK and CLI, JSON/TOON, typed refusals with remedies, README and example; no-git public tracker copy validation and npm plus Bun CI release gates."
+parent: pm-ado-g4v1
+comments[6]{created_at,author,text}:
+  "2026-10-22T15:20:47.781Z",codex-agent,"Overlap audit: current published core CLI is 2026.10.22; the repository SDK pin is retained. Core schema owns local pm fields; pm-jira and pm-linear register provider provenance and own their provider schemas. Existing ado validate inspects environment configuration only; sync maps a fixed set of fields without Azure process discovery. pm-ado-nc7z owns reconciliation and is related, not a duplicate. This feature adapts Azure project WIT metadata through GET only; no sync behavior changes. Effective caller write ACLs and conditional rules cannot be established from metadata and will be explicitly unknown with remedies, never inferred from a successful read."
+  "2026-10-22T15:29:12.759Z","harness:codex","Implementation uses typed discovery and refusal exports, explicit project selection, GET-only metadata endpoints, complete SDK list reads for optional tracker checks, shared sync field/state conversions, host JSON/TOON rendering and scope-bound order-independent schema fingerprints. Synthetic coverage already exercises schema drift, custom/read-only/required fields, permission refusals and sanitized transport errors. Metadata exposes relation capability flags but does not establish effective write ACLs. Add CI npm and Bun release-gate jobs at unchanged thresholds; local work is limited to focused tests, typechecks and repository lint checks due to CPU saturation."
+  "2026-10-22T15:31:54.895Z",codex-agent,"Focused REST/host suite passes 12/12 with no skips. All new source lines/functions are covered; the remaining branch is an unmapped optional field in a tracker-value check, now covered with a custom-field fixture. Optional tracker checks also read schema list through the SDK to verify import-state targets against local status IDs. Read-only proof compares authoritative tracker file hashes and all HTTP methods; the host may populate disposable runtime caches. Repository lint surfaces are docstring and whitespace checks; no standalone lint script or actionlint executable is configured."
+  "2026-10-22T15:33:14.992Z",codex-agent,"Public real-data validation: copied only the public origin/main tracker at ae51ace8fcac8f560f2e282bc5eb128fba89713c into a non-git scratch project, made authoritative files read-only, and used the actual installed CLI against synthetic Azure REST metadata. Complete snapshot: 27 items (6 in_progress, 2 open, 18 closed, 1 canceled). JSON and TOON each checked 27 items; 8 total GETs, zero other HTTP methods; 72 authoritative files hashed, zero changed. JSON output 3813 bytes, TOON 1510 bytes. This measures public tracker compatibility and read-only behavior, not live Azure acceptance. Targeted pm-linked command passes 12/12 with no context mismatch."
+  "2026-10-22T15:34:19.368Z",codex-agent,"Behavioral revert proofs, all compiling successfully: changing only field normalization to writable=true makes node --test --test-name-pattern=\"reports read-only fields\" test/contracts.test.ts fail 1/1 on the read_only assertion; disabling only the fingerprint mismatch comparison makes node --test --test-name-pattern=\"schema fingerprints are order-stable\" test/contracts.test.ts fail 1/1 with Missing expected rejection; changing only the discovery request verb GET to POST makes node --test --test-name-pattern=\"discovers a complete compatible\" test/contracts.test.ts fail 1/1. Restored all behavior and rebuilt dist. The restored focused suite passes 12/12; new-module V8 lines/branches/functions each 100%. No thresholds or source inventory were reduced."
+  "2026-10-22T15:35:32.643Z",codex-agent,"Re-run against the final build confirms 27/27 public tracker items checked in each format, 72 authoritative file hashes unchanged, eight GET requests and zero writes. The one diagnosed incompatibility is an existing canceled status without an export-state mapping (Task/canceled, count 1); compatible=false is expected and actionable. Output remains JSON 3813 bytes and TOON 1510 bytes. SDK schema-list status checks are included. Local strict health additionally sees inherited global-extension host-version skew and clone installation fence drift; CI uses a clean install and isolated home for full gates. No unrelated global extension or merge-driver changes are included."
+files[5]{path,scope}:
+  .github/workflows/ci.yml,project
+  contracts.ts,project
+  index.ts,project
+  sync.ts,project
+  test/contracts.test.ts,project
+tests[1]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
+  "npm run build && npm run build:test && node --test test/contracts.test.ts",project,"harness:codex","2026-10-22T15:30:12.585Z",local_mutation,feat/field-contracts
+docs[2]{path,scope}:
+  docs/field-contracts.md,project
+  README.md,project
+body: ""

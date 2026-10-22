@@ -118,9 +118,13 @@ jobs:
           cache: npm
       - uses: oven-sh/setup-bun@v2.2.0
       - run: npm ci
-      - name: Complete release gate with isolated Git identity
+      - name: Complete npm release gate with isolated Git identity
+        if: matrix.runtime == 'npm'
         shell: bash
-        env:
-          GATE_RUNTIME: ${{ matrix.runtime }}
         run: |
-          env HOME="$(mktemp -d)" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 "$GATE_RUNTIME" run release:check
+          env HOME="$(mktemp -d)" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 npm run release:check
+      - name: Complete Bun release gate with isolated Git identity
+        if: matrix.runtime == 'bun'
+        shell: bash
+        run: |
+          env HOME="$(mktemp -d)" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 bun run release:check

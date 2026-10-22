@@ -1,6 +1,6 @@
 /** Read-only Azure project metadata discovery; this module never plans or applies writes. */
 import { createHash } from "node:crypto";
-import { EXIT_CODE, RELATION_MAP, STATE_MAP } from "./index.js";
+import { EXIT_CODE, RELATION_MAP, STATE_MAP, stripTrailingSlashes } from "./index.js";
 import { ADO_FIELD_MAP, IMPORT_STATE_MAP, azureFields, localValues, stateMap, transport } from "./sync.js";
 /** An actionable failure that contains no remote response body or credentials. */
 export class ContractRefusal extends Error {
@@ -73,7 +73,7 @@ export async function discoverProjectContract(config, request, options = {}) {
         (options.type !== undefined && (!options.type.trim() || [".", ".."].includes(options.type)))) {
         throw new ContractRefusal("configuration", "Select a nonempty project/type, a token with Work Items read, and a credential-free HTTPS organization URL.", EXIT_CODE.usage);
     }
-    const base = config.orgUrl.replace(/\/+$/u, "");
+    const base = stripTrailingSlashes(config.orgUrl);
     const project = `${base}/${encodeURIComponent(config.project)}`;
     /** Read a fixed REST endpoint, refusing redirects and suppressing remote secrets. */
     const get = async (root, path) => {

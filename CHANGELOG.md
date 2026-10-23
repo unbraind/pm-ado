@@ -8,6 +8,9 @@
 
 ### Added
 
+- Resolve sync conflicts with revision-bound portable field decisions ([pm-ado-4x3u](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-4x3u.toon))
+- Discover Azure project field contracts before planning sync ([pm-ado-field-contracts](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-field-contracts.toon))
+- Preview Azure area and iteration moves with rule and relation evidence ([pm-ado-move-simulator](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-move-simulator.toon))
 - Map typed work item relations onto pm parent and dependency kinds in both directions ([pm-ado-1zuu](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-1zuu.toon))
 - Read a project through the work item batch endpoint instead of one request per item ([pm-ado-ntkc](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-ntkc.toon))
 - Assert System.Rev on every write so a concurrent agent cannot silently overwrite another ([pm-ado-8zx9](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-8zx9.toon))

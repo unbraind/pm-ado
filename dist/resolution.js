@@ -311,6 +311,7 @@ export class AdoResolutionService {
     }
     /** Prepare durably, then resume or settle under core item leases without replaying a successful PATCH. */
     async apply(input) {
+        let recovery = null;
         try {
             validateResolutionPlan(input);
             const plan = structuredClone(input);
@@ -322,7 +323,11 @@ export class AdoResolutionService {
                 throw new ResolutionRefusal("scope", "Restore the original local configuration and token, or regenerate the plan before any intent is prepared.");
             }
             const settings = await this.sdk.readSettings(this.pmRoot);
+            const pending = (await this.document(plan.local.id)).metadata.ado_resolution_intent;
+            if (pending !== undefined)
+                recovery = this.intent(pending, plan, decision, maps);
             const intent = await this.prepare(plan, decision, maps, settings);
+            recovery = intent;
             let replayed = true;
             if (intent !== null) {
                 try {
@@ -336,6 +341,8 @@ export class AdoResolutionService {
             return { ok: true, decision, replayed, pm_id: plan.local.id };
         }
         catch (error) {
+            if (recovery !== null && !(error instanceof ResolutionRefusal))
+                throw this.partial(recovery.plan_id, recovery.expected_remote_revision);
             throw ResolutionRefusal.from(error);
         }
     }

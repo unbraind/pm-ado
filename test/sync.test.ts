@@ -1039,6 +1039,15 @@ test("resolution recovery recognizes an applied PATCH despite an error response 
   await assert.rejects(service.apply(plan), { code: "ado_partial_apply" });
   const pending = await row(f.pm);
   const expected = plan.remote.revision + 1;
+  const peer = await loadResolutionSdk().acquireLockLease(f.pmRoot, item.id, 60, "fixture-peer");
+  const previousWait = process.env.PM_LOCK_WAIT_MS;
+  process.env.PM_LOCK_WAIT_MS = "0";
+  try { await assert.rejects(resolver(f).apply(plan), { code: "ado_partial_apply" }); }
+  finally {
+    if (previousWait === undefined) delete process.env.PM_LOCK_WAIT_MS;
+    else process.env.PM_LOCK_WAIT_MS = previousWait;
+    await peer.release();
+  }
   assert.equal(f.items.get(1)!.rev, expected);
   const applied = structuredClone(f.items.get(1)!);
   delete f.items.get(1)!.fields["System.History"];

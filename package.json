@@ -21,7 +21,8 @@
     "docs/typed-relations.md",
     "docs/sync.md",
     "docs/field-contracts.md",
-    "docs/conflict-resolution.md"
+    "docs/conflict-resolution.md",
+    "docs/move-simulator.md"
   ],
   "scripts": {
     "build": "tsc",
@@ -107,7 +108,8 @@
       "docs/typed-relations.md",
       "docs/sync.md",
       "docs/field-contracts.md",
-      "docs/conflict-resolution.md"
+      "docs/conflict-resolution.md",
+      "docs/move-simulator.md"
     ],
     "examples": [
       "README.md"

@@ -20,6 +20,9 @@ import type {
   PreflightOverrideContext,
 } from "@unbrained/pm-cli/sdk/authoring";
 import { runSyncCommand, SYNC_FLAGS } from "./sync.ts";
+import { runMoveCommand } from "./moves.ts";
+export { simulateMove, MoveRefusal, MOVE_LIMITS } from "./moves.ts";
+export type { MoveOptions, MoveScope, MoveRow, MoveRelation, MovePreview, MoveRefusalCode } from "./moves.ts";
 import { runContractCommand } from "./contracts.ts";
 import { runResolutionCommand } from "./resolution.ts";
 export { AdoResolutionService, ResolutionRefusal, resolutionDigest, resolutionScopeReference, resolutionFields, validateResolutionPlan } from "./resolution.ts";
@@ -1094,6 +1097,20 @@ export default defineExtension({
         { long: "--artifact", value_type: "string", value_name: "file", description: "Portable JSON artifact including explicit choices" },
       ],
       handler: (ctx: CommandHandlerContext) => runResolutionCommand(ctx, "apply"),
+    });
+
+    api.registerCommand({
+      name: "ado move-preview",
+      description: "Validate explicit area/iteration moves without saving; show preserved relation scope changes",
+      flags: [
+        { long: "--project", value_type: "string", description: "Explicit Azure project name" },
+        { long: "--items", value_type: "string", description: "Comma-separated exact linked pm IDs (1..50)" },
+        { long: "--area-path", value_type: "string", description: "Destination area path rooted in the selected project" },
+        { long: "--iteration-path", value_type: "string", description: "Destination iteration path rooted in the selected project" },
+        { long: "--type", value_type: "string", description: "Single type to validate (default Task)" },
+        { long: "--expect-fingerprint", value_type: "string", description: "Expected shared field contract fingerprint" },
+      ],
+      handler: runMoveCommand,
     });
 
     api.registerCommand({

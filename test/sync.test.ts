@@ -931,4 +931,5 @@ test("resolution digests use portable Unicode key ordering and ignore object ins
   const expected = createHash("sha256").update('{"nested":{"z":1,"ä":2},"z":1,"ä":2}').digest("hex");
   assert.equal(resolutionDigest({ ä: 2, z: 1, nested: { ä: 2, z: 1 } }), expected);
   assert.equal(resolutionDigest({ nested: { z: 1, ä: 2 }, z: 1, ä: 2 }), expected);
+  assert.deepEqual(localValues({ title: "T", status: "open", priority: 2, tags: ["ä", "z"] } as Parameters<typeof localValues>[0]).tags, ["z", "ä"]);
 });

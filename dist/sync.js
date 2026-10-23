@@ -60,7 +60,7 @@ export function buildWiql(options, project) {
         .filter(([, value]) => value !== undefined).map(([name, value]) => `[${name}] = '${value.replaceAll("'", "''")}'`).join(" AND ")} ORDER BY [System.Id]`;
 }
 /** Canonicalize tags as a set for stable reconciliation and idempotency. */
-function tags(value) { return [...new Set(value.map((tag) => tag.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)); }
+function tags(value) { return [...new Set(value.map((tag) => tag.trim()).filter(Boolean))].sort(); }
 /** Project Azure fields into the same normalized shape as local metadata. */
 export function remoteValues(item, mapping) {
     const fields = item.fields;

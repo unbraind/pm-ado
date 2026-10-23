@@ -112,7 +112,7 @@ export function buildWiql(options: Record<string, unknown>, project: string): st
 }
 
 /** Canonicalize tags as a set for stable reconciliation and idempotency. */
-function tags(value: string[]): string[] { return [...new Set(value.map((tag) => tag.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)); }
+function tags(value: string[]): string[] { return [...new Set(value.map((tag) => tag.trim()).filter(Boolean))].sort(); }
 
 /** Project Azure fields into the same normalized shape as local metadata. */
 export function remoteValues(item: AdoWorkItem, mapping: Readonly<Record<string, string>>): Values {

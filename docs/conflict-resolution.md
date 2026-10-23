@@ -3,7 +3,12 @@
 `pm ado resolve-plan --item <id>` previews one linked item without changing
 Azure or pm. It uses the existing sync field projections, three-way base and
 state maps. Output contains eight field digest rows, a whole local-document
-revision digest, Azure revision/snapshot digest, scope and state-map digest.
+revision digest, Azure revision/snapshot digest, opaque scope reference and
+state-map digest. Version 2 plans contain no configured organization URL or
+project name. The scope reference is an HMAC over both values, keyed by the
+locally configured token; the token and HMAC input are never stored in a Plan.
+Keep local configuration stable until settlement; token rotation invalidates
+unsettled artifacts. Version 1 artifacts are refused and must be regenerated.
 Field contents and credentials are absent. JSON and the default compact TOON
 are rendered by the host. Requires pm CLI **2026.10.23+** for expired mutation
 lease fencing; works in a plain, non-git tracker.
@@ -41,30 +46,47 @@ preview, and the audited mutation pipeline; there are no git subprocesses.
 
 | Refusal code | Remedy |
 | --- | --- |
-| `invalid_plan` | Generate a complete, unedited version 1 artifact. |
+| `invalid_plan` | Generate a complete, unedited version 2 artifact. |
 | `invalid_choices` | Choose exactly once for each differing field. |
 | `stale_local` / `stale_remote` | Generate a fresh plan and review new digests. |
 | `scope` | Restore the original scope/maps and unique linked identity. |
 | `configuration` | Supply credentials, item or plan selection and a supported host. |
-| `apply_failed` | Check health/connectivity and inspect both sides before retrying. |
+| `apply_failed` | No intent was prepared; check tracker health and configuration. |
+| `ado_partial_apply` | Preserve the recorded intent; restore tracker write/lease access and retry the same plan or artifact. If either side moved, inspect the recorded PATCH and history before reconciling manually. |
 
-Apply holds the core per-item lease from the local revision check through the
-Azure revision assertion and local audit commit. Stale plans change neither
-item. Azure can still race after the pre-read; the existing `test /rev` PATCH
-then refuses atomically. Successful decisions record a receipt on the target
-item and in immutable history; replay returns `replayed: true` with
-no extra PATCH or history event. Older applied decisions also replay using their immutable history receipts. The artifact is cloned before asynchronous
-work so caller edits cannot change an in-flight decision.
+Apply is a resumable two-phase operation using the core audited item mutation
+pipeline and its fenced leases:
+
+1. Validate all choices and both saved revisions, then durably commit
+   `ado_resolution_intent` and a prepare history event on the target item. The
+   intent contains the decision/plan ID, original local revision, remote
+   revision/digest, exact JSON PATCH and expected post-PATCH Azure revision.
+2. Recheck the prepared local state under a new item lease. Send the recorded
+   PATCH with its leading `test /rev` and a unique `System.History` decision
+   marker. Commit the local mapped values, settled history receipt and intent
+   removal together through the fenced SDK mutation.
+
+A lease takeover, filesystem write failure or lost response after PATCH leaves
+an inspectable intent. Re-running the **same** `--plan` or `--artifact` checks
+Azure's expected revision, unique marker and mapped outcome, then completes the
+local settlement without another PATCH. If Azure still exactly matches the
+recorded pre-PATCH snapshot, the saved revision-checked PATCH can be attempted.
+A different revision, missing marker, changed result or competing local edit
+refuses with `ado_partial_apply`; its remedy names the intent and expected
+revision. Never clear an unresolved intent or replace it with a new plan to
+bypass that refusal. Recovery data remains in the target item's metadata and
+immutable history; portable core Plan bodies contain only digest coordinates.
+
+Plans found stale before prepare make no item or Azure writes. An Azure race
+after prepare atomically refuses the PATCH and leaves its audited intent for
+inspection. Successful replay returns `replayed: true` without another PATCH or
+history event, including older applied decisions found in immutable history.
+The artifact is cloned before asynchronous work.
 
 This is scalar field resolution. Graph relations retain their dedicated sync
-adapter and are never overwritten by a decision. Existing relation base values
-are preserved for subsequent sync. A missing legacy base stays absent until
-sync can establish agreement for both scalar fields and relations. No revisions-feed reconciliation is added.
-Azure and pm are separate systems: a REST success followed by a lease expiry,
-process interruption or local validation failure can leave Azure updated and pm
-unchanged. Re-read both sides and make a fresh plan; never blindly retry onto a
-new revision. Core lease fencing prevents committing stale local bytes after
-another writer takes over. Fixture acceptance does not establish live Azure
+adapter. Existing relation base values are preserved; a missing legacy base
+stays absent until sync can establish complete agreement. No revisions-feed
+reconciliation is added. Fixture acceptance does not establish live Azure
 permissions or custom organization process rules.
 
 
@@ -74,7 +96,7 @@ Public `unbraind/pm-ado` tracker at
 `1fe0a306e13417115e66de9b48ac2e50deaa25d1`, copied into a non-git scratch
 directory: **28 certified items**, **224 field comparisons**, **28 synthetic
 title conflicts**, **28 valid plans**, **28 omitted-choice refusals**. Plans
-averaged **2,561 JSON bytes**. Fingerprints before/after confirmed copied source
+averaged **2,576 JSON bytes**. Fingerprints before/after confirmed copied source
 files unchanged; SDK runtime caches are excluded. All overlays were in memory,
 including an explicit `canceled` → `Removed` state map. Azure writes: **0**.
 

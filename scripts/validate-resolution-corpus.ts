@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { PmClient } from "@unbrained/pm-cli/sdk";
-import { STATE_MAP, type AdoWorkItem, type ResolutionPlan, resolutionDigest, resolutionFields, validateResolutionPlan } from "../index.ts";
+import { STATE_MAP, type AdoWorkItem, type ResolutionPlan, resolutionDigest, resolutionScopeReference, resolutionFields, validateResolutionPlan } from "../index.ts";
 import { ADO_FIELD_MAP, IMPORT_STATE_MAP, azureFields, localValues } from "../sync.ts";
 
 /** Fingerprint every copied source file; SDK-derived caches are excluded from this evidence. */
@@ -35,7 +35,7 @@ for (const [index, source] of items.entries()) {
   const remote = { ...structuredClone(template), id: index + 1,
     fields: { ...template.fields, ...azureFields(values, Object.keys(ADO_FIELD_MAP), maps.exports), "System.Title": "Synthetic remote conflict" } };
   const rows = resolutionFields(item, remote, maps);
-  const plan: ResolutionPlan = { schema: "pm-ado/resolution/1", scope: { org: "https://dev.azure.com/example", project: "Project" },
+  const plan: ResolutionPlan = { schema: "pm-ado/resolution/2", scope: { ref: resolutionScopeReference({ orgUrl: "https://dev.azure.com/example", project: "Project", token: "synthetic-token" }) },
     local: { id: item.id, revision: resolutionDigest({ metadata: item, body: "" }) },
     remote: { id: remote.id, revision: remote.rev, digest: resolutionDigest(remote) }, fields: rows,
     mapping: resolutionDigest(maps), choices: rows.filter((field) => field.local !== field.remote).map(({ field }) => ({ field, take: "local" })) };

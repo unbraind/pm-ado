@@ -1,9 +1,9 @@
 /** Portable, revision-bound decisions over the existing Azure sync field map. */
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { AdoClient, CommandError, RevisionConflict, STATE_MAP, readConfig } from "./index.js";
+import { AdoClient, CommandError, RevisionConflict, STATE_MAP, readConfig, buildUpdatePatch, PATCH_MEDIA_TYPE } from "./index.js";
 import { ADO_FIELD_MAP, IMPORT_STATE_MAP, azureFields, localValues, readBase, remoteValues, stateMap, transport, threeWayFieldConflict } from "./sync.js";
 /** A failed decision with a concrete recovery action; server bodies are never exposed. */
 export class ResolutionRefusal extends Error {
@@ -31,6 +31,10 @@ export class ResolutionRefusal extends Error {
         return new ResolutionRefusal("apply_failed", "Inspect tracker health and Azure connectivity. Re-read both sides before retrying; an external write may have succeeded before a local failure.");
     }
 }
+/** Bind organization and project without storing either value or a dictionary-testable plain hash. */
+export function resolutionScopeReference(config) {
+    return createHmac("sha256", config.token).update(JSON.stringify([config.orgUrl, config.project])).digest("hex");
+}
 /** Hash recursively sorted JSON so artifact property order has no semantics. */
 export function resolutionDigest(value) {
     return createHash("sha256").update(JSON.stringify(value, (_key, entry) => typeof entry === "object" && entry !== null && !Array.isArray(entry)
@@ -52,13 +56,13 @@ export function validateResolutionPlan(input) {
         throw new ResolutionRefusal("invalid_plan", "Generate a new plan with ado resolve-plan.");
     const p = input;
     const hash = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
-    if (p.schema !== "pm-ado/resolution/1" || typeof p.scope?.org !== "string" || typeof p.scope.project !== "string" ||
+    if (p.schema !== "pm-ado/resolution/2" || !hash(p.scope?.ref) || Object.keys(p.scope).length !== 1 ||
         typeof p.local?.id !== "string" || !hash(p.local.revision) || !Number.isSafeInteger(p.remote?.id) || Number(p.remote?.id) < 1 ||
         !Number.isSafeInteger(p.remote?.revision) || Number(p.remote?.revision) < 1 || !hash(p.remote?.digest) || !hash(p.mapping) ||
         !Array.isArray(p.fields) || p.fields.length !== Object.keys(ADO_FIELD_MAP).length ||
         p.fields.some((f) => typeof f !== "object" || f === null || !Object.hasOwn(ADO_FIELD_MAP, f.field) || !hash(f.local) || !hash(f.remote) ||
             !(f.base === null || hash(f.base)) || typeof f.conflict !== "boolean") || new Set(p.fields.map((f) => f.field)).size !== p.fields.length) {
-        throw new ResolutionRefusal("invalid_plan", "Generate a complete version 1 plan; do not edit its snapshot coordinates.");
+        throw new ResolutionRefusal("invalid_plan", "Generate a complete version 2 plan; do not edit its snapshot coordinates.");
     }
     const required = p.fields.filter((f) => f.local !== f.remote).map((f) => f.field);
     if (!Array.isArray(p.choices) || p.choices.length !== required.length || new Set(p.choices.map((c) => c?.field)).size !== p.choices.length ||
@@ -85,14 +89,16 @@ export class AdoResolutionService {
     client;
     config;
     sdk;
+    observer;
     /** Bind one public SDK workspace and Azure REST client to an attributable caller. */
-    constructor(pmRoot, author, pm, client, config, sdk = loadResolutionSdk()) {
+    constructor(pmRoot, author, pm, client, config, sdk = loadResolutionSdk(), observer) {
         this.pmRoot = pmRoot;
         this.author = author;
         this.pm = pm;
         this.client = client;
         this.config = config;
         this.sdk = sdk;
+        this.observer = observer;
     }
     /** Load authoritative item bytes with the same SDK normalization used by the mutation lock. */
     async document(id) {
@@ -135,7 +141,7 @@ export class AdoResolutionService {
             const remote = await this.remote(Number(item.ado_id));
             this.scope(item, remote);
             const maps = this.maps();
-            return { schema: "pm-ado/resolution/1", scope: { org: this.config.orgUrl, project: this.config.project },
+            return { schema: "pm-ado/resolution/2", scope: { ref: resolutionScopeReference(this.config) },
                 local: { id: item.id, revision: resolutionDigest(document) },
                 remote: { id: remote.id, revision: remote.rev, digest: resolutionDigest(remote) },
                 fields: resolutionFields(item, remote, maps), mapping: resolutionDigest(maps), choices: [] };
@@ -144,7 +150,166 @@ export class AdoResolutionService {
             throw ResolutionRefusal.from(error);
         }
     }
-    /** Apply under the core item lease; validate all choices and both revisions before a REST write. */
+    /** Fingerprint content independently of the prepare write's timestamp and recovery field. */
+    guard(document) {
+        const snapshot = structuredClone(document);
+        delete snapshot.metadata.ado_resolution_intent;
+        snapshot.metadata.updated_at = "";
+        return resolutionDigest(snapshot);
+    }
+    /** Recognize durable settlement using the same immutable receipt used by normal replay. */
+    async settled(item, decision) {
+        return item.ado_resolution_receipt === decision ||
+            (await this.sdk.readHistorySnapshot(this.sdk.getHistoryPath(this.pmRoot, item.id), item.id)).entries.some((entry) => entry.context?.ado_resolution === decision);
+    }
+    /** Name the exact recovery coordinate without disclosing configuration or field contents. */
+    partial(decision, expected) {
+        return new ResolutionRefusal("ado_partial_apply", `Intent ${decision} ${expected === null ? "has unreadable revision coordinates" : `expects Azure revision ${expected}`}. Restore tracker write access or lease ownership, then rerun ado resolve-apply with the SAME --plan or --artifact. If either side changed after prepare, preserve the intent and reconcile the recorded PATCH and item history manually; do not apply a new plan or repeat the PATCH blindly.`);
+    }
+    /** Rebuild the exact guarded wire document from reviewed values, including an ownership marker. */
+    patch(plan, values, maps, decision) {
+        const exports = plan.fields.filter((field) => resolutionDigest(values[field.field]) !== field.remote).map((field) => field.field).sort();
+        return exports.length === 0 ? [] : buildUpdatePatch(plan.remote.revision, { ...azureFields(values, exports, maps.exports), "System.History": `pm-ado resolution ${decision}` }, [], "add");
+    }
+    /** Reject corrupted or substituted recovery data before using its stored PATCH. */
+    intent(raw, plan, decision, maps) {
+        let recoveryId = decision;
+        let expected = null;
+        try {
+            const intent = JSON.parse(String(raw));
+            if (typeof intent?.plan_id === "string" && /^[a-f0-9]{64}$/u.test(intent.plan_id))
+                recoveryId = intent.plan_id;
+            if (Number.isSafeInteger(intent?.expected_remote_revision) && intent.expected_remote_revision > 0)
+                expected = intent.expected_remote_revision;
+            if (intent === null || intent.plan_id !== decision || intent.local_revision !== plan.local.revision ||
+                intent.remote_id !== plan.remote.id || intent.remote_revision !== plan.remote.revision ||
+                intent.remote_digest !== plan.remote.digest || typeof intent.guard !== "string" ||
+                typeof intent.values !== "object" || intent.values === null ||
+                plan.fields.some((field) => resolutionDigest(intent.values[field.field]) !==
+                    (plan.choices.find((choice) => choice.field === field.field)?.take === "local" ? field.local : field.remote)) ||
+                resolutionDigest(intent.patch) !== resolutionDigest(this.patch(plan, intent.values, maps, decision)) ||
+                intent.expected_remote_revision !== plan.remote.revision + (intent.patch.length === 0 ? 0 : 1)) {
+                throw this.partial(recoveryId, expected);
+            }
+            return intent;
+        }
+        catch {
+            throw this.partial(recoveryId, expected);
+        }
+    }
+    /** Audit intent before the remote side effect; ordinary stale plans still make no item writes. */
+    async prepare(plan, decision, maps, settings) {
+        let prepared = null;
+        await this.sdk.mutateItemWithHistoryContext({ pmRoot: this.pmRoot, settings, id: plan.local.id, author: this.author,
+            op: "update", skipNoop: true, message: `Prepare Azure resolution ${decision}`, historyContext: { ado_resolution_prepare: decision },
+            mutate: async (document) => {
+                const item = document.metadata;
+                if (await this.settled(item, decision))
+                    return { changedFields: [] };
+                if (item.ado_resolution_intent !== undefined) {
+                    prepared = this.intent(item.ado_resolution_intent, plan, decision, maps);
+                    return { changedFields: [] };
+                }
+                if (resolutionDigest(document) !== plan.local.revision)
+                    throw new ResolutionRefusal("stale_local", "A local writer changed the item. Generate a new plan and review its choices.");
+                const remote = await this.remote(plan.remote.id);
+                this.scope(item, remote);
+                if (remote.rev !== plan.remote.revision || resolutionDigest(remote) !== plan.remote.digest) {
+                    throw new ResolutionRefusal("stale_remote", "An Azure writer changed the item. Generate a new plan and review its choices.");
+                }
+                if (resolutionDigest(resolutionFields(item, remote, maps).sort((a, b) => a.field.localeCompare(b.field))) !== resolutionDigest(plan.fields)) {
+                    throw new ResolutionRefusal("invalid_plan", "Snapshot field digests were edited; generate a fresh plan.");
+                }
+                const local = localValues(item);
+                const values = remoteValues(remote, maps.imports);
+                const base = readBase(item, { ...values, relations: [] });
+                if (base !== undefined && maps.exports[String(base.status)] === remote.fields["System.State"])
+                    values.status = base.status;
+                for (const choice of plan.choices)
+                    if (choice.take === "local")
+                        values[choice.field] = local[choice.field];
+                await this.sdk.previewItemMutations({ pmRoot: this.pmRoot, transactionId: `ado-${decision}`, author: this.author,
+                    mutations: [{ op: "update", id: item.id, options: { title: String(values.title), description: String(values.description),
+                                status: String(values.status), priority: Number(values.priority), tags: JSON.stringify(values.tags),
+                                ...(values.assignee === "" ? { unset: ["assignee"] } : { assignee: String(values.assignee) }), closeReason: "Azure conflict resolution" } }] });
+                const patch = this.patch(plan, values, maps, decision);
+                prepared = { plan_id: decision, local_revision: plan.local.revision, guard: this.guard(document),
+                    remote_id: remote.id, remote_revision: remote.rev, remote_digest: plan.remote.digest,
+                    expected_remote_revision: remote.rev + (patch.length === 0 ? 0 : 1), patch, values, base: base ?? null };
+                item.ado_resolution_intent = JSON.stringify(prepared);
+                return { changedFields: ["ado_resolution_intent"] };
+            } });
+        return prepared;
+    }
+    /** Prove a prepared PATCH was applied, including its unique marker and complete mapped result. */
+    applied(intent, remote, maps) {
+        if (remote.rev !== intent.expected_remote_revision)
+            return false;
+        if (intent.patch.length === 0)
+            return resolutionDigest(remote) === intent.remote_digest;
+        const values = remoteValues(remote, maps.imports);
+        if (maps.exports[String(intent.values.status)] === remote.fields["System.State"])
+            values.status = intent.values.status;
+        return String(remote.fields["System.History"]).includes(`pm-ado resolution ${intent.plan_id}`) && resolutionDigest(values) === resolutionDigest(intent.values);
+    }
+    /** Commit mapped values, lifecycle evidence and the settled receipt as one fenced SDK mutation. */
+    async settle(plan, decision, intent, maps, settings) {
+        let replayed = false;
+        await this.sdk.mutateItemWithHistoryContext({ pmRoot: this.pmRoot, settings, id: plan.local.id, author: this.author,
+            op: "update", skipNoop: true, message: `Settle Azure resolution ${decision}`, historyContext: { ado_resolution: decision },
+            mutate: async (document) => {
+                const item = document.metadata;
+                if (await this.settled(item, decision)) {
+                    replayed = true;
+                    return { changedFields: [] };
+                }
+                const history = await this.sdk.readHistorySnapshot(this.sdk.getHistoryPath(this.pmRoot, item.id), item.id);
+                if (item.ado_resolution_intent !== JSON.stringify(intent) || this.guard(document) !== intent.guard ||
+                    history.entries.at(-1)?.context?.ado_resolution_prepare !== decision)
+                    throw this.partial(decision, intent.expected_remote_revision);
+                let remote = await this.remote(intent.remote_id);
+                this.scope(item, remote);
+                if (!this.applied(intent, remote, maps)) {
+                    if (remote.rev !== intent.remote_revision || resolutionDigest(remote) !== intent.remote_digest)
+                        throw this.partial(decision, intent.expected_remote_revision);
+                    // The exact wire body is already durable in the item's prepare history.
+                    await this.client.request("PATCH", `/_apis/wit/workitems/${intent.remote_id}?api-version=7.1&$expand=relations`, intent.patch, PATCH_MEDIA_TYPE);
+                    remote = await this.remote(intent.remote_id);
+                    if (!this.applied(intent, remote, maps))
+                        throw this.partial(decision, intent.expected_remote_revision);
+                }
+                const previousStatus = item.status;
+                const values = intent.values;
+                for (const key of Object.keys(ADO_FIELD_MAP))
+                    item[key] = values[key];
+                if (values.assignee === "")
+                    delete item.assignee;
+                const statuses = this.sdk.resolveRuntimeStatusRegistry(settings.schema);
+                const lifecycleFields = [];
+                if (item.status !== previousStatus) {
+                    if (item.status === statuses.close_status) {
+                        item.closed_at = this.sdk.nowIso();
+                        item.completed_at = item.closed_at;
+                        item.close_reason = "Azure conflict resolution";
+                        lifecycleFields.push("closed_at", "completed_at", "close_reason");
+                    }
+                    else if (!this.sdk.isTerminalStatus(item.status, statuses) && this.sdk.isTerminalStatus(previousStatus, statuses)) {
+                        for (const key of ["closed_at", "completed_at", "close_reason", "resolution", "expected_result", "actual_result", "fixed_version"]) {
+                            delete item[key];
+                            lifecycleFields.push(key);
+                        }
+                    }
+                }
+                item.ado_rev = remote.rev;
+                if (intent.base !== null)
+                    item.ado_sync_base = JSON.stringify({ ...intent.base, ...values });
+                item.ado_resolution_receipt = decision;
+                delete item.ado_resolution_intent;
+                return { changedFields: [...lifecycleFields, ...Object.keys(ADO_FIELD_MAP), "ado_rev", "ado_sync_base", "ado_resolution_receipt", "ado_resolution_intent"] };
+            } });
+        return replayed;
+    }
+    /** Prepare durably, then resume or settle under core item leases without replaying a successful PATCH. */
     async apply(input) {
         try {
             validateResolutionPlan(input);
@@ -153,77 +318,21 @@ export class AdoResolutionService {
             plan.choices.sort((a, b) => a.field.localeCompare(b.field));
             const decision = resolutionDigest(plan);
             const maps = this.maps();
-            if (plan.scope.org !== this.config.orgUrl || plan.scope.project !== this.config.project || plan.mapping !== resolutionDigest(maps)) {
-                throw new ResolutionRefusal("scope", "Restore the original Azure scope and state maps, or generate a fresh plan.");
+            if (plan.scope.ref !== resolutionScopeReference(this.config) || plan.mapping !== resolutionDigest(maps)) {
+                throw new ResolutionRefusal("scope", "Restore the original local configuration and token, or regenerate the plan before any intent is prepared.");
             }
-            let replayed = false;
             const settings = await this.sdk.readSettings(this.pmRoot);
-            await this.sdk.mutateItemWithHistoryContext({ pmRoot: this.pmRoot, settings,
-                id: plan.local.id, author: this.author, op: "update", skipNoop: true,
-                message: `Azure resolution ${decision}`, historyContext: { ado_resolution: decision },
-                mutate: async (document) => {
-                    const item = document.metadata;
-                    if (item.ado_resolution_receipt === decision ||
-                        (await this.sdk.readHistorySnapshot(this.sdk.getHistoryPath(this.pmRoot, item.id), item.id)).entries.some((entry) => entry.context?.ado_resolution === decision)) {
-                        replayed = true;
-                        return { changedFields: [] };
-                    }
-                    if (resolutionDigest(document) !== plan.local.revision)
-                        throw new ResolutionRefusal("stale_local", "A local writer changed the item. Generate a new plan and review its choices.");
-                    const remote = await this.remote(plan.remote.id);
-                    this.scope(item, remote);
-                    if (remote.rev !== plan.remote.revision || resolutionDigest(remote) !== plan.remote.digest) {
-                        throw new ResolutionRefusal("stale_remote", "An Azure writer changed the item. Generate a new plan and review its choices.");
-                    }
-                    if (resolutionDigest(resolutionFields(item, remote, maps).sort((a, b) => a.field.localeCompare(b.field))) !== resolutionDigest(plan.fields)) {
-                        throw new ResolutionRefusal("invalid_plan", "Snapshot field digests were edited; generate a fresh plan.");
-                    }
-                    const local = localValues(item);
-                    const values = remoteValues(remote, maps.imports);
-                    // A shared Azure state can represent multiple pm states; use sync's agreed base interpretation.
-                    const base = readBase(item, { ...values, relations: [] });
-                    if (base !== undefined && maps.exports[String(base.status)] === remote.fields["System.State"])
-                        values.status = base.status;
-                    for (const choice of plan.choices)
-                        if (choice.take === "local")
-                            values[choice.field] = local[choice.field];
-                    const exports = Object.keys(ADO_FIELD_MAP).filter((field) => resolutionDigest(values[field]) !== plan.fields.find((f) => f.field === field).remote);
-                    const fields = azureFields(values, exports, maps.exports);
-                    // Validate the local lifecycle/schema before the external side effect using core's staged mutation preview.
-                    await this.sdk.previewItemMutations({ pmRoot: this.pmRoot, transactionId: `ado-${decision}`, author: this.author,
-                        mutations: [{ op: "update", id: item.id, options: { title: String(values.title), description: String(values.description),
-                                    status: String(values.status), priority: Number(values.priority), tags: JSON.stringify(values.tags),
-                                    ...(values.assignee === "" ? { unset: ["assignee"] } : { assignee: String(values.assignee) }),
-                                    closeReason: "Azure conflict resolution" } }] });
-                    const previousStatus = item.status;
-                    const result = exports.length ? await this.client.updateWorkItem(remote.id, remote.rev, fields) : remote;
-                    for (const key of Object.keys(ADO_FIELD_MAP))
-                        item[key] = values[key];
-                    if (values.assignee === "")
-                        delete item.assignee;
-                    const statuses = this.sdk.resolveRuntimeStatusRegistry(settings.schema);
-                    const lifecycleFields = [];
-                    if (item.status !== previousStatus) {
-                        if (item.status === statuses.close_status) {
-                            item.closed_at = this.sdk.nowIso();
-                            item.completed_at = item.closed_at;
-                            item.close_reason = "Azure conflict resolution";
-                            lifecycleFields.push("closed_at", "completed_at", "close_reason");
-                        }
-                        else if (!this.sdk.isTerminalStatus(item.status, statuses) && this.sdk.isTerminalStatus(previousStatus, statuses)) {
-                            for (const key of ["closed_at", "completed_at", "close_reason", "resolution", "expected_result", "actual_result", "fixed_version"]) {
-                                delete item[key];
-                                lifecycleFields.push(key);
-                            }
-                        }
-                    }
-                    item.ado_rev = result.rev;
-                    // Scalar decisions leave graph reconciliation to the existing relation adapter.
-                    if (base !== undefined)
-                        item.ado_sync_base = JSON.stringify({ ...base, ...values });
-                    item.ado_resolution_receipt = decision;
-                    return { changedFields: [...lifecycleFields, ...Object.keys(ADO_FIELD_MAP), "ado_rev", "ado_sync_base", "ado_resolution_receipt"] };
-                } });
+            const intent = await this.prepare(plan, decision, maps, settings);
+            let replayed = true;
+            if (intent !== null) {
+                try {
+                    await this.observer?.({ phase: "prepared", decision });
+                    replayed = await this.settle(plan, decision, intent, maps, settings);
+                }
+                catch {
+                    throw this.partial(decision, intent.expected_remote_revision);
+                }
+            }
             return { ok: true, decision, replayed, pm_id: plan.local.id };
         }
         catch (error) {

@@ -1,8 +1,9 @@
 import type * as Sdk from "@unbrained/pm-cli/sdk";
 import type { CommandHandlerContext } from "@unbrained/pm-cli/sdk/authoring";
-import { AdoClient, type AdoConfig, type AdoWorkItem } from "./index.ts";
+import { AdoClient, type AdoConfig, type AdoWorkItem, type JsonPatchOperation } from "./index.ts";
+import { type Values } from "./sync.ts";
 /** Stable refusals agents can branch on without parsing error prose. */
-export type ResolutionRefusalCode = "invalid_plan" | "invalid_choices" | "stale_local" | "stale_remote" | "scope" | "configuration" | "apply_failed";
+export type ResolutionRefusalCode = "invalid_plan" | "invalid_choices" | "stale_local" | "stale_remote" | "scope" | "configuration" | "apply_failed" | "ado_partial_apply";
 /** A failed decision with a concrete recovery action; server bodies are never exposed. */
 export declare class ResolutionRefusal extends Error {
     /** Semantic conflict exit propagated by the host runtime. */
@@ -39,11 +40,10 @@ export interface ResolutionField {
 /** Portable artifact; a core Plan item may store this JSON in its body. */
 export interface ResolutionPlan {
     /** Versioned package decision contract, independent of core Plan storage. */
-    schema: "pm-ado/resolution/1";
-    /** Azure scope; never includes the access token. */
+    schema: "pm-ado/resolution/2";
+    /** Opaque credential-keyed scope reference; configuration is never persisted. */
     scope: {
-        org: string;
-        project: string;
+        ref: string;
     };
     /** Exact local identity and canonical whole-document revision digest. */
     local: {
@@ -74,6 +74,38 @@ export interface ResolutionReceipt {
     /** Local item whose immutable history holds the decision. */
     pm_id: string;
 }
+/** Optional SDK progress observer, invoked only after the recovery intent is durable. */
+export type ResolutionObserver = (event: {
+    /** Durable preparation has completed or an existing intent was recovered. */
+    phase: "prepared";
+    /** Opaque decision identity; field contents are excluded. */
+    decision: string;
+}) => void | Promise<void>;
+/** Durable forward-recovery intent owned by the target item's audited metadata/history. */
+export interface ResolutionIntent {
+    /** Canonical reviewed plan and choice identity. */
+    plan_id: string;
+    /** Original local revision before the prepare mutation. */
+    local_revision: string;
+    /** Content fingerprint excluding only the prepare timestamp and intent itself. */
+    guard: string;
+    /** Bound Azure identity and revision before PATCH. */
+    remote_id: number;
+    /** Azure revision asserted by the saved PATCH. */
+    remote_revision: number;
+    /** Full remote snapshot before the side effect. */
+    remote_digest: string;
+    /** Revision expected after one PATCH, or unchanged for a local-only decision. */
+    expected_remote_revision: number;
+    /** Exact REST JSON Patch, including /rev test and unique history marker. */
+    patch: JsonPatchOperation[];
+    /** Reviewed canonical outcome, retained only on the target item. */
+    values: Values;
+    /** Existing complete sync base; null preserves legacy absence. */
+    base: Values | null;
+}
+/** Bind organization and project without storing either value or a dictionary-testable plain hash. */
+export declare function resolutionScopeReference(config: AdoConfig): string;
 /** Hash recursively sorted JSON so artifact property order has no semantics. */
 export declare function resolutionDigest(value: unknown): string;
 /** Resolve the public SDK from this package or the running host, including copied extensions. */
@@ -97,8 +129,9 @@ export declare class AdoResolutionService {
     private readonly client;
     private readonly config;
     private readonly sdk;
+    private readonly observer;
     /** Bind one public SDK workspace and Azure REST client to an attributable caller. */
-    constructor(pmRoot: string, author: string, pm: Sdk.PmClient, client: AdoClient, config: AdoConfig, sdk?: typeof Sdk);
+    constructor(pmRoot: string, author: string, pm: Sdk.PmClient, client: AdoClient, config: AdoConfig, sdk?: typeof Sdk, observer?: ResolutionObserver);
     /** Load authoritative item bytes with the same SDK normalization used by the mutation lock. */
     private document;
     /** Check identity and scope on every read, including when applying a portable artifact. */
@@ -109,7 +142,23 @@ export declare class AdoResolutionService {
     private maps;
     /** Preview one linked item's scalar decisions with no tracker or REST writes. */
     plan(id: string): Promise<ResolutionPlan>;
-    /** Apply under the core item lease; validate all choices and both revisions before a REST write. */
+    /** Fingerprint content independently of the prepare write's timestamp and recovery field. */
+    private guard;
+    /** Recognize durable settlement using the same immutable receipt used by normal replay. */
+    private settled;
+    /** Name the exact recovery coordinate without disclosing configuration or field contents. */
+    private partial;
+    /** Rebuild the exact guarded wire document from reviewed values, including an ownership marker. */
+    private patch;
+    /** Reject corrupted or substituted recovery data before using its stored PATCH. */
+    private intent;
+    /** Audit intent before the remote side effect; ordinary stale plans still make no item writes. */
+    private prepare;
+    /** Prove a prepared PATCH was applied, including its unique marker and complete mapped result. */
+    private applied;
+    /** Commit mapped values, lifecycle evidence and the settled receipt as one fenced SDK mutation. */
+    private settle;
+    /** Prepare durably, then resume or settle under core item leases without replaying a successful PATCH. */
     apply(input: unknown): Promise<ResolutionReceipt>;
 }
 /** CLI bridge with host-owned compact TOON/JSON rendering and core Plan persistence. */

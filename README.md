@@ -133,6 +133,9 @@ GitHub workflows need a git checkout and are separate from tracker operations.
 field digests. Review and add explicit `local`/`remote` choices, then use
 `pm ado resolve-apply --artifact decision.json` or `--plan <core-plan-id>`.
 Stale local or Azure revisions refuse; successful replay adds no writes.
+Prepared intents resume settlement after a post-PATCH lease or write failure.
+Saved plans retain an opaque scope reference instead of organization/project
+configuration.
 The [SDK, portable artifact example and refusal remedies](docs/conflict-resolution.md)
 describe the lease and cross-system recovery boundaries. Requires pm CLI
 2026.10.23 or newer.

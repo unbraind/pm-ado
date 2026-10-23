@@ -15,7 +15,7 @@
 import { runSyncCommand, SYNC_FLAGS } from "./sync.js";
 import { runContractCommand } from "./contracts.js";
 import { runResolutionCommand } from "./resolution.js";
-export { AdoResolutionService, ResolutionRefusal, resolutionDigest, resolutionFields, validateResolutionPlan } from "./resolution.js";
+export { AdoResolutionService, ResolutionRefusal, resolutionDigest, resolutionScopeReference, resolutionFields, validateResolutionPlan } from "./resolution.js";
 export { discoverProjectContract, ContractRefusal } from "./contracts.js";
 /**
  * Semantic exit codes pm's command runtime propagates to the shell.
@@ -879,7 +879,7 @@ export default defineExtension({
             { name: "ado_url", type: "string", optional: true },
             { name: "ado_rev", type: "number", optional: true },
             { name: "ado_project", type: "string", optional: true },
-            ...["ado_org_url", "ado_type", "ado_area_path", "ado_iteration_path", "ado_sync_base", "ado_resolution_receipt"].map((name) => ({ name, type: "string", optional: true })),
+            ...["ado_org_url", "ado_type", "ado_area_path", "ado_iteration_path", "ado_sync_base", "ado_resolution_receipt", "ado_resolution_intent"].map((name) => ({ name, type: "string", optional: true })),
         ]);
         // preflight — abort a network-bound command before any store read or remote
         // call when credentials are absent. Scoped to this package's own command

@@ -1,0 +1,32 @@
+id: pm-ado-4x3u
+title: Resolve sync conflicts with revision-bound portable field decisions
+description: "Acceptance: portable base/local/remote digests with explicit per-field choices; stale Azure or local revisions refuse without changes; applied-plan replay is idempotent; omitted or conflicting choices refuse before REST writes. Typed SDK and CLI, compact receipts, docs, non-git public tracker copy plus REST 7.1 fixtures. Reuse existing three-way sync and core audited mutations and plan storage; exclude revisions-feed reconciliation."
+type: Feature
+status: in_progress
+priority: 2
+tags: []
+created_at: "2026-10-23T08:25:22.374Z"
+updated_at: "2026-10-23T08:44:20.955Z"
+assignee: codex-agent
+claim_principal: codex-agent
+author: codex-agent
+acceptance_criteria: "Portable base/local/remote digests with explicit per-field choices. Both local and Azure writers invalidate old plans without item changes or REST writes. Replaying an applied decision is idempotent. Missing, duplicate, conflicting or unknown choices refuse before REST writes. Typed SDK and CLI, compact TOON/JSON receipts, docs and non-git public-tracker plus Azure REST 7.1 fixture acceptance."
+parent: pm-ado-g4v1
+comments[5]{created_at,author,text}:
+  "2026-10-23T08:25:42.733Z",codex-agent,"Overlap audit: ado sync already owns per-field base/local/remote detection and REST /rev assertions. Core SDK owns durable Plan items, complete corpus reads, history and audited mutation locks; reuse these instead of parallel storage. Sibling pm-jira transition plans and pm-linear sync do not provide Azure revision-bound conflict decisions. Revisions-feed reconciliation remains in epic scope and is excluded. Need latest SDK lease fencing for a locked callback that spans REST; evaluate 2026.10.23 before choosing the dependency floor."
+  "2026-10-23T08:33:26.524Z",codex-agent,"Implementation now uses certified complete reads, authoritative SDK document reads, core Plan body persistence, staged mutation preview, and mutateItemWithHistoryContext for the locked local digest check plus REST revision assertion. SDK/dev pin and manifest/peer floor raised to 2026.10.23 because apply spans network work inside an item lease and requires #1549 fencing. REST fixtures follow Azure Work Item Tracking 7.1 hydrated revision response shape; no live credentials used. Targeted regression work covers both writers, duplicate/missing choices, replay, core Plan persistence, actual CLI TOON/JSON and PATH without git."
+  "2026-10-23T08:42:26.823Z",codex-agent,"Measured public origin/main tracker copy at 1fe0a306e13417115e66de9b48ac2e50deaa25d1: 28 certified items; 224 scalar field comparisons; 28 synthetic title conflicts; 28 valid reviewed plans and 28 incomplete-choice refusals; mean JSON plan 2561 bytes; authoritative copied tracker files unchanged; zero Azure writes. Projection overlays stayed in memory, with an explicit canceled-to-Removed map. Separate disposable SDK trackers exercise real apply, CLI, lifecycle and replay behavior. Linked targeted run passed 8/8 with zero skipped; test-result tracking is disabled by existing project policy, so the run receipt was observed and results recorded here without changing policy."
+  "2026-10-23T08:43:21.112Z",codex-agent,"Behavioral revert proof: independently removing the local revision guard or Azure revision/digest guard from apply makes the two-writer regression fail with Missing expected rejection (1/1 failed in each variant). Local competing writer appends a real SDK comment so field equality cannot substitute for local revision fencing. Restored implementation passes. Compatibility adjustment: pinned pm-changelog invocation needs explicit --full under current CLI full-read semantics; add that to the existing pm arguments instead of weakening complete-read validation. Local strict health saw existing stale items plus install-generated fence drift after restoring the tracked attributes; CI's normal dependency prepare step owns that installation setup; no merge-driver product work undertaken."
+  "2026-10-23T08:44:20.955Z",codex-agent,"Changelog compatibility correction: pm-changelog 2026.10.16 exposes only global --pm-arg, so --full cannot be injected at the required list-local position. Use published pm-changelog 2026.10.21, whose canonical list builder already includes --full. This tooling bump is necessary for the feature's 2026.10.23 lease-fencing dependency and preserves complete-read refusal rather than bypassing it. No package implementation outside pm-ado changed."
+files[5]{path,scope}:
+  index.ts,project
+  resolution.ts,project
+  scripts/validate-resolution-corpus.ts,project
+  sync.ts,project
+  test/sync.test.ts,project
+tests[1]{command,scope,timeout_seconds,provenance{author,created_at,source_kind,source_ref}}:
+  "node --test --test-name-pattern=\"resolution|portable choices|remote field choices\" test/sync.test.ts",project,180,codex-agent,"2026-10-23T08:41:12.127Z",local_mutation,feat/conflict-resolution-plans
+docs[2]{path,scope}:
+  docs/conflict-resolution.md,project
+  test/fixtures/resolutions/README.md,project
+body: ""

@@ -687,3 +687,238 @@ test("planning three linked pairs reads the real SDK tracker once", async (t) =>
   assert.equal(reads, 1, "planning must reuse its initial complete tracker snapshot");
   assert.deepEqual(snapshot(f.pmRoot), before);
 });
+
+// Resolution regressions share the real SDK tracker and revision-checking HTTP fixture.
+import { AdoClient, AdoResolutionService, ResolutionRefusal, type ResolutionPlan } from "../index.ts";
+import { transport } from "../sync.ts";
+import { loadResolutionSdk, validateResolutionPlan } from "../resolution.ts";
+
+/** Bind decisions to the existing non-git tracker and REST transport. */
+function resolver(f: Awaited<ReturnType<typeof fixture>>) {
+  const config = { orgUrl: f.org, project: "Project", token: "synthetic-token" };
+  return new AdoResolutionService(f.pmRoot, "fixture-agent", f.pm, new AdoClient(config, transport), config);
+}
+
+/** Choose each differing value explicitly, with a selectable winning snapshot. */
+function choices(plan: ResolutionPlan, take: "local" | "remote" = "local"): ResolutionPlan {
+  return { ...plan, choices: plan.fields.filter((field) => field.local !== field.remote).map(({ field }) => ({ field, take })) };
+}
+
+test("resolution plans bind two writers, refuse incomplete decisions before writes and replay without history changes", async (t) => {
+  const f = await fixture(t);
+  await f.command("import");
+  const item = await row(f.pm);
+  await f.pm.update(item.id, { title: "Local decision" });
+  f.items.set(1, JSON.parse(readFileSync(join(repo, "test/fixtures/resolutions/revision-2.json"), "utf8")) as AdoWorkItem);
+  const service = resolver(f);
+  const before = snapshot(f.pmRoot);
+  const plan = await service.plan(item.id);
+  assert.deepEqual(snapshot(f.pmRoot), before, "preview is read-only");
+  assert.equal(plan.fields.length, 8);
+  assert.equal(plan.fields.find((field) => field.field === "title")!.conflict, true);
+  assert.equal(JSON.stringify(plan).includes("Local decision"), false);
+  const patches = () => f.requests.filter((req) => req.method === "PATCH").length;
+  await assert.rejects(service.apply(plan), { code: "invalid_choices" });
+  const complete = choices(plan);
+  for (const choice of [ [...complete.choices, complete.choices[0]!], [{ field: "unknown", take: "local" }],
+    complete.choices.map((c) => ({ ...c, take: "both" })) ]) {
+    await assert.rejects(service.apply({ ...plan, choices: choice }), { code: "invalid_choices" });
+  }
+  assert.equal(patches(), 0);
+  assert.deepEqual(snapshot(f.pmRoot), before);
+  const secondWriter = new PmClient({ pmRoot: f.pmRoot, author: "fixture-agent" });
+  await secondWriter.comments(item.id, { add: "Second local writer" });
+  const second = snapshot(f.pmRoot);
+  await assert.rejects(service.apply(complete), { code: "stale_local" });
+  assert.deepEqual(snapshot(f.pmRoot), second);
+  assert.equal(patches(), 0);
+  const fresh = choices(await service.plan(item.id));
+  f.items.get(1)!.rev++;
+  const remoteBefore = structuredClone(f.items.get(1));
+  await assert.rejects(service.apply(fresh), { code: "stale_remote" });
+  assert.deepEqual(snapshot(f.pmRoot), second);
+  assert.deepEqual(f.items.get(1), remoteBefore);
+  assert.equal(patches(), 0);
+  const current = choices(await service.plan(item.id));
+  const applied = await service.apply(current);
+  assert.equal(applied.replayed, false);
+  assert.equal(f.items.get(1)!.fields["System.Title"], "Local decision");
+  assert.equal((await row(f.pm)).title, "Local decision");
+  const after = snapshot(f.pmRoot);
+  assert.equal((await service.apply(current)).replayed, true);
+  assert.equal(patches(), 1);
+  assert.deepEqual(snapshot(f.pmRoot), after);
+});
+
+test("remote field choices and same-value plans commit once; malformed coordinates refuse safely", async (t) => {
+  const f = await fixture(t);
+  await f.command("import");
+  const item = await row(f.pm);
+  const service = resolver(f);
+  const same = await service.plan(item.id);
+  assert.ok(same.fields.every((field) => !field.conflict));
+  assert.equal((await service.apply(same)).ok, true);
+  await f.pm.update(item.id, { title: "Local" });
+  f.items.get(1)!.fields["System.Title"] = "Remote";
+  f.items.get(1)!.rev++;
+  const plan = choices(await service.plan(item.id), "remote");
+  assert.equal((await service.apply(plan)).ok, true);
+  assert.equal((await row(f.pm)).title, "Remote");
+  assert.equal(f.requests.filter((req) => req.method === "PATCH").length, 0);
+  for (const invalid of [null, [], {}, { ...plan, schema: "future" }, { ...plan, fields: [] },
+    { ...plan, remote: { ...plan.remote, id: 0 } }, { ...plan, local: { id: item.id, revision: "wrong" } },
+    { ...plan, fields: plan.fields.map((field) => ({ ...field, base: "wrong" })) },
+    { ...plan, fields: [null, ...plan.fields.slice(1)] }, { ...plan, fields: plan.fields.map(() => plan.fields[0]) },
+    { ...plan, mapping: 5 }, { ...plan, choices: [null] }]) {
+    assert.throws(() => validateResolutionPlan(invalid), ResolutionRefusal);
+  }
+  assert.throws(() => loadResolutionSdk([]), { code: "configuration" });
+  assert.throws(() => loadResolutionSdk(["relative"]), { code: "configuration" });
+});
+
+test("portable choices reject scope changes, edited digests, missing links and REST races", async (t) => {
+  const f = await fixture(t);
+  await f.command("import");
+  const service = resolver(f);
+  await assert.rejects(service.plan("absent"), { code: "scope" });
+  const unlinked = await f.pm.create({ title: "Unlinked", type: "Task" });
+  await assert.rejects(service.plan(unlinked.item.id), { code: "scope" });
+  const item = (await f.pm.listAllComplete()).items.find((row) => row.ado_id === 1)!;
+  await f.pm.update(item.id, { title: "Local edit" });
+  const plan = choices(await service.plan(item.id));
+  await assert.rejects(service.apply({ ...plan, scope: { ...plan.scope, project: "Other" } }), { code: "scope" });
+  const edited = structuredClone(plan);
+  edited.fields[0]!.conflict = !edited.fields[0]!.conflict;
+  await assert.rejects(service.apply(edited), { code: "invalid_plan" });
+  const before = snapshot(f.pmRoot);
+  f.race();
+  await assert.rejects(service.apply(plan), { code: "stale_remote" });
+  assert.deepEqual(snapshot(f.pmRoot), before);
+  f.omit();
+  await assert.rejects(service.plan(item.id), { code: "stale_remote" });
+});
+
+test("resolution commands save core Plan bodies and render JSON/TOON without git", async (t) => {
+  const f = await fixture(t);
+  await f.command("import");
+  const item = await row(f.pm);
+  await f.pm.update(item.id, { title: "CLI decision" });
+  const overrides = { GIT_CEILING_DIRECTORIES: tmpdir(), PATH: f.pmRoot };
+  const planned = await f.host(["ado", "resolve-plan", "--item", item.id, "--save", "--json"], overrides);
+  assert.equal(planned.code, 0, planned.stderr + planned.stdout);
+  const saved = JSON.parse(planned.stdout) as { plan_id: string; plan: ResolutionPlan };
+  const plan = choices(saved.plan);
+  await f.pm.update(saved.plan_id, { body: JSON.stringify(plan) });
+  const applied = await f.host(["ado", "resolve-apply", "--plan", saved.plan_id, "--json"], overrides);
+  assert.equal(applied.code, 0, applied.stderr + applied.stdout);
+  const portable = join(f.pmRoot, "decision.json");
+  writeFileSync(portable, JSON.stringify(plan));
+  const replayed = await f.host(["ado", "resolve-apply", "--artifact", portable, "--json"], overrides);
+  assert.equal(replayed.code, 0, replayed.stdout + replayed.stderr);
+  assert.equal(JSON.parse(replayed.stdout).replayed, true);
+  const toon = await f.host(["ado", "resolve-plan", "--item", item.id], overrides);
+  assert.equal(toon.code, 0, toon.stderr);
+  assert.match(toon.stdout, /schema:.*pm-ado\/resolution\/1/u);
+  for (const args of [["ado", "resolve-plan"], ["ado", "resolve-apply"],
+    ["ado", "resolve-apply", "--plan", saved.plan_id, "--artifact", portable]]) {
+    assert.equal((await f.host([...args, "--json"], overrides)).code, 4);
+  }
+  writeFileSync(portable, "{");
+  assert.equal((await f.host(["ado", "resolve-apply", "--artifact", portable, "--json"])).code, 4);
+  assert.equal((await f.host(["ado", "resolve-plan", "--item", item.id, "--json"], { ADO_TOKEN: "" })).code, 4);
+});
+
+test("resolution handlers expose typed refusal remedies and core Plan artifacts through the host SDK", async (t) => {
+  const f = await fixture(t);
+  await f.command("import");
+  const item = await row(f.pm);
+  const preview = await f.command("resolve-plan", { item: item.id }) as unknown as { ok: boolean; plan: ResolutionPlan };
+  assert.equal(preview.ok, true);
+  const saved = await f.command("resolve-plan", { item: item.id, save: true }) as unknown as { ok: boolean; plan_id: string; plan: ResolutionPlan };
+  assert.equal(saved.ok, true);
+  assert.ok(saved.plan_id);
+  assert.equal((await f.command("resolve-apply", { plan: saved.plan_id })).ok, true);
+  const portable = join(f.pmRoot, "artifact.json");
+  writeFileSync(portable, JSON.stringify(preview.plan));
+  assert.equal((await f.command("resolve-apply", { artifact: portable })).ok, true);
+  writeFileSync(portable, "{");
+  assert.equal((await f.command("resolve-apply", { artifact: portable })).code, "invalid_plan");
+  assert.equal((await f.command("resolve-apply", { artifact: "missing.json" })).code, "apply_failed");
+  assert.equal((await f.command("resolve-plan")).code, "configuration");
+  assert.equal((await f.command("resolve-apply")).code, "configuration");
+  assert.equal((await f.command("resolve-plan", { withoutSdk: true, item: item.id })).code, "configuration");
+  f.env.ADO_STATUS_MAP = "{";
+  assert.equal((await f.command("resolve-plan", { item: item.id })).code, "configuration");
+  delete f.env.ADO_STATUS_MAP;
+  f.env.ADO_TOKEN = "";
+  assert.equal((await f.command("resolve-plan", { item: item.id })).code, "configuration");
+});
+
+test("resolution preserves agreed status aliases and validates scalar schema before an Azure patch", async (t) => {
+  const f = await fixture(t);
+  await f.command("import");
+  const item = await row(f.pm);
+  const service = resolver(f);
+  await f.pm.update(item.id, { status: "blocked", blockedReason: "Fixture prerequisite" });
+  await f.command("export");
+  const plan = await service.plan(item.id);
+  assert.equal(plan.fields.find((field) => field.field === "status")!.local, plan.fields.find((field) => field.field === "status")!.remote);
+  assert.equal((await service.apply(plan)).ok, true);
+  await f.setFields(item.id, {}, ["ado_sync_base"]);
+  const legacy = choices(await service.plan(item.id), "remote");
+  assert.ok(legacy.fields.every((field) => field.base === null));
+  assert.equal((await service.apply(legacy)).ok, true);
+  const former = await service.plan(item.id);
+  await f.pm.update(item.id, { description: "Later decision" });
+  assert.equal((await service.apply(choices(await service.plan(item.id)))).ok, true);
+  // The immutable history receipt permits older successful plans to replay too.
+  assert.equal((await service.apply(legacy)).replayed, true);
+  await assert.rejects(service.apply(former), { code: "stale_local" });
+  await f.setFields(item.id, { ado_org_url: "https://dev.azure.com/other" });
+  await assert.rejects(service.plan(item.id), { code: "scope" });
+});
+
+test("resolution clears empty assignees and sanitizes local validation or transport failures", async (t) => {
+  const f = await fixture(t);
+  await f.command("import");
+  const item = await row(f.pm);
+  const service = resolver(f);
+  delete f.items.get(1)!.fields["System.AssignedTo"];
+  f.items.get(1)!.rev++;
+  const empty = choices(await service.plan(item.id), "remote");
+  assert.equal((await service.apply(empty)).ok, true);
+  assert.equal((await row(f.pm)).assignee, undefined);
+  await f.pm.update(item.id, { title: "Pending" });
+  const plan = choices(await service.plan(item.id));
+  f.failPatch(500);
+  await assert.rejects(service.apply(plan), { code: "apply_failed" });
+  delete f.env.PM_AUTHOR;
+  assert.equal((await f.command("resolve-plan")).code, "configuration");
+  const argv = process.argv;
+  process.argv = [];
+  try { assert.equal(typeof loadResolutionSdk().mutateItemWithHistoryContext, "function"); }
+  finally { process.argv = argv; }
+});
+
+
+test("resolution applies terminal and reopen lifecycle evidence while keeping graph metadata", async (t) => {
+  const f = await fixture(t);
+  await f.command("import");
+  const item = await row(f.pm);
+  const service = resolver(f);
+  f.items.get(1)!.fields["System.State"] = "Closed";
+  f.items.get(1)!.rev++;
+  assert.equal((await service.apply(choices(await service.plan(item.id), "remote"))).ok, true);
+  const closed = await row(f.pm);
+  assert.equal(closed.status, "closed");
+  assert.ok(closed.completed_at);
+  assert.equal(closed.close_reason, "Azure conflict resolution");
+  f.items.get(1)!.fields["System.State"] = "New";
+  f.items.get(1)!.rev++;
+  assert.equal((await service.apply(choices(await service.plan(item.id), "remote"))).ok, true);
+  const reopened = await row(f.pm);
+  assert.equal(reopened.status, "open");
+  assert.equal(reopened.closed_at, undefined);
+  assert.equal(reopened.completed_at, undefined);
+  assert.equal(reopened.close_reason, undefined);
+});

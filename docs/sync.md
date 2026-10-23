@@ -1,7 +1,7 @@
 # Azure DevOps import, export and sync
 
 `pm ado import`, `pm ado export` and `pm ado sync` run through the pm host.
-They require pm CLI 2026.10.12 or newer for its host-bound SDK and structured
+The package requires pm CLI 2026.10.23 or newer. Sync uses its host-bound SDK and structured
 nonzero command receipts. The SDK/devDependency pin is unchanged. These commands
 have offline REST-contract acceptance; live Azure acceptance awaits an
 organization and Work Items read/write credentials.

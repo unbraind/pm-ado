@@ -1,13 +1,13 @@
 /** Command orchestration and per-field Azure DevOps reconciliation. */
 import type { CommandHandlerContext, FlagDefinition } from "@unbrained/pm-cli/sdk/authoring";
-import type { ItemMetadata } from "@unbrained/pm-cli/sdk";
-import { type AdoWorkItem } from "./index.ts";
+import type { ItemMetadata, PmUpdateActionOptions } from "@unbrained/pm-cli/sdk";
+import { type AdoConfig, type AdoWorkItem } from "./index.ts";
 /** Default Azure state names mapped to local lifecycle states. */
 export declare const IMPORT_STATE_MAP: Readonly<Record<string, string>>;
 /** Shared flags are typed by the host, which also owns JSON/TOON rendering. */
 export declare const SYNC_FLAGS: FlagDefinition[];
 /** Canonical field values shared by remote, local and persisted base snapshots. */
-type Values = Record<string, string | number | string[]>;
+export type Values = Record<string, string | number | string[]>;
 /** One actionable three-way or revision conflict. */
 interface Conflict {
     /** Local identity, or null for a work item not imported yet. */
@@ -40,6 +40,8 @@ interface Plan {
     /** Provenance fields already persisted after a successful remote creation. */
     linked_fields?: string[];
 }
+/** Detect a field requiring an explicit decision rather than choosing either writer. */
+export declare function threeWayFieldConflict(local: unknown, remote: unknown, base: unknown): boolean;
 /** Parse an optional JSON state map and reject unusable configuration before reads. */
 export declare function stateMap(raw: string | undefined, defaults: Readonly<Record<string, string>>): Record<string, string>;
 /** Escape WIQL literals; explicit WIQL cannot be combined with generated filters. */
@@ -48,10 +50,16 @@ export declare function buildWiql(options: Record<string, unknown>, project: str
 export declare function remoteValues(item: AdoWorkItem, mapping: Readonly<Record<string, string>>): Values;
 /** Project pm fields, preserving unrelated metadata outside this mapping. */
 export declare function localValues(item: ItemMetadata): Values;
+/** Decode and validate the dedicated base; missing legacy bases never imply a winner. */
+export declare function readBase(item: ItemMetadata, sample: Values): Values | undefined;
 /** Exact field mapping used by reconciliation and remote-contract discovery. */
 export declare const ADO_FIELD_MAP: Readonly<Record<string, string>>;
 /** Convert agreed canonical values to Azure reference names for changed fields only. */
 export declare function azureFields(values: Values, keys: readonly string[], states: Record<string, string>): Record<string, unknown>;
+/** Convert canonical fields and provenance to one SDK mutation with a history record. */
+export declare function pmFields(values: Values, remote: AdoWorkItem, config: AdoConfig): PmUpdateActionOptions & {
+    field: string[];
+};
 /** Execute the real REST transport; failures are converted to stable command receipts. */
 export declare function transport(method: string, url: string, body: string | undefined, headers: Readonly<Record<string, string>>): Promise<{
     status: number;

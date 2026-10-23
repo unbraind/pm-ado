@@ -121,7 +121,18 @@ See the [SDK and CLI example](docs/field-contracts.md).
 
 ## Without git
 
-`ado validate`, `ado contract`, `ado import`, `ado export` and `ado sync` work in
+`ado validate`, `ado contract`, `ado import`, `ado export`, `ado sync`,
+`ado resolve-plan` and `ado resolve-apply` work in
 plain trackers without git. Network operations still need Azure configuration;
 contract discovery requires an explicit project. Package release/changelog and
 GitHub workflows need a git checkout and are separate from tracker operations.
+
+## Resolve field conflicts at their saved revisions
+
+`pm ado resolve-plan --item <id> [--save]` returns compact base/local/remote
+field digests. Review and add explicit `local`/`remote` choices, then use
+`pm ado resolve-apply --artifact decision.json` or `--plan <core-plan-id>`.
+Stale local or Azure revisions refuse; successful replay adds no writes.
+The [SDK, portable artifact example and refusal remedies](docs/conflict-resolution.md)
+describe the lease and cross-system recovery boundaries. Requires pm CLI
+2026.10.23 or newer.

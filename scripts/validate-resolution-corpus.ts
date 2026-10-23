@@ -29,7 +29,7 @@ const maps = { imports: IMPORT_STATE_MAP, exports: { ...STATE_MAP, canceled: "Re
 let fields = 0, conflicts = 0, refused = 0, bytes = 0;
 for (const [index, source] of items.entries()) {
   const values = localValues(source);
-  const base = { ...values, title: "Synthetic common base" };
+  const base = { ...values, relations: [], title: "Synthetic common base" };
   // Overlay only in memory: public tracker bytes stay unchanged throughout this run.
   const item = { ...source, ado_sync_base: JSON.stringify(base) };
   const remote = { ...structuredClone(template), id: index + 1,

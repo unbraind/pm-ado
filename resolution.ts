@@ -130,7 +130,7 @@ export interface ResolutionMaps {
 export function resolutionFields(item: Sdk.ItemMetadata, remote: AdoWorkItem, maps: ResolutionMaps): ResolutionField[] {
   const local = localValues(item);
   const incoming = remoteValues(remote, maps.imports);
-  const base = readBase(item, incoming);
+  const base = readBase(item, { ...incoming, relations: [] });
   if (base !== undefined && maps.exports[String(base.status)] === remote.fields["System.State"]) incoming.status = base.status;
   return Object.keys(ADO_FIELD_MAP).map((field) => ({ field, base: base === undefined ? null : resolutionDigest(base[field]),
     local: resolutionDigest(local[field]), remote: resolutionDigest(incoming[field]),
@@ -237,7 +237,7 @@ export class AdoResolutionService {
           const local = localValues(item);
           const values = remoteValues(remote, maps.imports);
           // A shared Azure state can represent multiple pm states; use sync's agreed base interpretation.
-          const base = readBase(item, values);
+          const base = readBase(item, { ...values, relations: [] });
           if (base !== undefined && maps.exports[String(base.status)] === remote.fields["System.State"]) values.status = base.status;
           for (const choice of plan.choices) if (choice.take === "local") values[choice.field] = local[choice.field];
           const exports = Object.keys(ADO_FIELD_MAP).filter((field) => resolutionDigest(values[field]) !== plan.fields.find((f) => f.field === field)!.remote);
@@ -267,7 +267,7 @@ export class AdoResolutionService {
           }
           item.ado_rev = result.rev;
           // Scalar decisions leave graph reconciliation to the existing relation adapter.
-          item.ado_sync_base = JSON.stringify({ ...base, ...values });
+          if (base !== undefined) item.ado_sync_base = JSON.stringify({ ...base, ...values });
           item.ado_resolution_receipt = decision;
           return { changedFields: [...lifecycleFields, ...Object.keys(ADO_FIELD_MAP), "ado_rev", "ado_sync_base", "ado_resolution_receipt"] };
         } });

@@ -58,7 +58,8 @@ work so caller edits cannot change an in-flight decision.
 
 This is scalar field resolution. Graph relations retain their dedicated sync
 adapter and are never overwritten by a decision. Existing relation base values
-are preserved for subsequent sync. No revisions-feed reconciliation is added.
+are preserved for subsequent sync. A missing legacy base stays absent until
+sync can establish agreement for both scalar fields and relations. No revisions-feed reconciliation is added.
 Azure and pm are separate systems: a REST success followed by a lease expiry,
 process interruption or local validation failure can leave Azure updated and pm
 unchanged. Re-read both sides and make a fresh plan; never blindly retry onto a

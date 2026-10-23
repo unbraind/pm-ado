@@ -868,6 +868,8 @@ test("resolution preserves agreed status aliases and validates scalar schema bef
   const legacy = choices(await service.plan(item.id), "remote");
   assert.ok(legacy.fields.every((field) => field.base === null));
   assert.equal((await service.apply(legacy)).ok, true);
+  assert.equal((await row(f.pm)).ado_sync_base, undefined, "legacy relation agreement must not be invented by scalar decisions");
+  assert.equal((await f.command("sync")).ok, true, "existing sync can establish the complete base after scalar resolution");
   const former = await service.plan(item.id);
   await f.pm.update(item.id, { description: "Later decision" });
   assert.equal((await service.apply(choices(await service.plan(item.id)))).ok, true);

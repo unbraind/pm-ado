@@ -119,10 +119,21 @@ failures return typed codes plus remedies. SDK schema/tracker read failures use
 are successful diagnostic results; inspect `compatible` before planning.
 See the [SDK and CLI example](docs/field-contracts.md).
 
+## Preview area and iteration moves
+
+`pm ado move-preview --project Example --items example-a,example-b --iteration-path 'Example\Release' --json`
+validates an explicit linked backlog through the existing field contract and
+Azure revision-checked `validateOnly` requests. Rows report allowed/refused
+decisions with remedies for inherited permission denials and conditional rules.
+Direct relation boundaries show downstream classification scope; links remain
+preserved. No apply option is exposed. Limits are 50 items, 200 direct links and
+56 requests; JSON and TOON output omit item bodies and remote error messages.
+See the [SDK/CLI example and limits](docs/move-simulator.md).
+
 ## Without git
 
 `ado validate`, `ado contract`, `ado import`, `ado export`, `ado sync`,
-`ado resolve-plan` and `ado resolve-apply` work in
+`ado move-preview`, `ado resolve-plan` and `ado resolve-apply` work in
 plain trackers without git. Network operations still need Azure configuration;
 contract discovery requires an explicit project. Package release/changelog and
 GitHub workflows need a git checkout and are separate from tracker operations.

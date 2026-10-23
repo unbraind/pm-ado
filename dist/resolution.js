@@ -34,7 +34,7 @@ export class ResolutionRefusal extends Error {
 /** Hash recursively sorted JSON so artifact property order has no semantics. */
 export function resolutionDigest(value) {
     return createHash("sha256").update(JSON.stringify(value, (_key, entry) => typeof entry === "object" && entry !== null && !Array.isArray(entry)
-        ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a.localeCompare(b))) : entry)).digest("hex");
+        ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a < b ? -1 : 1)) : entry)).digest("hex");
 }
 /** Resolve the public SDK from this package or the running host, including copied extensions. */
 export function loadResolutionSdk(anchors = [import.meta.url, resolve(process.argv[1] ?? "pm")]) {

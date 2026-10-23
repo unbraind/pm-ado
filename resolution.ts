@@ -87,7 +87,7 @@ export interface ResolutionReceipt {
 export function resolutionDigest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value, (_key, entry: unknown) =>
     typeof entry === "object" && entry !== null && !Array.isArray(entry)
-      ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a.localeCompare(b))) : entry)).digest("hex");
+      ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a < b ? -1 : 1)) : entry)).digest("hex");
 }
 
 /** Resolve the public SDK from this package or the running host, including copied extensions. */

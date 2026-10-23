@@ -1,5 +1,6 @@
 /** Real host commands against a local Azure REST subset and disposable SDK trackers. */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { cpSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -689,7 +690,7 @@ test("planning three linked pairs reads the real SDK tracker once", async (t) =>
 });
 
 // Resolution regressions share the real SDK tracker and revision-checking HTTP fixture.
-import { AdoClient, AdoResolutionService, ResolutionRefusal, type ResolutionPlan } from "../index.ts";
+import { AdoClient, AdoResolutionService, ResolutionRefusal, resolutionDigest, type ResolutionPlan } from "../index.ts";
 import { transport } from "../sync.ts";
 import { loadResolutionSdk, validateResolutionPlan } from "../resolution.ts";
 
@@ -923,4 +924,11 @@ test("resolution applies terminal and reopen lifecycle evidence while keeping gr
   assert.equal(reopened.closed_at, undefined);
   assert.equal(reopened.completed_at, undefined);
   assert.equal(reopened.close_reason, undefined);
+});
+
+
+test("resolution digests use portable Unicode key ordering and ignore object insertion order", () => {
+  const expected = createHash("sha256").update('{"nested":{"z":1,"ä":2},"z":1,"ä":2}').digest("hex");
+  assert.equal(resolutionDigest({ ä: 2, z: 1, nested: { ä: 2, z: 1 } }), expected);
+  assert.equal(resolutionDigest({ nested: { z: 1, ä: 2 }, z: 1, ä: 2 }), expected);
 });

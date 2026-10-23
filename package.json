@@ -20,7 +20,8 @@
     "CHANGELOG.md",
     "docs/typed-relations.md",
     "docs/sync.md",
-    "docs/field-contracts.md"
+    "docs/field-contracts.md",
+    "docs/conflict-resolution.md"
   ],
   "scripts": {
     "build": "tsc",
@@ -45,16 +46,16 @@
     "verify:release-changelog-date": "node scripts/verify-release-changelog-date.ts"
   },
   "peerDependencies": {
-    "@unbrained/pm-cli": ">=2026.10.12"
+    "@unbrained/pm-cli": ">=2026.10.23"
   },
   "devDependencies": {
     "@types/istanbul-lib-coverage": "2.0.6",
     "@types/istanbul-lib-instrument": "1.7.8",
     "@types/node": "26.6.5",
-    "@unbrained/pm-cli": "2026.10.20",
+    "@unbrained/pm-cli": "2026.10.23",
     "istanbul-lib-coverage": "3.2.2",
     "istanbul-lib-instrument": "6.0.3",
-    "pm-changelog": "2026.10.20",
+    "pm-changelog": "2026.10.21",
     "pm-ops": "2026.10.20",
     "typescript": "7.0.2"
   },
@@ -105,7 +106,8 @@
       "CHANGELOG.md",
       "docs/typed-relations.md",
       "docs/sync.md",
-      "docs/field-contracts.md"
+      "docs/field-contracts.md",
+      "docs/conflict-resolution.md"
     ],
     "examples": [
       "README.md"

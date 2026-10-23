@@ -16,6 +16,10 @@ export const SYNC_FLAGS = [
 ];
 /** Compare canonical snapshots without depending on object property order. */
 function equal(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+/** Detect a field requiring an explicit decision rather than choosing either writer. */
+export function threeWayFieldConflict(local, remote, base) {
+    return !equal(local, remote) && (base === undefined || !equal(local, base) && !equal(remote, base));
+}
 /** Read a string flag after the host has normalized kebab-case names. */
 function option(options, name) {
     const value = options[name] ?? options[name.replace(/-([a-z])/gu, (_match, letter) => letter.toUpperCase())];
@@ -56,7 +60,7 @@ export function buildWiql(options, project) {
         .filter(([, value]) => value !== undefined).map(([name, value]) => `[${name}] = '${value.replaceAll("'", "''")}'`).join(" AND ")} ORDER BY [System.Id]`;
 }
 /** Canonicalize tags as a set for stable reconciliation and idempotency. */
-function tags(value) { return [...new Set(value.map((tag) => tag.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)); }
+function tags(value) { return [...new Set(value.map((tag) => tag.trim()).filter(Boolean))].sort(); }
 /** Project Azure fields into the same normalized shape as local metadata. */
 export function remoteValues(item, mapping) {
     const fields = item.fields;
@@ -83,7 +87,7 @@ export function localValues(item) {
         ado_iteration_path: String(item.ado_iteration_path ?? "") };
 }
 /** Decode and validate the dedicated base; missing legacy bases never imply a winner. */
-function readBase(item, sample) {
+export function readBase(item, sample) {
     if (item.ado_sync_base === undefined)
         return undefined;
     let parsed;
@@ -125,7 +129,7 @@ export function azureFields(values, keys, states) {
     }));
 }
 /** Convert canonical fields and provenance to one SDK mutation with a history record. */
-function pmFields(values, remote, config) {
+export function pmFields(values, remote, config) {
     return { title: String(values.title), description: String(values.description), status: String(values.status),
         priority: Number(values.priority), tags: JSON.stringify(values.tags),
         ...(values.assignee === "" ? { unset: ["assignee"] } : { assignee: String(values.assignee) }),
@@ -256,7 +260,6 @@ export async function runSyncCommand(ctx, mode) {
                 r.status = base.status;
             const differing = {};
             for (const key of Object.keys(r)) {
-                const localChanged = base === undefined || !equal(l[key], base[key]);
                 const remoteChanged = base === undefined || !equal(r[key], base[key]);
                 if (mode === "import") {
                     values[key] = r[key];
@@ -270,7 +273,7 @@ export async function runSyncCommand(ctx, mode) {
                 }
                 else if (equal(l[key], r[key]))
                     values[key] = r[key];
-                else if (localChanged && remoteChanged)
+                else if (threeWayFieldConflict(l[key], r[key], base?.[key]))
                     differing[key] = { base: base?.[key], local: l[key], remote: r[key] };
                 else if (remoteChanged) {
                     values[key] = r[key];

@@ -25,7 +25,7 @@ export const SYNC_FLAGS: FlagDefinition[] = [
 ];
 
 /** Canonical field values shared by remote, local and persisted base snapshots. */
-type Values = Record<string, string | number | string[]>;
+export type Values = Record<string, string | number | string[]>;
 /** One actionable three-way or revision conflict. */
 interface Conflict {
   /** Local identity, or null for a work item not imported yet. */
@@ -73,6 +73,11 @@ interface Entry {
 /** Compare canonical snapshots without depending on object property order. */
 function equal(a: unknown, b: unknown): boolean { return JSON.stringify(a) === JSON.stringify(b); }
 
+/** Detect a field requiring an explicit decision rather than choosing either writer. */
+export function threeWayFieldConflict(local: unknown, remote: unknown, base: unknown): boolean {
+  return !equal(local, remote) && (base === undefined || !equal(local, base) && !equal(remote, base));
+}
+
 /** Read a string flag after the host has normalized kebab-case names. */
 function option(options: Record<string, unknown>, name: string): string | undefined {
   const value = options[name] ?? options[name.replace(/-([a-z])/gu, (_match, letter: string) => letter.toUpperCase())];
@@ -107,7 +112,7 @@ export function buildWiql(options: Record<string, unknown>, project: string): st
 }
 
 /** Canonicalize tags as a set for stable reconciliation and idempotency. */
-function tags(value: string[]): string[] { return [...new Set(value.map((tag) => tag.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)); }
+function tags(value: string[]): string[] { return [...new Set(value.map((tag) => tag.trim()).filter(Boolean))].sort(); }
 
 /** Project Azure fields into the same normalized shape as local metadata. */
 export function remoteValues(item: AdoWorkItem, mapping: Readonly<Record<string, string>>): Values {
@@ -135,7 +140,7 @@ export function localValues(item: ItemMetadata): Values {
 }
 
 /** Decode and validate the dedicated base; missing legacy bases never imply a winner. */
-function readBase(item: ItemMetadata, sample: Values): Values | undefined {
+export function readBase(item: ItemMetadata, sample: Values): Values | undefined {
   if (item.ado_sync_base === undefined) return undefined;
   let parsed: unknown;
   try { parsed = JSON.parse(String(item.ado_sync_base)); }
@@ -171,7 +176,7 @@ export function azureFields(values: Values, keys: readonly string[], states: Rec
 }
 
 /** Convert canonical fields and provenance to one SDK mutation with a history record. */
-function pmFields(values: Values, remote: AdoWorkItem, config: AdoConfig): PmUpdateActionOptions & { field: string[] } {
+export function pmFields(values: Values, remote: AdoWorkItem, config: AdoConfig): PmUpdateActionOptions & { field: string[] } {
   return { title: String(values.title), description: String(values.description), status: String(values.status),
     priority: Number(values.priority), tags: JSON.stringify(values.tags),
     ...(values.assignee === "" ? { unset: ["assignee"] } : { assignee: String(values.assignee) }),
@@ -283,12 +288,11 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
       if (mode !== "import" && base !== undefined && exportStates[String(base.status)] === remote.fields["System.State"]) r.status = base.status;
       const differing: Conflict["fields"] = {};
       for (const key of Object.keys(r)) {
-        const localChanged = base === undefined || !equal(l[key], base[key]);
         const remoteChanged = base === undefined || !equal(r[key], base[key]);
         if (mode === "import") { values[key] = r[key]; if (!equal(l[key], r[key])) plan.import_fields.push(key); }
         else if (mode === "export") { values[key] = l[key]; if (!equal(l[key], r[key])) plan.export_fields.push(key); }
         else if (equal(l[key], r[key])) values[key] = r[key];
-        else if (localChanged && remoteChanged) differing[key] = { base: base?.[key], local: l[key], remote: r[key] };
+        else if (threeWayFieldConflict(l[key], r[key], base?.[key])) differing[key] = { base: base?.[key], local: l[key], remote: r[key] };
         else if (remoteChanged) { values[key] = r[key]; plan.import_fields.push(key); }
         else { values[key] = l[key]; plan.export_fields.push(key); }
       }

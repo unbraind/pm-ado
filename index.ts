@@ -21,6 +21,9 @@ import type {
 } from "@unbrained/pm-cli/sdk/authoring";
 import { runSyncCommand, SYNC_FLAGS } from "./sync.ts";
 import { runContractCommand } from "./contracts.ts";
+import { runResolutionCommand } from "./resolution.ts";
+export { AdoResolutionService, ResolutionRefusal, resolutionDigest, resolutionScopeReference, resolutionFields, validateResolutionPlan } from "./resolution.ts";
+export type { ResolutionPlan, ResolutionObserver, ResolutionIntent, ResolutionField, ResolutionChoice, ResolutionReceipt, ResolutionRefusalCode, ResolutionMaps } from "./resolution.ts";
 export { discoverProjectContract, ContractRefusal } from "./contracts.ts";
 export type { ProjectContract, ContractOptions, ContractType, ContractField, ContractRelation, ContractIssue, ContractRefusalCode } from "./contracts.ts";
 import type { Dependency, ItemMetadata, PmClient } from "@unbrained/pm-cli/sdk";
@@ -1042,7 +1045,7 @@ export default defineExtension({
       { name: "ado_url", type: "string", optional: true },
       { name: "ado_rev", type: "number", optional: true },
       { name: "ado_project", type: "string", optional: true },
-      ...["ado_org_url", "ado_type", "ado_area_path", "ado_iteration_path", "ado_sync_base"].map((name) => ({ name, type: "string" as const, optional: true })),
+      ...["ado_org_url", "ado_type", "ado_area_path", "ado_iteration_path", "ado_sync_base", "ado_resolution_receipt", "ado_resolution_intent"].map((name) => ({ name, type: "string" as const, optional: true })),
     ]);
 
     // preflight — abort a network-bound command before any store read or remote
@@ -1073,6 +1076,25 @@ export default defineExtension({
         handler: (ctx: CommandHandlerContext) => runSyncCommand(ctx, mode),
       });
     }
+
+    api.registerCommand({
+      name: "ado resolve-plan",
+      description: "Preview revision-bound field decisions; optionally save a core Plan item",
+      flags: [
+        { long: "--item", value_type: "string", value_name: "id", description: "Linked pm item to inspect" },
+        { long: "--save", value_type: "boolean", description: "Store the portable artifact in a core Plan body" },
+      ],
+      handler: (ctx: CommandHandlerContext) => runResolutionCommand(ctx, "plan"),
+    });
+    api.registerCommand({
+      name: "ado resolve-apply",
+      description: "Apply explicit field choices only at the saved local and Azure revisions",
+      flags: [
+        { long: "--plan", value_type: "string", value_name: "id", description: "Core Plan whose body contains the artifact and choices" },
+        { long: "--artifact", value_type: "string", value_name: "file", description: "Portable JSON artifact including explicit choices" },
+      ],
+      handler: (ctx: CommandHandlerContext) => runResolutionCommand(ctx, "apply"),
+    });
 
     api.registerCommand({
       name: "ado contract",

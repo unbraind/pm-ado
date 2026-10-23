@@ -1,0 +1,31 @@
+{
+  "id": 1,
+  "rev": 2,
+  "fields": {
+    "System.Id": 1,
+    "System.Rev": 2,
+    "System.TeamProject": "Project",
+    "System.WorkItemType": "Task",
+    "System.Title": "Recorded remote decision",
+    "System.State": "New",
+    "System.Reason": "New",
+    "System.Description": "Synthetic REST revision fixture",
+    "System.AreaPath": "Project\\Area",
+    "System.IterationPath": "Project\\Sprint",
+    "System.Tags": "blue; green",
+    "Microsoft.VSTS.Common.Priority": 2,
+    "System.AssignedTo": {
+      "displayName": "Fixture",
+      "uniqueName": "fixture@example.invalid",
+      "id": "00000000-0000-0000-0000-000000000001",
+      "url": "https://dev.azure.com/example/_apis/Identities/00000000-0000-0000-0000-000000000001"
+    },
+    "System.ChangedDate": "2026-10-21T12:00:00Z"
+  },
+  "relations": [],
+  "_links": {
+    "self": { "href": "https://dev.azure.com/example/Project/_apis/wit/workItems/1/revisions/2" },
+    "workItemRevisions": { "href": "https://dev.azure.com/example/Project/_apis/wit/workItems/1/revisions" }
+  },
+  "url": "https://dev.azure.com/example/Project/_apis/wit/workItems/1/revisions/2"
+}

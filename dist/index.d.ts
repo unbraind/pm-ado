@@ -1,4 +1,6 @@
 import type { ExtensionApi, PreflightOverrideContext } from "@unbrained/pm-cli/sdk/authoring";
+export { AdoResolutionService, ResolutionRefusal, resolutionDigest, resolutionScopeReference, resolutionFields, validateResolutionPlan } from "./resolution.ts";
+export type { ResolutionPlan, ResolutionObserver, ResolutionIntent, ResolutionField, ResolutionChoice, ResolutionReceipt, ResolutionRefusalCode, ResolutionMaps } from "./resolution.ts";
 export { discoverProjectContract, ContractRefusal } from "./contracts.ts";
 export type { ProjectContract, ContractOptions, ContractType, ContractField, ContractRelation, ContractIssue, ContractRefusalCode } from "./contracts.ts";
 import type { Dependency, PmClient } from "@unbrained/pm-cli/sdk";

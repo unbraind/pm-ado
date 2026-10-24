@@ -4,28 +4,28 @@
 
 ### Breaking Changes
 
-- Reject cross-organization and imprecise Azure DevOps relation targets ([pm-ado-ns93](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-ns93.toon))
 - Map typed work item relations onto pm parent and dependency kinds in both directions ([pm-ado-1zuu](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-1zuu.toon))
+- Reject cross-organization and imprecise Azure DevOps relation targets ([pm-ado-ns93](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-ns93.toon))
 
 ### Added
 
-- Import, export and reconcile Azure DevOps work items with revision-checked commands ([pm-ado-nc7z](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-nc7z.toon))
 - Resolve sync conflicts with revision-bound portable field decisions ([pm-ado-4x3u](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-4x3u.toon))
 - Discover Azure project field contracts before planning sync ([pm-ado-field-contracts](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-field-contracts.toon))
 - Preview Azure area and iteration moves with rule and relation evidence ([pm-ado-move-simulator](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-move-simulator.toon))
+- Import, export and reconcile Azure DevOps work items with revision-checked commands ([pm-ado-nc7z](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-nc7z.toon))
 - Map typed work item relations onto pm parent and dependency kinds in both directions ([pm-ado-1zuu](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-1zuu.toon))
 - Read a project through the work item batch endpoint instead of one request per item ([pm-ado-ntkc](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-ntkc.toon))
 - Assert System.Rev on every write so a concurrent agent cannot silently overwrite another ([pm-ado-8zx9](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-8zx9.toon))
 
 ### Changed
 
-- Enable the gated GitHub issue sync ([pm-ado-fiw8](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-fiw8.toon))
 - Adopt pm-github 2026.10.16: default-branch-safe gated sync and daily gated closeout PRs ([pm-ado-m8c1](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-m8c1.toon))
+- Enable the gated GitHub issue sync ([pm-ado-fiw8](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-fiw8.toon))
 
 ### Fixed
 
-- Reject cross-organization and imprecise Azure DevOps relation targets ([pm-ado-ns93](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-ns93.toon))
 - Enforce the declared statement-coverage threshold instead of silently ignoring it ([pm-ado-5w3m](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-5w3m.toon))
+- Reject cross-organization and imprecise Azure DevOps relation targets ([pm-ado-ns93](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-ns93.toon))
 - A publish that npm accepts late is reported as failed and the GitHub Release is skipped on bun mirror lag ([pm-ado-qc9l](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-qc9l.toon))
 - Consume the canonical pm-ops attestation gate rather than carrying a twentieth vendored copy ([pm-ado-1udj](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-1udj.toon))
 - Fix polynomial-redos in readConfig trailing-slash regex (CodeQL alert \#1) ([pm-ado-mih0](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-mih0.toon))

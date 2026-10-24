@@ -6,9 +6,9 @@ status: closed
 priority: 2
 tags[3]: changed,github-sync,maintenance
 created_at: "2026-10-14T11:11:12.940Z"
-updated_at: "2026-10-24T21:42:08.089Z"
+updated_at: "2026-10-24T23:09:11.728Z"
 closed_at: "2026-10-24T21:42:08.082Z"
-completed_at: "2026-10-24T21:42:08.082Z"
+completed_at: "2026-10-15T14:07:33.000Z"
 author: codex-agent
 resolution: Adds the scheduled privacy-gated GitHub issue-sync caller with matching workflow/package pins and npm/Bun validation.
 expected_result: Add a SHA-pinned scheduled caller for the audited gated issue import into this package tracker. Keep dependency versions and gate thresholds unchanged.

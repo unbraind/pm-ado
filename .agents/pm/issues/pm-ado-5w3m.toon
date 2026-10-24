@@ -6,9 +6,9 @@ status: closed
 priority: 1
 tags[3]: coverage,quality-gate,release-blocker
 created_at: "2026-10-04T11:52:55.259Z"
-updated_at: "2026-10-24T21:42:07.921Z"
+updated_at: "2026-10-24T23:09:07.931Z"
 closed_at: "2026-10-24T21:42:07.913Z"
-completed_at: "2026-10-24T21:42:07.913Z"
+completed_at: "2026-10-08T01:19:51.000Z"
 author: codex-sol
 resolution: Independently measures executable statements and enforces the declared statement threshold; PR 16 only recorded the gap and is not the delivery.
 expected_result: "package.json coverageGate.thresholds.statements=100 and README claim four dimensions, but scripts/coverage-gate.ts only types/reads/passes Node thresholds for lines, branches and functions. No statement report or independent enforcement exists. Preserve the 100 threshold and add a real independently reported statement metric and meaningful failed-threshold fixture; do not equate executable-line coverage with measured statements. Certification pm-ado-qq1p records the current scope and cannot claim 100/100/100/100. This predates the SDK refresh."

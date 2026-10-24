@@ -7,9 +7,9 @@ status: closed
 priority: 1
 tags[4]: certification,cli,release,sdk
 created_at: "2026-10-04T11:50:11.236Z"
-updated_at: "2026-10-24T21:42:07.768Z"
+updated_at: "2026-10-24T23:09:06.415Z"
 closed_at: "2026-10-24T21:42:07.698Z"
-completed_at: "2026-10-24T21:42:07.698Z"
+completed_at: "2026-10-17T10:29:07.000Z"
 author: codex-sol
 resolution: Latest implementing PR completes the reused certification work with real pack/publish launcher paths and full npm/Bun dependency-overlay gates; earlier certification was delivered by PR 16.
 expected_result: "Exact current toolchain pins, canonical published merge-driver launcher, full CI gate, packed real-tracker offline validation with npm and native Bun, managed read-only GitHub preview, and complete review evidence. No publishing, Azure writes, merging, or item closure; preserve owner release approval gate."

@@ -2,12 +2,17 @@ id: pm-ado-fiw8
 title: Enable the gated GitHub issue sync
 description: Add a SHA-pinned scheduled caller for the audited gated issue import into this package tracker. Keep dependency versions and gate thresholds unchanged.
 type: Chore
-status: in_progress
+status: closed
 priority: 2
 tags[3]: changed,github-sync,maintenance
 created_at: "2026-10-14T11:11:12.940Z"
-updated_at: "2026-10-15T17:57:19.370Z"
+updated_at: "2026-10-24T21:42:08.089Z"
+closed_at: "2026-10-24T21:42:08.082Z"
+completed_at: "2026-10-24T21:42:08.082Z"
 author: codex-agent
+resolution: Adds the scheduled privacy-gated GitHub issue-sync caller with matching workflow/package pins and npm/Bun validation.
+expected_result: Add a SHA-pinned scheduled caller for the audited gated issue import into this package tracker. Keep dependency versions and gate thresholds unchanged.
+actual_result: "https://github.com/unbraind/pm-ado/pull/25, merged 2026-10-15T14:07:33Z, merge 4e8c60f33ad9885d66e6b2b92edbc4cf896d897c: Adds the scheduled privacy-gated GitHub issue-sync caller with matching workflow/package pins and npm/Bun validation."
 comments[5]{created_at,author,text}:
   "2026-10-14T11:11:41.280Z",codex-agent,"Plan: add the scheduled thin caller pinned to the audited workflow SHA and matching published extension version. Preserve dependencies, merge-driver scripts, and thresholds. Verify both release gates and audits; leave the item open for orchestrator review. No TypeScript functions change, so a function revert regression test does not apply."
   "2026-10-14T11:13:31.593Z",codex-agent,"Plan: add the independently authored scheduled thin caller pinned to the audited workflow SHA and matching published extension version. Preserve dependencies, merge-driver scripts, and thresholds. Verify npm and Bun release gates and audits; leave the item open for orchestrator review. No TypeScript functions change, so a function revert regression test does not apply."
@@ -21,4 +26,5 @@ tests[2]{command,scope,timeout_seconds,pm_context_mode,workspace_context_mode,pr
   "env -u PM_PATH -u PM_AUTHOR HOME=$(mktemp -d) GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 bun run release:check",project,2400,tracker,source,codex-agent,"2026-10-14T11:13:38.409Z",local_mutation,chore/gated-issue-sync-and-braces-free-gates
 docs[1]{path,scope,note}:
   CHANGELOG.md,project,Regenerated package changelog
+close_reason: "https://github.com/unbraind/pm-ado/pull/25, merged 2026-10-15T14:07:33Z, merge 4e8c60f33ad9885d66e6b2b92edbc4cf896d897c: Adds the scheduled privacy-gated GitHub issue-sync caller with matching workflow/package pins and npm/Bun validation."
 body: ""

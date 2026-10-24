@@ -2,13 +2,18 @@ id: pm-ado-qq1p
 title: Certify pm-ado on PM CLI/SDK 2026.10.4 and consolidate pending dependency updates
 description: "Exact current toolchain pins, canonical published merge-driver launcher, full CI gate, packed real-tracker offline validation with npm and native Bun, managed read-only GitHub preview, and complete review evidence. No publishing, Azure writes, merging, or item closure; preserve owner release approval gate."
 type: Chore
-status: in_progress
+pm_format_version: 2
+status: closed
 priority: 1
 tags[4]: certification,cli,release,sdk
 created_at: "2026-10-04T11:50:11.236Z"
-updated_at: "2026-10-17T09:55:02.730Z"
+updated_at: "2026-10-24T21:42:07.768Z"
+closed_at: "2026-10-24T21:42:07.698Z"
+completed_at: "2026-10-24T21:42:07.698Z"
 author: codex-sol
-actual_result: "CLI/SDK, pm-ops and pm-changelog exact 2026.10.4; Node types 26.6.4, TypeScript 7.0.2. Full locked release:check PASS: 123/123 tests, zero skipped, 100% measured lines/branches/functions across 4 sources; docstrings, production audit, pack, changelog, attestation and version-date checks pass. Both full and production audit clean; alerts [] and no open Dependabot PRs. Canonical launcher real filesystem regression failed old template then passed published template 8/8; linked pm test launcher also 8/8. CI bun install --no-save PASS. Packed real-tracker npm/native Bun offline ado validate PASS: identical missing-three-input and synthetic-config diagnostics, token redacted, batch limit 200, revision-asserting writes flag true; scratch removed, no Azure calls. Strict PM health PASS with no warnings. Managed pm-github 2026.10.4 dry-run preview 0 synced/0 skipped/0 planned, zero linked items. Statement threshold remains unconsumed and independently unmeasured in pm-ado-5w3m; NOT READY for four-metric claim. Package stays unpublished at 2026.9.2; PM_RELEASE_APPROVED owner job guard unchanged. Final-head CI/reviews and live Azure capability acceptance remain separate."
+resolution: Latest implementing PR completes the reused certification work with real pack/publish launcher paths and full npm/Bun dependency-overlay gates; earlier certification was delivered by PR 16.
+expected_result: "Exact current toolchain pins, canonical published merge-driver launcher, full CI gate, packed real-tracker offline validation with npm and native Bun, managed read-only GitHub preview, and complete review evidence. No publishing, Azure writes, merging, or item closure; preserve owner release approval gate."
+actual_result: "https://github.com/unbraind/pm-ado/pull/34, merged 2026-10-17T10:29:07Z, merge c5407fe36b7e994e0669a1199c2481dcac0403cc: Latest implementing PR completes the reused certification work with real pack/publish launcher paths and full npm/Bun dependency-overlay gates; earlier certification was delivered by PR 16."
 comments[10]{created_at,author,text}:
   "2026-10-04T11:50:14.103Z",codex-sol,"Oriented real tracker and CI; no open Dependabot PRs or security alerts. Refresh CLI/SDK, pm-ops and pm-changelog exact published pins; preserve peer floor and PM_RELEASE_APPROVED release job guard. The only shipped command is offline ado validate; dogfood must not claim live Azure sync/import/export acceptance. Inspect ignored statement threshold and record its honest measured scope."
   "2026-10-04T11:52:54.738Z",codex-sol,"Test-first canonical launcher refresh: real invalid NODE_PATH file fixture fails old launcher (ENOTDIR replaces original MODULE_NOT_FOUND), then installed pm-ops 2026.10.4 template copied byte-for-byte makes launcher suite pass 8/8. No template edits or new skips. Independent statement threshold is declared but not consumed by the Node V8 gate; record a quality follow-up and report three measured dimensions honestly."
@@ -77,4 +82,5 @@ docs[2]:
     note: Exact offline dogfood and gate receipts with statement gap
   - path: docs/dependabot-root-cause.md
     scope: project
+close_reason: "https://github.com/unbraind/pm-ado/pull/34, merged 2026-10-17T10:29:07Z, merge c5407fe36b7e994e0669a1199c2481dcac0403cc: Latest implementing PR completes the reused certification work with real pack/publish launcher paths and full npm/Bun dependency-overlay gates; earlier certification was delivered by PR 16."
 body: ""

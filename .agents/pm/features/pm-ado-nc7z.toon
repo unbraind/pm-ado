@@ -2,13 +2,18 @@ id: pm-ado-nc7z
 title: "Import, export and reconcile Azure DevOps work items with revision-checked commands"
 description: "Register ado import, export and sync with SDK mutations, idempotent field mapping, stored revision snapshots, per-field three-way conflicts, and read-only dry-run plans. Prove the real commands against a local REST contract server and disposable trackers; live Azure acceptance remains pending credentials."
 type: Feature
-status: in_progress
+status: closed
 priority: 1
 tags: []
 created_at: "2026-10-15T17:57:02.648Z"
-updated_at: "2026-10-15T19:13:46.054Z"
+updated_at: "2026-10-24T21:42:07.862Z"
+closed_at: "2026-10-24T21:42:07.849Z"
+completed_at: "2026-10-24T21:42:07.849Z"
 author: codex-agent
 parent: pm-ado-g4v1
+resolution: "Delivers import/export/sync commands, revision-checked writes, typed relation mapping, durable remote identities and three-way reconciliation with real-tracker regressions."
+expected_result: "Register ado import, export and sync with SDK mutations, idempotent field mapping, stored revision snapshots, per-field three-way conflicts, and read-only dry-run plans. Prove the real commands against a local REST contract server and disposable trackers; live Azure acceptance remains pending credentials."
+actual_result: "https://github.com/unbraind/pm-ado/pull/29, merged 2026-10-15T19:32:18Z, merge 6e78685557536226ffc6edb822b127c9a4acacbc: Delivers import/export/sync commands, revision-checked writes, typed relation mapping, durable remote identities and three-way reconciliation with real-tracker regressions."
 comments[10]{created_at,author,text}:
   "2026-10-15T17:57:18.457Z",codex-agent,"Design: register typed import/export/sync commands using the host output envelope and SDK mutations. Persist ado_rev plus an ado_sync_base JSON field as the last agreed field snapshot; reconcile each mapped field against remote and local values before applying either side. Revision conflicts retain the entire local item and history. Dry-run shares planning and performs only read requests. Reuse typed relation adapters and expose their preservation diagnostics. Validate through a local REST contract server and real disposable trackers; no live Azure credentials are available."
   "2026-10-15T18:10:27.787Z",codex-agent,"Offline command suite: 17/17 scenarios pass against a real local REST server and disposable SDK trackers, including explicit export asserting the stored revision, mixed remote/local field reconciliation, 412 refusal with unchanged item/history bytes, state-map overrides, batch/limit selection and relations after new identity allocation. Host observations: extension commands use --output-format for TOON; listAllComplete may populate ignored derived metadata caches. Dry-run assertions cover authoritative item/history/settings/schema files and the complete HTTP request log. Live Azure acceptance remains pending credentials."
@@ -40,4 +45,5 @@ docs[3]{path,scope}:
   docs/sync.md,project
   docs/typed-relations.md,project
   README.md,project
+close_reason: "https://github.com/unbraind/pm-ado/pull/29, merged 2026-10-15T19:32:18Z, merge 6e78685557536226ffc6edb822b127c9a4acacbc: Delivers import/export/sync commands, revision-checked writes, typed relation mapping, durable remote identities and three-way reconciliation with real-tracker regressions."
 body: ""

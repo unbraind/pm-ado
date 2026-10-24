@@ -2,11 +2,17 @@ id: pm-ado-m8c1
 title: "Adopt pm-github 2026.10.16: default-branch-safe gated sync and daily gated closeout PRs"
 description: "Repin the gated sync caller to pm-github 2026.10.16 (tag 67a5e3e: npm-project-dir input, caller default branch resolved through the API for schedule payloads) and add the reusable gated closeout caller, which opens one reviewed PR per day closing items delivered by merged pull requests."
 type: Chore
-status: in_progress
+status: closed
 priority: 2
 tags[3]: changed,ci,pm-github
 created_at: "2026-10-16T10:36:27.944Z"
-updated_at: "2026-10-16T10:36:27.944Z"
+updated_at: "2026-10-24T21:42:08.049Z"
+closed_at: "2026-10-24T21:42:08.044Z"
+completed_at: "2026-10-24T21:42:08.044Z"
 author: claude-orchestrator
 acceptance_criteria: pm-github-sync.yml pins 2026.10.16 at 67a5e3e; pm-github-closeout.yml calls the reusable closeout workflow at the same pin
+resolution: Pins both gated sync and daily gated closeout callers to pm-github 2026.10.16 at the required revision.
+expected_result: pm-github-sync.yml pins 2026.10.16 at 67a5e3e; pm-github-closeout.yml calls the reusable closeout workflow at the same pin
+actual_result: "https://github.com/unbraind/pm-ado/pull/31, merged 2026-10-16T10:56:57Z, merge 90003bc5bfe0bbaae518889056e242452044518b: Pins both gated sync and daily gated closeout callers to pm-github 2026.10.16 at the required revision."
+close_reason: "https://github.com/unbraind/pm-ado/pull/31, merged 2026-10-16T10:56:57Z, merge 90003bc5bfe0bbaae518889056e242452044518b: Pins both gated sync and daily gated closeout callers to pm-github 2026.10.16 at the required revision."
 body: ""

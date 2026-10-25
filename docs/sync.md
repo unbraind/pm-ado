@@ -130,6 +130,15 @@ items and the two stores are not a distributed transaction: earlier successful
 remote operations can remain if a later write or SDK mutation fails. The receipt
 includes the item plan; inspect both stores before retrying a partial failure.
 
+Every local sync update now uses the SDK's `commitItemMutations` with an
+`updated_at` match checked under the item lock. A local edit after planning
+refuses persistence with `ADO_CONFLICT` (exit 4), keeping the newer item and
+history intact. Re-read both trackers before retrying; an earlier Azure write
+may already have succeeded. Sync's own link and relation writes advance its
+expected revision from their immutable transaction history. SDK transaction
+markers are now recorded in update history messages; ordinary command receipts
+and mapped values are unchanged.
+
 ## Preview and conflict receipts
 
 `--dry-run` performs the WIQL/batch reads needed for a real plan and returns item

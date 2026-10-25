@@ -38,6 +38,7 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
   let vanish = false;
   let omitRelations = false;
   let afterPatch: ((item: AdoWorkItem) => Promise<void>) | undefined;
+  let afterBatch: (() => Promise<void>) | undefined;
   const responses = new Map<string, unknown>();
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://fixture.invalid");
@@ -64,6 +65,7 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
       assert.equal(body!.$expand, "relations");
       assert.equal(body!.errorPolicy, "omit");
       assert.ok((body!.ids as number[]).length <= 200);
+      await afterBatch?.();
       send(200, { count: items.size, value: omit ? [] : (body!.ids as number[]).flatMap((id) => items.has(id) ? [items.get(id)] : []) }); return;
     }
     const tail = decodeURIComponent(url.pathname.split("/").at(-1)!);
@@ -126,13 +128,13 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
   const harness = await createExtensionTestHarness(extension, { name: "pm-ado", capabilities: ["commands", "schema", "preflight"] });
   assert.deepEqual(harness.activation.failed, []);
   /** Execute through real registration with the real host-created SDK client. */
-  const command = async (mode: string, options: Record<string, unknown> = {}) => {
+  const command = async (mode: string, options: Record<string, unknown> = {}, global: { author?: string } = {}) => {
     const before = { ...process.env };
     const cwd = process.cwd();
     process.chdir(root);
     process.env = { ...env };
     try {
-      const result = await harness.runCommand({ command: `ado ${mode}`, pmRoot: options.withoutSdk ? undefined : pmRoot, options });
+      const result = await harness.runCommand({ command: `ado ${mode}`, pmRoot: options.withoutSdk ? undefined : pmRoot, options, global });
       return result.result as { ok: boolean; code?: string; exit_code?: number; error?: string; plans: { action: string; import_fields: string[]; export_fields: string[]; ado_id: number | null; linked_fields?: string[] }[]; conflicts: { stored_rev: number; remote_rev: number; fields: Record<string, unknown> }[]; diagnostics: unknown[] };
     } finally { process.env = before; process.chdir(cwd); }
   };
@@ -149,6 +151,7 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
     finally { process.chdir(cwd); }
   };
   return { pm, pmRoot, org, items, requests, command, host, env, setFields,
+    afterBatch: (hook: () => Promise<void>) => { afterBatch = hook; },
     afterPatch: (hook: (item: AdoWorkItem) => Promise<void>) => { afterPatch = hook; },
     response: (endpoint: string, value: unknown) => { responses.set(endpoint, value); },
     failPatch: (status: number) => { patchStatus = status; },
@@ -653,7 +656,8 @@ async function assertRetainedCreates(f: Awaited<ReturnType<typeof fixture>>, res
     assert.equal(item.ado_sync_base, undefined, "partial publication must not invent a shared base");
     assert.deepEqual(plan.linked_fields, ["ado_id", "ado_rev", "ado_project", "ado_org_url", "ado_url"]);
     const history = readFileSync(join(f.pmRoot, "history", `${item.id}.jsonl`), "utf8");
-    assert.match(history, /Linked to Azure DevOps work item/u);
+    assert.match(history, /bulk-item-transaction ado-sync-/u);
+    assert.match(history, /"path":"\/metadata\/ado_id"/u);
   }
   const count = f.items.size;
   await f.command("export");
@@ -1163,4 +1167,103 @@ test("resolution recovery refuses an intent replaced by another writer between p
   });
   await assert.rejects(service.apply(plan), { code: "ado_partial_apply" });
   assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 0);
+});
+
+
+test("SDK lookup resolves custom nested type folders and keeps the whole-document guard without git", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm);
+  await f.pm.schemaAddType("Delivery", { folder: "planning/deliveries" });
+  await f.pm.update(item.id, { type: "Delivery", body: "Whole document guard includes this body." });
+  const sdk = loadResolutionSdk();
+  const settings = await sdk.readSettings(f.pmRoot);
+  const located = await sdk.locateItem(f.pmRoot, item.id, settings.id_prefix, settings.item_format,
+    sdk.resolveItemTypeRegistry(settings, sdk.getActiveExtensionRegistrations()).type_to_folder);
+  assert.ok(located);
+  const document = (await sdk.readLocatedItem(located, { schema: settings.schema })).document;
+  const before = snapshot(f.pmRoot);
+  const result = await f.host(["ado", "resolve-plan", "--item", item.id, "--json"],
+    { GIT_CEILING_DIRECTORIES: tmpdir(), PATH: f.pmRoot });
+  assert.equal(result.code, 0, result.stderr);
+  const planned = JSON.parse(result.stdout) as { ok: boolean; plan: ResolutionPlan };
+  assert.equal(planned.ok, true, result.stdout);
+  assert.equal(planned.plan.local.revision, resolutionDigest(document));
+  assert.deepEqual(snapshot(f.pmRoot), before);
+  await f.pm.update(item.id, { body: "A later body edit invalidates this decision." });
+  const changed = snapshot(f.pmRoot);
+  await assert.rejects(resolver(f).apply(choices(planned.plan)), { code: "stale_local" });
+  assert.deepEqual(snapshot(f.pmRoot), changed);
+});
+
+test("SDK sync match refuses a local edit after Azure PATCH without overwriting item or history", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm);
+  await f.pm.update(item.id, { title: "Planned export" });
+  let changed: Record<string, string> = {};
+  f.afterPatch(async () => {
+    await f.pm.update(item.id, { title: "Concurrent local writer", body: "Keep the new context." });
+    changed = snapshot(f.pmRoot);
+  });
+  const result = await f.command("sync");
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "ADO_CONFLICT");
+  assert.equal(result.exit_code, 4);
+  assert.match(result.error!, /re-read both trackers/u);
+  // The SDK journal is runtime evidence; authoritative item/history bytes stay intact.
+  const after = snapshot(f.pmRoot);
+  for (const [name, value] of Object.entries(changed)) assert.equal(after[name], value, name);
+  assert.equal((await row(f.pm)).title, "Concurrent local writer");
+  assert.equal(f.items.get(1)!.fields["System.Title"], "Planned export", "remote success is explicitly partial");
+});
+
+test("SDK sync match refuses a stale import before relation and base persistence without git", async (t) => {
+  const f = await fixture(t, [workItem(1), workItem(2)]);
+  assert.equal((await f.command("import")).ok, true);
+  const item = (await f.pm.listAllComplete()).items.find((item) => item.ado_id === 1)!;
+  f.items.get(1)!.fields["System.Title"] = "Remote changed";
+  f.items.get(1)!.rev++;
+  f.items.get(1)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Reverse", url: `${f.org}/_apis/wit/workItems/2` }];
+  let changed: Record<string, string> = {};
+  f.afterBatch(async () => {
+    await f.pm.update(item.id, { title: "Concurrent import edit" });
+    changed = snapshot(f.pmRoot);
+  });
+  const result = await f.host(["ado", "import", "--json"], { GIT_CEILING_DIRECTORIES: tmpdir(), PATH: f.pmRoot });
+  assert.equal(result.code, 4, result.stderr);
+  const receipt = JSON.parse(result.stdout) as { code: string; error: string };
+  assert.equal(receipt.code, "ADO_CONFLICT");
+  const after = snapshot(f.pmRoot);
+  for (const [name, value] of Object.entries(changed)) assert.equal(after[name], value, name);
+  assert.equal((await f.pm.get(item.id)).item.parent, undefined);
+});
+
+
+test("SDK sync failures preserve valid items for invalid state mappings and unusable journal storage", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import", {}, { author: "explicit-agent" })).ok, true);
+  const item = await row(f.pm);
+  const historyPath = join(f.pmRoot, "history", `${item.id}.jsonl`);
+  assert.equal(JSON.parse(readFileSync(historyPath, "utf8").trim().split("\n").at(-1)!).author, "explicit-agent");
+  const before = readFileSync(historyPath, "utf8");
+  f.env.ADO_STATUS_MAP = '{"New":"unregistered-state"}';
+  f.items.get(1)!.rev++;
+  const invalid = await f.command("import");
+  assert.equal(invalid.ok, false);
+  assert.equal(invalid.code, "ADO_REMOTE");
+  assert.equal(readFileSync(historyPath, "utf8"), before);
+  delete f.env.ADO_STATUS_MAP;
+  // A filesystem collision exercises real transaction I/O failure, without SDK mocks.
+  const journal = join(f.pmRoot, "transactions");
+  rmSync(journal, { recursive: true, force: true });
+  writeFileSync(journal, "Synthetic storage collision");
+  const unusable = await f.command("import");
+  assert.equal(unusable.ok, false);
+  assert.equal(unusable.code, "ADO_REMOTE");
+  assert.equal(readFileSync(historyPath, "utf8"), before);
+  rmSync(journal);
+  delete f.env.PM_AUTHOR;
+  assert.equal((await f.command("import")).ok, true);
+  assert.equal(JSON.parse(readFileSync(historyPath, "utf8").trim().split("\n").at(-1)!).author, "unknown");
 });

@@ -5,7 +5,7 @@ export { AdoResolutionService, ResolutionRefusal, resolutionDigest, resolutionSc
 export type { ResolutionPlan, ResolutionObserver, ResolutionIntent, ResolutionField, ResolutionChoice, ResolutionReceipt, ResolutionRefusalCode, ResolutionMaps } from "./resolution.ts";
 export { discoverProjectContract, ContractRefusal } from "./contracts.ts";
 export type { ProjectContract, ContractOptions, ContractType, ContractField, ContractRelation, ContractIssue, ContractRefusalCode } from "./contracts.ts";
-import type { Dependency, PmClient } from "@unbrained/pm-cli/sdk";
+import type { Dependency, PmClient, PmUpdateActionOptions } from "@unbrained/pm-cli/sdk";
 /**
  * Semantic exit codes pm's command runtime propagates to the shell.
  *
@@ -138,7 +138,9 @@ export interface RelationDiagnostic {
  * @param custom - Explicit custom reference-name mappings.
  * @returns Changed local IDs and original edges that could not be imported.
  */
-export declare function importRelations(remote: readonly AdoWorkItem[], orgUrl: string, identities: RelationIdentities, pm: Pick<PmClient, "listAllComplete" | "update">, custom?: CustomRelationMap): Promise<{
+export declare function importRelations(remote: readonly AdoWorkItem[], orgUrl: string, identities: RelationIdentities, pm: Pick<PmClient, "listAllComplete"> & {
+    update: (id: string, options: PmUpdateActionOptions) => Promise<unknown>;
+}, custom?: CustomRelationMap): Promise<{
     updated: string[];
     unmapped: RelationDiagnostic[];
 }>;

@@ -103,7 +103,7 @@ export class AdoResolutionService {
     /** Load authoritative item bytes with the same SDK normalization used by the mutation lock. */
     async document(id) {
         const settings = await this.sdk.readSettings(this.pmRoot);
-        const located = await this.sdk.locateItem(this.pmRoot, id, settings.id_prefix);
+        const located = await this.sdk.locateItem(this.pmRoot, id, settings.id_prefix, settings.item_format, this.sdk.resolveItemTypeRegistry(settings, this.sdk.getActiveExtensionRegistrations()).type_to_folder);
         if (located === null)
             throw new ResolutionRefusal("scope", "Select an existing linked pm item and generate a fresh plan.");
         const { document } = await this.sdk.readLocatedItem(located, { schema: settings.schema });

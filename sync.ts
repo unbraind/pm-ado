@@ -1,6 +1,8 @@
 /** Command orchestration and per-field Azure DevOps reconciliation. */
+import { randomUUID } from "node:crypto";
+import { loadResolutionSdk } from "./resolution.ts";
 import type { CommandHandlerContext, FlagDefinition } from "@unbrained/pm-cli/sdk/authoring";
-import type { ItemMetadata, PmUpdateActionOptions } from "@unbrained/pm-cli/sdk";
+import type { BulkItemMutation, ItemMetadata, PmUpdateActionOptions } from "@unbrained/pm-cli/sdk";
 import {
   AdoClient, CommandError, EXIT_CODE, RevisionConflict, RELATION_MAP, STATE_MAP,
   exportRelations, importRelations, missingEnv, preflightMessage, readConfig, relationTargetId,
@@ -318,6 +320,32 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
     }
     if (conflicts.length) return { ok: false, code: "ADO_CONFLICT", exit_code: EXIT_CODE.conflict, dry_run: dryRun, plans, conflicts, diagnostics };
     if (!dryRun) {
+      const sdk = loadResolutionSdk();
+      const versions = new Map(items.map((item) => [item.id, item.updated_at]));
+      /** Fence every local write against the inspected revision, including our own earlier writes. */
+      const update = async (id: string, options: PmUpdateActionOptions) => {
+        const transactionId = `ado-sync-${randomUUID()}`;
+        // Closing via update performs two internal writes. Guard the scalar write
+        // once, then let the SDK close step own its lifecycle mutation.
+        const closing = options.status === "closed";
+        const mutations: BulkItemMutation[] = [{ op: "update", id,
+          options: closing ? { ...options, status: undefined } : options,
+          match: { key: "updated_at", value: versions.get(id)! } }];
+        if (closing) mutations.push({ op: "close", id, reason: options.closeReason! });
+        try {
+          await sdk.commitItemMutations({ pmRoot: ctx.pm_root, transactionId,
+            author: ctx.global.author ?? process.env.PM_AUTHOR ?? "unknown",
+            mutations });
+        } catch (error) {
+          if (error instanceof sdk.PmCliError && error.exitCode === EXIT_CODE.conflict) {
+            throw new CommandError("Local sync persistence refused; re-read both trackers and retry. Earlier Azure or pm operations may have succeeded.", EXIT_CODE.conflict);
+          }
+          throw error;
+        }
+        // Read our own durable event, never adopt a later writer's current revision.
+        const history = await sdk.readHistorySnapshot(sdk.getHistoryPath(ctx.pm_root, id), id);
+        versions.set(id, history.entries.filter((entry) => entry.message?.startsWith(`bulk-item-transaction ${transactionId} `)).at(-1)!.ts);
+      };
       for (const entry of entries) {
         const { plan, local, values } = entry;
         let remote = entry.remote;
@@ -331,7 +359,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
             plan.ado_id = remote.id;
             const field = [`ado_id=${remote.id}`, `ado_rev=${remote.rev}`, `ado_project=${config.project}`,
               `ado_org_url=${config.orgUrl}`, `ado_url=${config.orgUrl}/_apis/wit/workItems/${remote.id}`];
-            await pm.update(local!.id, { field, message: `Linked to Azure DevOps work item ${remote.id}` });
+            await update(local!.id, { field, message: `Linked to Azure DevOps work item ${remote.id}` });
             plan.linked_fields = field.map((value) => value.slice(0, value.indexOf("=")));
             Object.assign(values, remoteValues(remote, states));
             identities.set(remote.id, local!.id);
@@ -350,6 +378,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
           const { item } = await pm.create({ ...initial, type: "Task", unset: undefined,
             field: initial.field.filter((field) => !field.startsWith("ado_sync_base=")) });
           entry.local = item;
+          versions.set(item.id, item.updated_at);
           plan.pm_id = item.id;
           identities.set(remote.id, item.id);
         }
@@ -371,7 +400,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
       }
       if (conflicts.length) return { ok: false, code: "ADO_CONFLICT", exit_code: EXIT_CODE.conflict, dry_run: false, plans, conflicts, diagnostics };
       const pulled = entries.filter((entry) => entry.pullRelations).map((entry) => entry.remote!);
-      if (pulled.length) diagnostics.push(...(await importRelations(pulled, config.orgUrl, identities, pm)).unmapped);
+      if (pulled.length) diagnostics.push(...(await importRelations(pulled, config.orgUrl, identities, { listAllComplete: () => pm.listAllComplete(), update })).unmapped);
       for (const entry of entries) {
         const { values, remote, local } = entry;
         values.relations = relationValues(remote!.relations!, config, identities);
@@ -379,7 +408,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
         if (values.status === local!.status) delete fields.status;
         if (fields.status === "closed") fields.closeReason = "Azure DevOps state synchronized";
         if (!equal(localValues(local!), Object.fromEntries(Object.entries(values).filter(([key]) => key !== "relations"))) ||
-            local!.ado_rev !== remote!.rev || local!.ado_sync_base !== JSON.stringify(values)) await pm.update(local!.id, fields);
+            local!.ado_rev !== remote!.rev || local!.ado_sync_base !== JSON.stringify(values)) await update(local!.id, fields);
       }
     }
     return { ok: true, dry_run: dryRun, plans, conflicts, diagnostics };

@@ -13,6 +13,11 @@ Field contents and credentials are absent. JSON and the default compact TOON
 are rendered by the host. Requires pm CLI **2026.10.23+** for expired mutation
 lease fencing; works in a plain, non-git tracker.
 
+Authoritative document lookup follows the tracker's configured item format and
+type-to-folder registry, including custom types in nested folders. The revision
+digest still covers the complete raw document read through the SDK, including
+the body and annotations.
+
 Every differing mapped field needs exactly one explicit `local` or `remote`
 choice, including one-sided changes. Equal fields require no choice. Duplicate,
 unknown, redundant, missing and invalid choices refuse before REST writes.

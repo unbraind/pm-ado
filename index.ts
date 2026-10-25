@@ -29,7 +29,7 @@ export { AdoResolutionService, ResolutionRefusal, resolutionDigest, resolutionSc
 export type { ResolutionPlan, ResolutionObserver, ResolutionIntent, ResolutionField, ResolutionChoice, ResolutionReceipt, ResolutionRefusalCode, ResolutionMaps } from "./resolution.ts";
 export { discoverProjectContract, ContractRefusal } from "./contracts.ts";
 export type { ProjectContract, ContractOptions, ContractType, ContractField, ContractRelation, ContractIssue, ContractRefusalCode } from "./contracts.ts";
-import type { Dependency, ItemMetadata, PmClient } from "@unbrained/pm-cli/sdk";
+import type { Dependency, ItemMetadata, PmClient, PmUpdateActionOptions } from "@unbrained/pm-cli/sdk";
 
 /**
  * Semantic exit codes pm's command runtime propagates to the shell.
@@ -230,7 +230,7 @@ export async function importRelations(
   remote: readonly AdoWorkItem[],
   orgUrl: string,
   identities: RelationIdentities,
-  pm: Pick<PmClient, "listAllComplete" | "update">,
+  pm: Pick<PmClient, "listAllComplete"> & { update: (id: string, options: PmUpdateActionOptions) => Promise<unknown> },
   custom: CustomRelationMap = {},
 ): Promise<{ updated: string[]; unmapped: RelationDiagnostic[] }> {
   const { items } = await pm.listAllComplete();

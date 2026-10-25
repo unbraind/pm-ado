@@ -1,4 +1,3 @@
-/** Command orchestration and per-field Azure DevOps reconciliation. */
 import type { CommandHandlerContext, FlagDefinition } from "@unbrained/pm-cli/sdk/authoring";
 import type { ItemMetadata, PmUpdateActionOptions } from "@unbrained/pm-cli/sdk";
 import { type AdoConfig, type AdoWorkItem } from "./index.ts";

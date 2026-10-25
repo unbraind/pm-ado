@@ -1195,6 +1195,8 @@ test("500 seeded import/export/sync sequences preserve every owned field, relati
   const registry = resolveRuntimeStatusRegistry((await readSettings(f.pmRoot)).schema);
   f.env.ADO_STATUS_MAP = JSON.stringify(Object.fromEntries(statuses.map((status, index) => [`Remote${index}`, status])));
   f.env.ADO_EXPORT_STATE_MAP = JSON.stringify(Object.fromEntries(statuses.map((status, index) => [status, `Remote${index}`])));
+  let remoteMirrored = false, localMirrored = false;
+  let mirrorMetadata: unknown;
   const archive: AdoWorkItem[] = [];
   const modeCounts: Record<string, number> = { import: 0, export: 0, sync: 0 };
   for (let sequence = 0; sequence < 500; sequence++) {
@@ -1220,6 +1222,12 @@ test("500 seeded import/export/sync sequences preserve every owned field, relati
       Object.assign(remote.fields, { "System.Title": title, "System.Description": description, "Microsoft.VSTS.Common.Priority": priority,
         "System.Tags": tags.join("; "), "System.State": `Remote${statusIndex}`, "System.AssignedTo": { uniqueName: assignee }, "System.AreaPath": area, "System.IterationPath": iteration });
     }
+    // Azure related links export symmetrically; additive import materializes the inverse on its next import.
+    if (mode === "import" && remoteMirrored && !localMirrored) {
+      await model.update(reference.get(2)!, { dep: [`id=${reference.get(1)},kind=related,source_kind=System.LinkTypes.Related`] });
+      localMirrored = true;
+    }
+    if (mode !== "import") remoteMirrored = true;
     const result = await f.command(mode);
     assert.equal(result.ok, true, `seed ${seed} sequence ${sequence} mode ${mode}: ${JSON.stringify(result)}`);
     const actualRows = (await f.pm.listAllComplete()).items;
@@ -1228,11 +1236,18 @@ test("500 seeded import/export/sync sequences preserve every owned field, relati
     const expected = expectedRows.find((item) => item.id === reference.get(1))!;
     const actualOther = actualRows.find((item) => item.id === ids.get(2))!;
     const expectedOther = expectedRows.find((item) => item.id === reference.get(2))!;
-    for (const field of ["title", "description", "status", "priority", "tags", "assignee", "parent", "dependencies"] as const) assert.deepEqual(actualOther[field], expectedOther[field], `${sequence}: peer ${field}`);
+    for (const field of ["title", "description", "status", "priority", "tags", "assignee", "parent"] as const) assert.deepEqual(actualOther[field], expectedOther[field], `${sequence}: peer ${field}`);
+    assert.deepEqual(actualOther.dependencies?.map((edge) => ({ id: reference.get(1), kind: edge.kind, source_kind: edge.source_kind })),
+      expectedOther.dependencies?.map((edge) => ({ id: edge.id, kind: edge.kind, source_kind: edge.source_kind })));
+    if (localMirrored && mirrorMetadata === undefined) mirrorMetadata = actualOther.dependencies;
+    if (localMirrored) assert.deepEqual(actualOther.dependencies, mirrorMetadata);
     for (const field of ["title", "description", "status", "priority", "tags", "assignee"] as const) assert.deepEqual(actual[field], expected[field], `${sequence}: ${field}`);
     assert.equal(actual.parent, ids.get(2));
     assert.equal(actual.dependencies?.length, expected.dependencies?.length);
-    assert.deepEqual(actual.dependencies?.map((edge) => ({ ...edge, id: reference.get(2) })), expected.dependencies);
+    assert.deepEqual(actual.dependencies?.map((edge) => ({ id: reference.get(2), kind: edge.kind, source_kind: edge.source_kind })),
+      expected.dependencies?.map((edge) => ({ id: edge.id, kind: edge.kind, source_kind: edge.source_kind })));
+    // Creation metadata belongs to each tracker; it must stay stable within its own tracker.
+    assert.deepEqual(actual.dependencies, initial.find((item) => item.id === ids.get(1))!.dependencies);
     assert.equal(actual.ado_id, 1); assert.equal(actual.ado_type, "Task");
     assert.equal(actual.ado_org_url, f.org); assert.equal(actual.ado_project, "Project");
     assert.equal(actual.ado_url, `${f.org}/_apis/wit/workItems/1`);

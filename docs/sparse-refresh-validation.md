@@ -35,7 +35,7 @@ foreign records, SDK readback, and six competing transitions across every async
 boundary of the read-only observation path in one non-git tracker.
 
 Seed `0x104525` drives 500 refresh sequences with three replay/order variants each.
-Seed `0x5a17c0de` drives 500 import/export/sync sequences with exact replays and
+Seed `0x5a17c0de` drives 500 sequences (181 imports, 152 exports, 167 syncs) with exact replays and
 older input replays. A separate real SDK tracker holds the reference state;
 assertions compare SDK-read fields and relationships, without a handwritten
 normalizer. Coverage includes CRLF/whitespace, every native field owned by sync,

@@ -113,3 +113,24 @@ Behavioural revert evidence and exact gate results are recorded on
 [pm-ado-sdk-adoption](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-sdk-adoption.toon).
 The SDK terminal-update limitation remains tracked by
 [pm-ado-sdk-match-close-1025](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-sdk-match-close-1025.toon).
+
+## Review repair verification
+
+Repair commit `a735bd1` passed [CI](https://github.com/unbraind/pm-ado/actions/runs/40236418608)
+with all four jobs successful: Node 22, Node 26, npm release gate and Bun release
+gate. Every job ran 423/423 tests in both V8 and independent statement passes,
+with zero failures/skips. Coverage is 1580/1580 statements and 100% lines,
+branches and functions across all nine required sources. CodeQL passed too.
+
+The matrix has 82 observed boundaries and 164 fault cells: 82 real edits and
+82 real SIGKILL interruptions. Function-only reverts fail for conditional close,
+creation recovery, PATCH replay, ownership pairing and accepted-base recovery;
+all restored fixed cases pass. Final differential evidence remains 14/14
+comparisons across 140 public items.
+
+Completed local checks: full V8 pass 423/423 with 100% lines/branches/functions;
+latest focused regressions 6/6 through pinned `pm test`; restored revert cases
+11/11; typecheck, 92 documented declarations and whitespace/privacy/history
+checks pass. Duplicate local full release runs were interrupted after the
+requested complete CI gates passed; those interrupted runs are not counted as
+successful release checks. There is no standalone lint script.

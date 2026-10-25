@@ -1,14 +1,16 @@
 id: pm-ado-sdk-match-close-1025
 title: Report SDK update match self-conflict during terminal transitions
-description: "Pinned SDK commitItemMutations update match on updated_at can reject its own internal close mutation: the preliminary update advances updated_at before close rechecks the same precondition. Missing contract: consume an update match once for the top-level update or support a guarded close mutation. Adoption uses a guarded scalar update followed by a close step in one SDK transaction. Orchestrator should report the underlying SDK defect upstream; no upstream issue filed here."
+description: "Pinned SDK commitItemMutations mixed scalar plus terminal-status update with match on updated_at can reject its own internal close mutation: the preliminary update advances updated_at before close rechecks the same precondition. Missing contract: consume an update match once for the top-level update or support a directly guarded close mutation. Safe adoption uses a matched scalar update, then a matched status-only update carrying the preceding returned revision; the latter routes directly to one native close. Orchestrator should report the underlying SDK defect upstream; no upstream issue filed here."
 type: Issue
 status: open
 priority: 2
 tags[1]: sdk-gap
 created_at: "2026-10-25T16:01:14.931Z"
-updated_at: "2026-10-25T16:12:00.432Z"
+updated_at: "2026-10-25T21:19:42.217Z"
 author: codex-agent
 parent: pm-ado-sdk-adoption
+comments[1]{created_at,author,text}:
+  "2026-10-25T20:42:22.975Z",codex-agent,"Review correction: the initial scalar-update plus unguarded close workaround was unsafe and has been removed. Safe grouping now uses two commitItemMutations update operations in sequence, each matched to the preceding inspected/returned revision. The status-only update routes directly to one native close write; concurrent edits between steps refuse without overwriting them. The underlying SDK mixed-update self-match limitation remains for orchestrator reporting."
 files[2]{path,scope}:
   sync.ts,project
   test/sync.test.ts,project

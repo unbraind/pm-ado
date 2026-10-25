@@ -1,17 +1,19 @@
 /** Real host commands against a local Azure REST subset and disposable SDK trackers. */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
+import { execFile, fork } from "node:child_process";
 import { chmodSync, cpSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { PmClient } from "@unbrained/pm-cli/sdk";
+import { PmClient, createExtensionCommandSdk, runWithActiveExtensions } from "@unbrained/pm-cli/sdk";
 import { createExtensionTestHarness } from "@unbrained/pm-cli/sdk/testing";
 import extension, { type AdoWorkItem, type AdoRelation, type JsonPatchOperation } from "../index.ts";
-import { buildWiql, localValues, remoteValues, IMPORT_STATE_MAP } from "../sync.ts";
+import { buildWiql, localValues, remoteValues, IMPORT_STATE_MAP, runSyncCommand } from "../sync.ts";
+
+import { SyncOutbox, isProtocolTag, type SyncBoundary, type SyncObserver } from "../sync-outbox.ts";
 
 const run = promisify(execFile);
 const repo = resolve(import.meta.dirname, "..");
@@ -39,6 +41,8 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
   let omitRelations = false;
   let afterPatch: ((item: AdoWorkItem) => Promise<void>) | undefined;
   let afterBatch: (() => Promise<void>) | undefined;
+  let afterCreate: (() => Promise<void>) | undefined;
+  const revisions = new Map<string, AdoWorkItem>();
   const responses = new Map<string, unknown>();
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, "http://fixture.invalid");
@@ -46,6 +50,7 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown> & JsonPatchOperation[] : undefined;
     requests.push({ method: req.method!, path: req.url!, body });
+    for (const item of items.values()) revisions.set(`${item.id}:${item.rev}`, structuredClone(item));
     assert.equal(url.searchParams.get("api-version"), "7.1");
     assert.equal(req.headers.authorization, `Basic ${Buffer.from(`:${env.ADO_TOKEN}`).toString("base64")}`);
     res.setHeader("Content-Type", "application/json");
@@ -58,7 +63,9 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
     if (url.pathname.endsWith("/wiql")) {
       assert.equal(req.method, "POST");
       assert.equal(typeof body!.query, "string");
-      send(200, { queryType: "flat", queryResultType: "workItem", workItems: [...items.keys()].slice(0, Number(url.searchParams.get("$top") ?? items.size)).map((id) => ({ id, url: `${org}/_apis/wit/workItems/${id}` })) }); return;
+      const marker = String(body!.query).match(/\[System.Tags\] CONTAINS '([^']+)'/u)?.[1];
+      const found = [...items.keys()].filter((id) => marker === undefined || String(items.get(id)!.fields["System.Tags"]).split(";").some((tag) => tag.trim() === marker));
+      send(200, { queryType: "flat", queryResultType: "workItem", workItems: found.slice(0, Number(url.searchParams.get("$top") ?? items.size)).map((id) => ({ id, url: `${org}/_apis/wit/workItems/${id}` })) }); return;
     }
     if (url.pathname.endsWith("/workitemsbatch")) {
       assert.equal(req.method, "POST");
@@ -68,6 +75,8 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
       await afterBatch?.();
       send(200, { count: items.size, value: omit ? [] : (body!.ids as number[]).flatMap((id) => items.has(id) ? [items.get(id)] : []) }); return;
     }
+    const revision = url.pathname.match(/workitems\/(\d+)\/revisions\/(\d+)$/u);
+    if (revision) { send(200, revisions.get(`${revision[1]}:${revision[2]}`)); return; }
     const tail = decodeURIComponent(url.pathname.split("/").at(-1)!);
     if (req.method === "GET") { send(200, items.get(Number(tail))); return; }
     assert.equal(req.headers["content-type"], "application/json-patch+json");
@@ -79,11 +88,13 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
       const id = Math.max(0, ...items.keys()) + 1;
       const fields = Object.fromEntries(patch.map((op) => [op.path.slice("/fields/".length), op.value]));
       const item = workItem(id, { ...fields, "System.WorkItemType": tail.slice(1) });
-      items.set(id, item); send(200, omitRelations ? { ...item, relations: undefined } : item); return;
+      items.set(id, item); revisions.set(`${id}:${item.rev}`, structuredClone(item));
+      await afterCreate?.();
+      send(200, omitRelations ? { ...item, relations: undefined } : item); return;
     }
     assert.equal(req.method, "PATCH");
     const current = items.get(Number(tail))!;
-    if (race) { current.rev++; current.fields["System.Title"] = "Concurrent writer"; race = false; }
+    if (race) { current.rev++; current.fields["System.Title"] = "Concurrent writer"; revisions.set(`${current.id}:${current.rev}`, structuredClone(current)); race = false; }
     if (vanish || patch[0]?.op !== "test" || patch[0].path !== "/rev" || patch[0].value !== current.rev) {
       if (vanish) { items.delete(Number(tail)); vanish = false; }
       send(412, { $id: "1", innerException: null, message: "The current revision of the work item does not match the expected revision.",
@@ -103,6 +114,7 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
     next.relations = relations;
     next.rev++;
     items.set(next.id, next);
+    revisions.set(`${next.id}:${next.rev}`, structuredClone(next));
     await afterPatch?.(next);
     send(afterPatchStatus, omitRelations ? { ...next, relations: undefined } : next);
   });
@@ -150,7 +162,17 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
     try { return await pm.update(id, { field: Object.entries(fields).map(([key, value]) => `${key}=${value}`), unset }); }
     finally { process.chdir(cwd); }
   };
-  return { pm, pmRoot, org, items, requests, command, host, env, setFields,
+  /** Exercise the command with native SDK activation and a boundary observer. */
+  const observed = async (mode: "import" | "export" | "sync", observer: SyncObserver) => {
+    const before = { ...process.env }; const cwd = process.cwd();
+    process.chdir(root); process.env = { ...env };
+    try {
+      return await runWithActiveExtensions({ cwd: root, path: pmRoot }, () => runSyncCommand({ command: `ado ${mode}`, args: [], options: {},
+        global: {}, pm_root: pmRoot, sdk: createExtensionCommandSdk(pmRoot, pm) }, mode, observer));
+    } finally { process.env = before; process.chdir(cwd); }
+  };
+  return { pm, pmRoot, root, org, items, requests, command, observed, host, env, setFields,
+    afterCreate: (hook: () => Promise<void>) => { afterCreate = hook; },
     afterBatch: (hook: () => Promise<void>) => { afterBatch = hook; },
     afterPatch: (hook: (item: AdoWorkItem) => Promise<void>) => { afterPatch = hook; },
     response: (endpoint: string, value: unknown) => { responses.set(endpoint, value); },
@@ -169,7 +191,7 @@ function snapshot(root: string): Record<string, string> {
   /** Traverse the bounded disposable tracker only. */
   function visit(dir: string, prefix: string) {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.isSymbolicLink() || entry.name === "runtime" || entry.name === "extensions") continue;
+      if (entry.isSymbolicLink() || ["runtime", "extensions", "locks", "transactions", "search", "checkpoints"].includes(entry.name)) continue;
       const path = join(dir, entry.name);
       const name = `${prefix}${entry.name}`;
       if (entry.isDirectory()) visit(path, `${name}/`);
@@ -700,7 +722,7 @@ test("planning three linked pairs reads the real SDK tracker once", async (t) =>
 });
 
 // Resolution regressions share the real SDK tracker and revision-checking HTTP fixture.
-import { AdoClient, AdoResolutionService, ResolutionRefusal, RevisionConflict, resolutionDigest, type ResolutionPlan, type ResolutionObserver } from "../index.ts";
+import { AdoClient, CommandError, AdoResolutionService, ResolutionRefusal, RevisionConflict, resolutionDigest, type ResolutionPlan, type ResolutionObserver } from "../index.ts";
 import { transport } from "../sync.ts";
 import { loadResolutionSdk, validateResolutionPlan } from "../resolution.ts";
 
@@ -1216,6 +1238,10 @@ test("SDK sync match refuses a local edit after Azure PATCH without overwriting 
   for (const [name, value] of Object.entries(changed)) assert.equal(after[name], value, name);
   assert.equal((await row(f.pm)).title, "Concurrent local writer");
   assert.equal(f.items.get(1)!.fields["System.Title"], "Planned export", "remote success is explicitly partial");
+  const converged = await f.command("sync");
+  assert.equal(converged.ok, true, JSON.stringify(converged));
+  assert.equal((await f.pm.get(item.id, { depth: "full" })).item.body, "Keep the new context.");
+  assert.equal(f.items.get(1)!.fields["System.Title"], "Concurrent local writer");
 });
 
 test("SDK sync match refuses a stale import before relation and base persistence without git", async (t) => {
@@ -1267,4 +1293,484 @@ test("SDK sync failures preserve valid items for invalid state mappings and unus
   await f.pm.config("project", "set", "author-default", "configured-agent");
   assert.equal((await f.command("import")).ok, true);
   assert.equal(JSON.parse(readFileSync(historyPath, "utf8").trim().split("\n").at(-1)!).author, "configured-agent");
+});
+
+
+test("blocking review: a local status edit between scalar import and close is never overwritten", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm);
+  f.items.get(1)!.fields["System.State"] = "Closed"; f.items.get(1)!.rev++;
+  let edited = false;
+  const result = await f.observed("import", async (event) => {
+    if (!edited && event.boundary === "local" && event.phase === "after" && event.operation === "update") {
+      edited = true;
+      await f.pm.update(item.id, { status: "blocked", body: "Keep the concurrent status context." });
+    }
+  });
+  assert.equal(edited, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "ADO_CONFLICT");
+  const kept = (await f.pm.get(item.id, { depth: "full" })).item;
+  assert.equal(kept.status, "blocked");
+  assert.equal(kept.body, "Keep the concurrent status context.");
+  assert.equal(kept.closed_at, undefined);
+  assert.equal((await f.command("import")).ok, true, "an explicit fresh import can close without losing the context edit");
+  assert.equal((await f.pm.get(item.id, { depth: "full" })).item.body, "Keep the concurrent status context.");
+});
+
+test("blocking review: local edits during Azure create retain identity and export retry never creates twice", async (t) => {
+  const f = await fixture(t, []);
+  const { item } = await f.pm.create({ title: "Original export", type: "Task" });
+  let edited = false;
+  f.afterCreate(async () => {
+    if (!edited) { edited = true; await f.pm.update(item.id, { title: "Concurrent export", body: "Keep the local edit." }); }
+  });
+  const refused = await f.command("export");
+  assert.equal(refused.code, "ADO_CONFLICT");
+  assert.equal((await row(f.pm)).ado_id, undefined);
+  assert.equal((await row(f.pm)).title, "Concurrent export");
+  const retried = await f.command("export");
+  assert.equal(retried.ok, true, JSON.stringify(retried));
+  assert.equal(f.items.size, 1);
+  assert.equal(f.requests.filter((request) => request.method === "POST" && request.path.includes("/workitems/$")).length, 1);
+  const linked = (await f.pm.get(item.id, { depth: "full" })).item;
+  assert.equal(linked.ado_id, 1); assert.equal(linked.title, "Concurrent export");
+  assert.equal(linked.body, "Keep the local edit.");
+  assert.equal(f.items.get(1)!.fields["System.Title"], "Concurrent export");
+  assert.equal((await f.command("export")).ok, true);
+  assert.equal(f.items.size, 1);
+});
+
+/** Kill a real SDK command process at one observed boundary; the REST fixture stays alive. */
+async function crashAt(f: Awaited<ReturnType<typeof fixture>>, mode: "import" | "export" | "sync", target: number) {
+  const child = fork(join(repo, "test/helpers/sync-crash-worker.ts"), [f.pmRoot, mode], {
+    cwd: f.root, env: { ...f.env, GIT_CEILING_DIRECTORIES: tmpdir(), PATH: f.pmRoot },
+    execArgv: [], stdio: ["ignore", "ignore", "pipe", "ipc"],
+  });
+  let stderr = ""; let hit = false;
+  child.stderr!.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+  child.on("message", (input: unknown) => {
+    const message = input as { kind: string; index: number };
+    if (message.kind === "boundary") {
+      if (message.index === target) { hit = true; child.kill("SIGKILL"); }
+      else child.send("continue");
+    }
+  });
+  const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((done, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => done({ code, signal }));
+  });
+  assert.equal(hit, true, stderr);
+  assert.equal(exit.signal, "SIGKILL");
+}
+
+/** Seed distinct create/import/link/recovery paths with real SDK metadata and server identities. */
+async function matrixFixture(t: test.TestContext, scenario: string) {
+  const fresh = scenario === "export-create" || scenario === "export-recover";
+  const f = await fixture(t, fresh ? [] : scenario === "export-relations" ? [workItem(1), workItem(2)] : [workItem()]);
+  let mode: "import" | "export" | "sync";
+  if (fresh) {
+    await f.pm.create({ title: "Matrix export", type: "Task" });
+    mode = "export";
+    if (scenario === "export-recover") {
+      const item = await row(f.pm);
+      f.afterCreate(async () => { await f.pm.update(item.id, { title: "Edited during first POST" }); });
+      assert.equal((await f.command("export")).code, "ADO_CONFLICT");
+    }
+  } else if (scenario === "sync-mixed") {
+    await f.pm.create({ title: "Matrix unlinked", type: "Task" }); mode = "sync";
+  } else {
+    assert.equal((await f.command("import")).ok, true);
+    if (scenario === "import-close") {
+      f.items.get(1)!.fields["System.State"] = "Closed"; f.items.get(1)!.rev++; mode = "import";
+    } else {
+      const items = (await f.pm.listAllComplete()).items;
+      const child = items.find((item) => item.ado_id === 1)!;
+      await f.pm.update(child.id, { title: "Matrix relation export", parent: items.find((item) => item.ado_id === 2)!.id });
+      mode = "export";
+    }
+  }
+  return { f, mode, edited: (await row(f.pm)).id, expected: scenario === "sync-mixed" || scenario === "export-relations" ? 2 : 1 };
+}
+
+for (const scenario of ["import-close", "export-create", "export-relations", "export-recover", "sync-mixed"]) {
+  test(`boundary matrix ${scenario}: every REST/local/intent boundary preserves edits or holds an ambiguous create safely`, async (t) => {
+    const probe = await matrixFixture(t, scenario);
+    const trace: SyncBoundary[] = [];
+    const normal = await probe.f.observed(probe.mode, (event) => { trace.push(event); });
+    assert.equal(normal.ok, true, JSON.stringify(normal));
+    const boundaries = trace.map((event, index) => ({ event, index }));
+    assert.ok(boundaries.length >= 6);
+    for (const fault of ["edit", "crash"] as const) {
+      for (const { event: boundary, index } of boundaries) {
+        await t.test(`${fault} ${index} ${boundary.phase} ${boundary.boundary} ${boundary.operation}`, async (sub) => {
+          const { f, mode, edited, expected } = await matrixFixture(sub, scenario);
+          const label = `Concurrent context ${scenario} ${index}`;
+          if (fault === "crash") await crashAt(f, mode, index);
+          else {
+            let position = 0; let changed = false;
+            const result = await f.observed(mode, async () => {
+              if (position++ === index) {
+                changed = true;
+                await f.pm.update(edited, { body: label, comment: [`text=${label}`] });
+              }
+            });
+            assert.equal(changed, true);
+            assert.ok(result.ok || result.code === "ADO_CONFLICT", JSON.stringify(result));
+            const kept = (await f.pm.get(edited, { depth: "full" })).item;
+            assert.equal(kept.body, label);
+            assert.ok((kept.comments as { text: string }[]).some((comment) => comment.text === label));
+          }
+          let retried = await f.command(mode);
+          if (!retried.ok && fault === "crash" && boundary.boundary === "intent" && boundary.operation === "dispatched" && boundary.phase === "after" && retried.error?.includes("outcome is uncertain")) {
+            // A durable dispatch without an observed POST cannot authorize another create.
+            const journal = intentFiles(f).map((file) => JSON.parse(readFileSync(file, "utf8")) as {
+              operation: string; state: string; response?: unknown; scope: string; key: string; fields: Record<string, unknown>;
+            }).find((intent) => intent.operation === "create" && intent.state === "dispatched" && intent.response === undefined)!;
+            assert.ok(journal);
+            const creates = f.requests.filter((request) => request.path.includes("/workitems/$")).length;
+            assert.equal((await f.command(mode)).code, "ADO_CONFLICT");
+            assert.equal(f.requests.filter((request) => request.path.includes("/workitems/$")).length, creates);
+            sub.diagnostic("Ambiguous dispatch is held without another POST; recovery resumes only after provider visibility.");
+            // If the original request later becomes visible, lookup finishes recovery without a POST.
+            const id = Math.max(0, ...f.items.keys()) + 1;
+            const marker = `pm-ado-idempotency-${resolutionDigest([journal.scope, journal.key])}`;
+            f.items.set(id, workItem(id, { ...journal.fields, "System.Tags": [String(journal.fields["System.Tags"] ?? ""), marker].filter(Boolean).join("; ") }));
+            retried = await f.command(mode);
+          }
+          assert.equal(retried.ok, true, JSON.stringify(retried));
+          assert.equal(f.items.size, expected, "no duplicate Azure work item across retries");
+          const items = (await f.pm.listAllComplete()).items;
+          const linked = items.flatMap((item) => item.ado_id === undefined ? [] : [item.ado_id]);
+          assert.equal(new Set(linked).size, expected, "retry completes all local links");
+          assert.equal(linked.length, expected, "no duplicate local imports");
+          if (fault === "edit") assert.equal((await f.pm.get(edited, { depth: "full" })).item.body, label);
+          const count = f.requests.filter((request) => request.method === "POST" && request.path.includes("/workitems/$")).length;
+          assert.equal((await f.command(mode)).ok, true);
+          assert.equal(f.requests.filter((request) => request.method === "POST" && request.path.includes("/workitems/$")).length, count);
+        });
+      }
+    }
+  });
+}
+
+
+/** Bind the outbox to the same real recording server, with an optional network-response boundary. */
+function outbox(f: Awaited<ReturnType<typeof fixture>>, observer?: SyncObserver, wire = transport) {
+  const config = { orgUrl: f.org, project: "Project", token: "synthetic-token" };
+  return new SyncOutbox(f.pmRoot, "fixture-agent", config, new AdoClient(config, wire), observer);
+}
+
+/** Read a bounded disposable journal directory for acceptance assertions and corruption refusals. */
+function intentFiles(f: Awaited<ReturnType<typeof fixture>>) {
+  const directory = join(f.pmRoot, "transactions/pm-ado-sync");
+  return readdirSync(directory).filter((name) => name.endsWith(".json")).map((name) => join(directory, name));
+}
+
+test("outbox creation preserves its first key, resolves cached identities and refuses deleted or corrupt evidence", async (t) => {
+  const f = await fixture(t, []);
+  const { item } = await f.pm.create({ title: "Journal owner", type: "Task" });
+  const service = outbox(f);
+  assert.equal(isProtocolTag("ordinary-user-tag"), false);
+  assert.equal(isProtocolTag(` PM-ADO-IDEMPOTENCY-${"A".repeat(64)} `), true);
+  const first = await service.create(item.id, "Task", { "System.Title": "Original plan" });
+  assert.equal(first.recovered, false);
+  const file = intentFiles(f)[0]!;
+  const raw = readFileSync(file, "utf8");
+  const locals = (await f.pm.listAllComplete()).items;
+  assert.equal((await service.owners([first.remote], locals)).get(1)!.item, item.id);
+  assert.equal((await service.owners([{ id: 99, rev: 1, fields: {}, relations: [] }], locals)).size, 0);
+  const intent = JSON.parse(raw) as Record<string, unknown>;
+  assert.ok(String(intent.key).startsWith(`${item.id}:create:`));
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+  assert.equal((await service.create(item.id, "Bug", { "System.Title": "A later edited plan" })).remote.id, first.remote.id);
+  f.items.get(1)!.fields["System.Tags"] = "A manually edited tag";
+  assert.equal((await service.create(item.id, "Task", {})).remote.id, 1, "durable identity survives a removed marker");
+  f.items.set(1, structuredClone(first.remote));
+  for (const patch of [{ id: 99 }, { rev: 0 }, { fields: { "System.Tags": "wrong marker" } }]) {
+    writeFileSync(file, JSON.stringify({ ...intent, response: { ...first.remote, ...patch } }));
+    await assert.rejects(service.create(item.id, "Task", {}), /acceptance does not prove/u);
+  }
+  writeFileSync(file, raw);
+  f.items.clear();
+  await assert.rejects(service.create(item.id, "Task", {}), /Recorded Azure creation is unavailable/u);
+  assert.equal(f.requests.filter((request) => request.path.includes("/workitems/$")).length, 1);
+  for (const patch of [{ schema: "bad" }, { scope: "wrong" }, { item: "another-item" }, { operation: "patch" }, { key: "bad" }, { state: "invalid" }]) {
+    writeFileSync(file, JSON.stringify({ ...intent, ...patch }));
+    await assert.rejects(service.create(item.id, "Task", {}), /outbox intent is invalid/u);
+  }
+  writeFileSync(file, "invalid JSON");
+  await assert.rejects(service.create(item.id, "Task", {}), SyntaxError);
+  await assert.rejects(service.owners([], locals), SyntaxError);
+  writeFileSync(file, raw);
+});
+
+test("outbox marker collisions and dishonest or missing lookup rows refuse before any POST", async (t) => {
+  for (const kind of ["collision", "wrong-marker", "missing-row"]) {
+    await t.test(kind, async (sub) => {
+      const f = await fixture(sub, []);
+      const { item } = await f.pm.create({ title: "Lookup owner", type: "Task" });
+      const service = outbox(f);
+      await service.create(item.id, "Task", { "System.Tags": "blue" });
+      if (kind === "collision") {
+        f.items.set(2, { ...structuredClone(f.items.get(1)!), id: 2 });
+        await assert.rejects(service.owners([...f.items.values()], (await f.pm.listAllComplete()).items), /ownership is ambiguous/u);
+      }
+      else {
+        f.response("wiql", { workItems: [{ id: 1 }] });
+        if (kind === "missing-row") f.response("workitemsbatch", { value: [] });
+        else f.items.get(1)!.fields["System.Tags"] = "wrong marker";
+      }
+      await assert.rejects(service.create(item.id, "Task", {}), CommandError);
+      assert.equal(f.requests.filter((request) => request.path.includes("/workitems/$")).length, 1);
+    });
+  }
+});
+
+test("create dispatch ambiguity never permits a second POST and converges when its marker becomes visible", async (t) => {
+  const probe = await matrixFixture(t, "export-create");
+  const trace: SyncBoundary[] = [];
+  assert.equal((await probe.f.observed("export", (event) => { trace.push(event); })).ok, true);
+  const boundary = trace.findIndex((event) => event.boundary === "intent" && event.operation === "dispatched" && event.phase === "after");
+  assert.ok(boundary >= 0);
+  const { f } = await matrixFixture(t, "export-create");
+  await crashAt(f, "export", boundary);
+  const pending = await f.command("export");
+  assert.equal(pending.code, "ADO_CONFLICT");
+  assert.match(pending.error!, /outcome is uncertain/u);
+  assert.equal(f.requests.filter((request) => request.path.includes("/workitems/$")).length, 0);
+  const intent = JSON.parse(readFileSync(intentFiles(f)[0]!, "utf8")) as { scope: string; key: string; fields: Record<string, unknown> };
+  const marker = `pm-ado-idempotency-${resolutionDigest([intent.scope, intent.key])}`;
+  // Simulate delayed provider visibility after an outcome that the process could not observe.
+  f.items.set(1, workItem(1, { ...intent.fields, "System.Tags": marker }));
+  assert.equal((await f.command("export")).ok, true);
+  assert.equal(f.items.size, 1);
+  assert.equal(f.requests.filter((request) => request.path.includes("/workitems/$")).length, 0);
+});
+
+test("conditional outbox PATCH replay proves revision markers, preserves protocol tags and never repeats a comment or link", async (t) => {
+  for (const fault of ["before", "after", "foreign", "untagged"]) {
+    await t.test(fault, async (sub) => {
+      const f = await fixture(sub);
+      const initial = structuredClone(f.items.get(1)!);
+      if (fault === "untagged") delete initial.fields["System.Tags"];
+      else initial.fields["System.Tags"] = `blue; pm-ado-idempotency-${"a".repeat(64)}`;
+      f.items.set(1, structuredClone(initial));
+      const fields = { "System.Title": "Outbox PATCH", "System.Tags": "green" };
+      let interrupted = false;
+      const service = outbox(f, async (event) => {
+        if (fault !== "after" && !interrupted && event.boundary === "intent" && event.operation === "dispatched" && event.phase === "after") {
+          interrupted = true; throw new Error("Interrupted before conditional PATCH");
+        }
+      }, async (method, url, body, headers) => {
+        const response = await transport(method, url, body, headers);
+        if (fault === "after" && !interrupted && method === "PATCH") { interrupted = true; throw new Error("Response lost after PATCH"); }
+        return response;
+      });
+      await assert.rejects(service.patch("fixture-owner", initial, fields, []), /Interrupted|Response lost/u);
+      const config = { orgUrl: f.org, project: "Project", token: "synthetic-token" };
+      if (fault === "foreign") {
+        await new AdoClient(config, transport).updateWorkItem(1, 1, { "System.History": "Another writer" });
+        await assert.rejects(outbox(f).patch("fixture-owner", initial, fields, []), RevisionConflict);
+        return;
+      }
+      const response = await outbox(f).patch("fixture-owner", initial, fields, []);
+      assert.equal(response.rev, 2);
+      if (fault !== "untagged") assert.match(String(response.fields["System.Tags"]), /pm-ado-idempotency-/u);
+      assert.equal((await outbox(f).patch("fixture-owner", initial, fields, [])).rev, 2);
+      assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 1);
+      if (fault === "after") assert.ok(f.requests.some((request) => request.path.includes("/revisions/2") && request.path.includes("$expand=relations")));
+    });
+  }
+});
+
+
+test("pending export owners prevent duplicate local imports and refuse competing ownership", async (t) => {
+  for (const kind of ["import", "linked-elsewhere", "duplicate-owner"]) {
+    await t.test(kind, async (sub) => {
+      const f = await fixture(sub, []);
+      const owner = (await f.pm.create({ title: "Pending owner", type: "Task" })).item;
+      const service = outbox(f);
+      await service.create(owner.id, "Task", { "System.Title": "Exported pending object" });
+      if (kind === "import") {
+        assert.equal((await f.command("import")).ok, true);
+        assert.equal((await f.pm.listAllComplete()).items.length, 1);
+        assert.equal((await row(f.pm)).id, owner.id);
+        assert.equal((await row(f.pm)).ado_id, 1);
+      } else {
+        const other = (await f.pm.create({ title: "Other owner", type: "Task" })).item;
+        if (kind === "linked-elsewhere") {
+          await f.setFields(other.id, { ado_id: 1, ado_rev: 1, ado_project: "Project", ado_org_url: f.org });
+          assert.equal((await f.command("import")).code, "ADO_CONFLICT");
+        } else {
+          await service.create(other.id, "Task", { "System.Title": "Another pending object" });
+          for (const file of intentFiles(f)) {
+            const intent = JSON.parse(readFileSync(file, "utf8")) as { item: string; response: { id: number } };
+            if (intent.item === other.id) { intent.response.id = 1; writeFileSync(file, JSON.stringify(intent)); }
+          }
+          await assert.rejects(service.owners([f.items.get(1)!], (await f.pm.listAllComplete()).items), /ownership is ambiguous/u);
+        }
+      }
+    });
+  }
+});
+
+test("new imports guard every write after creation and keep concurrent annotations across retry", async (t) => {
+  const f = await fixture(t);
+  let edited: string | undefined;
+  const result = await f.observed("import", async (event) => {
+    if (event.boundary === "local" && event.operation === "create" && event.phase === "after") {
+      edited = event.item!;
+      await f.pm.update(edited, { body: "Preserve context after create", comment: ["text=Concurrent annotation"] });
+    }
+  });
+  assert.equal(result.code, "ADO_CONFLICT");
+  assert.ok(edited);
+  assert.equal((await f.command("import")).ok, true);
+  const items = (await f.pm.listAllComplete()).items;
+  assert.equal(items.length, 1);
+  assert.equal(items[0]!.id, edited);
+  const kept = (await f.pm.get(edited, { depth: "full" })).item;
+  assert.equal(kept.body, "Preserve context after create");
+  assert.ok((kept.comments as { text: string }[]).some((comment) => comment.text === "Concurrent annotation"));
+});
+
+test("sync reconnects its own pending export before import pairing and preserves edited mapped fields", async (t) => {
+  const f = await fixture(t);
+  const { item } = await f.pm.create({ title: "Original mixed export", type: "Task" });
+  let edited = false;
+  f.afterCreate(async () => {
+    if (!edited) { edited = true; await f.pm.update(item.id, { title: "New mixed context", body: "Keep mixed context" }); }
+  });
+  assert.equal((await f.command("sync")).code, "ADO_CONFLICT");
+  const retried = await f.command("sync");
+  assert.equal(retried.ok, true, JSON.stringify(retried));
+  const items = (await f.pm.listAllComplete()).items;
+  assert.equal(items.length, 2);
+  assert.equal(new Set(items.map((entry) => entry.ado_id)).size, 2);
+  const kept = (await f.pm.get(item.id, { depth: "full" })).item;
+  assert.equal(kept.title, "New mixed context");
+  assert.equal(kept.body, "Keep mixed context");
+  assert.equal(f.items.get(Number(kept.ado_id))!.fields["System.Title"], "New mixed context");
+  assert.equal(f.requests.filter((request) => request.path.includes("/workitems/$")).length, 1);
+});
+
+
+test("unobserved creation recovers its accepted first revision after later remote changes", async (t) => {
+  const f = await fixture(t, []);
+  const metadata = (await f.pm.create({ title: "Unobserved accepted plan", type: "Task" })).item;
+  const values = localValues(metadata);
+  const fields = { "System.Title": metadata.title, "System.State": "New", "System.Description": "",
+    "System.Tags": "", "System.AssignedTo": "", "Microsoft.VSTS.Common.Priority": 2 };
+  let interrupted = false;
+  await assert.rejects(outbox(f, (event) => {
+    if (!interrupted && event.boundary === "remote" && event.operation === "create" && event.phase === "after") {
+      interrupted = true; throw new Error("Lost creation response");
+    }
+  }).create(metadata.id, "Task", fields, values), /Lost creation response/u);
+  const config = { orgUrl: f.org, project: "Project", token: "synthetic-token" };
+  await new AdoClient(config, transport).updateWorkItem(1, 1, { "System.History": "A later provider comment" });
+  const recovered = await f.command("sync");
+  assert.equal(recovered.ok, true, JSON.stringify(recovered));
+  assert.equal((await row(f.pm)).ado_id, 1);
+  assert.equal((await f.pm.listAllComplete()).items.length, 1);
+  assert.equal(f.requests.filter((request) => request.path.includes("/workitems/$")).length, 1);
+  assert.ok(f.requests.some((request) => request.path.includes("/revisions/1") && request.path.includes("$expand=relations")));
+});
+
+
+test("pending create recovery refuses competing mapped edits and handles intents without a local projection", async (t) => {
+  const f = await fixture(t, []);
+  const { item } = await f.pm.create({ title: "Original before create", type: "Task" });
+  let edited = false;
+  f.afterCreate(async () => { if (!edited) { edited = true; await f.pm.update(item.id, { title: "Local competing title" }); } });
+  assert.equal((await f.command("export")).code, "ADO_CONFLICT");
+  f.items.get(1)!.fields["System.Title"] = "Remote competing title"; f.items.get(1)!.rev++;
+  assert.equal((await f.command("export")).code, "ADO_CONFLICT");
+  assert.equal((await row(f.pm)).title, "Local competing title");
+  assert.equal(f.items.get(1)!.fields["System.Title"], "Remote competing title");
+  assert.equal(f.items.size, 1);
+  const legacy = await fixture(t, []);
+  const owner = (await legacy.pm.create({ title: "Owner without projection", type: "Task" })).item;
+  await legacy.setFields(owner.id, { ado_area_path: "Project\\Area", ado_iteration_path: "Project\\Sprint" });
+  await outbox(legacy).create(owner.id, "Task", { "System.Title": owner.title });
+  assert.equal((await legacy.command("export")).ok, true);
+  assert.equal(legacy.items.size, 1);
+});
+
+
+test("pending PATCH bases ignore unrelated or unapplied records and prove only their own historical effect", async (t) => {
+  const f = await fixture(t);
+  await f.command("import");
+  const local = await row(f.pm);
+  const remote = structuredClone(f.items.get(1)!);
+  const projection = localValues(local);
+  assert.equal((await outbox(f).bases([remote], [local])).size, 0);
+  for (const phase of ["prepared", "dispatched"]) {
+    const service = outbox(f, (event) => {
+      if (event.boundary === "intent" && event.phase === "after" && event.operation === phase) throw new Error("Interrupted journal");
+    });
+    const fields = { "System.Title": `Planned ${phase}` };
+    await assert.rejects(service.patch(local.id, remote, fields, [], projection), /Interrupted journal/u);
+    assert.equal((await outbox(f).bases([remote], [local])).size, 0);
+  }
+  // An effect made without a local projection cannot silently invent a merge base.
+  await outbox(f).patch(local.id, remote, { "System.Title": "Unprojected effect" }, []);
+  assert.equal((await outbox(f).bases([f.items.get(1)!], [local])).size, 0);
+  const current = structuredClone(f.items.get(1)!);
+  await f.setFields(local.id, { ado_rev: current.rev });
+  const inspected = await row(f.pm);
+  await outbox(f).patch(local.id, current, { "System.Title": "Known effect" }, [], localValues(inspected));
+  const latest = f.items.get(1)!;
+  assert.equal((await outbox(f).bases([latest], [])).size, 0);
+  assert.equal((await outbox(f).bases([latest], [{ ...inspected, ado_rev: "invalid" }])).size, 0);
+  assert.equal((await outbox(f).bases([], [inspected])).size, 0);
+  await f.setFields(local.id, { ado_id: 2 });
+  assert.equal((await outbox(f).bases([latest], [await row(f.pm)])).size, 0);
+  await f.setFields(local.id, { ado_id: 1, ado_rev: latest.rev });
+  assert.equal((await outbox(f).bases([latest], [await row(f.pm)])).size, 0);
+  const directory = join(f.pmRoot, "transactions/pm-ado-sync");
+  writeFileSync(join(directory, "note.txt"), "not an intent");
+  writeFileSync(join(directory, "foreign.json"), JSON.stringify({ operation: "patch", scope: "another scope" }));
+  writeFileSync(join(directory, "other.json"), JSON.stringify({ operation: "another operation" }));
+  const recovered = await outbox(f).bases([latest], [inspected]);
+  assert.equal(recovered.get(local.id)!.accepted.fields["System.Title"], "Known effect");
+});
+
+test("two real export processes share one creation intent and never issue another create POST", async (t) => {
+  const f = await fixture(t, []);
+  const { item } = await f.pm.create({ title: "Concurrent exporters", type: "Task" });
+  f.afterCreate(() => new Promise<void>((done) => setTimeout(done, 300)));
+  const results = await Promise.all([f.host(["ado", "export", "--json"]), f.host(["ado", "export", "--json"])]);
+  for (const result of results) assert.ok(result.code === 0 || result.code === 4, result.stdout + result.stderr);
+  assert.equal(f.items.size, 1);
+  assert.equal(f.requests.filter((request) => request.path.includes("/workitems/$")).length, 1);
+  assert.equal((await f.command("export")).ok, true);
+  assert.equal((await f.pm.get(item.id)).item.ado_id, 1);
+});
+
+
+test("successive mapped edits after PATCH recover the entire proven effect chain before retry", async (t) => {
+  const f = await fixture(t);
+  await f.command("import");
+  const local = await row(f.pm);
+  await f.pm.update(local.id, { title: "First planned title" });
+  let edits = 0;
+  f.afterPatch(async () => {
+    if (edits < 2) { edits++; await f.pm.update(local.id, { title: `New context ${edits}`, body: `Keep context ${edits}` }); }
+  });
+  assert.equal((await f.command("sync")).code, "ADO_CONFLICT");
+  // Azure may omit empty relation collections in historical snapshots too.
+  f.response("2", { ...structuredClone(f.items.get(1)!), relations: undefined });
+  assert.equal((await f.command("sync")).code, "ADO_CONFLICT");
+  const converged = await f.command("sync");
+  assert.equal(converged.ok, true, JSON.stringify(converged));
+  const kept = (await f.pm.get(local.id, { depth: "full" })).item;
+  assert.equal(kept.title, "New context 2");
+  assert.equal(kept.body, "Keep context 2");
+  assert.equal(f.items.get(1)!.fields["System.Title"], "New context 2");
+  assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 3);
+  assert.equal((await f.command("sync")).ok, true);
+  assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 3);
 });

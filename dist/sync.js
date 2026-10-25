@@ -1,6 +1,6 @@
 /** Command orchestration and per-field Azure DevOps reconciliation. */
-import { randomUUID } from "node:crypto";
 import { loadResolutionSdk } from "./resolution.js";
+import { SyncOutbox, isProtocolTag } from "./sync-outbox.js";
 import { AdoClient, CommandError, EXIT_CODE, RevisionConflict, RELATION_MAP, STATE_MAP, exportRelations, importRelations, missingEnv, preflightMessage, readConfig, relationTargetId, } from "./index.js";
 /** Default Azure state names mapped to local lifecycle states. */
 export const IMPORT_STATE_MAP = {
@@ -79,7 +79,7 @@ export function remoteValues(item, mapping) {
         throw new CommandError("Azure priority must be an integer from 0 to 4");
     return {
         title: String(fields["System.Title"] ?? ""), description: String(fields["System.Description"] ?? ""),
-        status: mapping[state], priority, tags: tags(String(fields["System.Tags"] ?? "").split(";").map((tag) => tag.toLowerCase())), assignee,
+        status: mapping[state], priority, tags: tags(String(fields["System.Tags"] ?? "").split(";").map((tag) => tag.toLowerCase()).filter((tag) => !isProtocolTag(tag))), assignee,
         ado_area_path: String(fields["System.AreaPath"] ?? ""), ado_iteration_path: String(fields["System.IterationPath"] ?? ""),
     };
 }
@@ -175,7 +175,7 @@ export async function transport(method, url, body, headers) {
     return { status: response.status, body: await response.text() };
 }
 /** Build and apply one command plan using only the host-bound SDK client. */
-export async function runSyncCommand(ctx, mode) {
+export async function runSyncCommand(ctx, mode, observer) {
     const plans = [];
     const conflicts = [];
     const diagnostics = [];
@@ -196,7 +196,21 @@ export async function runSyncCommand(ctx, mode) {
             throw new CommandError("WIQL, area and iteration filters apply to import/sync only");
         }
         const wiql = buildWiql(ctx.options, config.project);
-        const client = new AdoClient(config, transport);
+        const client = new AdoClient(config, async (method, url, body, headers) => {
+            const operation = `${method} ${new URL(url).pathname}`;
+            // Create dispatch has its own observer, after the intent is durable.
+            const create = method === "POST" && url.includes("/workitems/$");
+            if (!create)
+                await observer?.({ boundary: "remote", phase: "before", operation });
+            const result = await transport(method, url, body, headers);
+            if (!create)
+                await observer?.({ boundary: "remote", phase: "after", operation });
+            return result;
+        });
+        const sdk = loadResolutionSdk();
+        const settings = await sdk.readSettings(ctx.pm_root);
+        const author = sdk.selectImportAuthor(ctx.global.author, settings.author_default);
+        const outbox = new SyncOutbox(ctx.pm_root, author, config, client, observer);
         const snapshot = await pm.listAllComplete();
         const { items } = snapshot;
         const snapshotReader = { listAllComplete: async () => snapshot };
@@ -226,10 +240,28 @@ export async function runSyncCommand(ctx, mode) {
                 throw new CommandError("Invalid work item response", EXIT_CODE.remote);
         }
         const remotes = new Map(report.items.map((item) => [item.id, { ...item, relations: item.relations ?? [] }]));
+        const recovered = await outbox.owners([...remotes.values()], items);
+        const recoveredBases = new Map();
+        const originalValues = new Map();
+        for (const [remote, owner] of recovered) {
+            if (identities.has(remote) && identities.get(remote) !== owner.item)
+                throw new CommandError("Azure recovery identity is already linked to another pm item", EXIT_CODE.conflict);
+            identities.set(remote, owner.item);
+            if (owner.creation.base !== null) {
+                originalValues.set(owner.item, owner.creation.base);
+                recoveredBases.set(owner.item, { ...remoteValues(owner.creation.accepted, states), relations: [] });
+            }
+        }
+        for (const [item, recovery] of await outbox.bases([...remotes.values()], items)) {
+            originalValues.set(item, recovery.original);
+            recoveredBases.set(item, { ...remoteValues(recovery.accepted, states),
+                relations: relationValues(recovery.accepted.relations ?? [], config, identities) });
+        }
         const pairs = mode === "export" ? selected.map((local) => ({ local, remote: remotes.get(Number(local.ado_id)) }))
             : [...remotes.values()].map((remote) => ({ remote, local: items.find((item) => item.id === identities.get(remote.id)) }));
+        const paired = new Set(pairs.map((pair) => pair.local?.id));
         if (mode === "sync")
-            for (const local of items.filter((item) => item.ado_id === undefined).slice(0, limit - pairs.length))
+            for (const local of items.filter((item) => item.ado_id === undefined && !paired.has(item.id)).slice(0, limit - pairs.length))
                 pairs.push({ local, remote: undefined });
         const entries = [];
         for (const { local, remote } of pairs) {
@@ -237,6 +269,13 @@ export async function runSyncCommand(ctx, mode) {
             plans.push(plan);
             const remoteFields = remote === undefined ? undefined : remoteValues(remote, states);
             const localFields = local === undefined ? undefined : localValues(local);
+            if (local !== undefined && originalValues.has(local.id)) {
+                const original = originalValues.get(local.id);
+                const accepted = recoveredBases.get(local.id);
+                for (const key of Object.keys(localFields))
+                    if (equal(localFields[key], original[key]))
+                        localFields[key] = accepted[key];
+            }
             const values = { ...(remoteFields ?? localFields) };
             const entry = { plan, local, remote, values, pullRelations: false, operations: [] };
             entries.push(entry);
@@ -256,7 +295,8 @@ export async function runSyncCommand(ctx, mode) {
             diagnostics.push(...relationPlan.unmapped, ...relationPlan.unmappedLocal);
             const r = { ...remoteFields, relations: relationValues(remote.relations, config, identities) };
             const l = { ...localFields, relations: relationValues(applyRelations(remote, relationPlan.operations), config, identities) };
-            const base = mode === "import" ? undefined : readBase(local, r);
+            const storedBase = mode === "import" ? undefined : readBase(local, r);
+            const base = mode === "import" ? undefined : recoveredBases.get(local.id) ?? storedBase;
             // Preserve a locally distinct status whose configured Azure representation
             // is unchanged (the default blocked and in_progress both export Active).
             if (mode !== "import" && base !== undefined && exportStates[String(base.status)] === remote.fields["System.State"])
@@ -299,7 +339,7 @@ export async function runSyncCommand(ctx, mode) {
             entry.pullRelations = mode === "import" || plan.import_fields.includes("relations");
             entry.operations = plan.export_fields.includes("relations") ? relationPlan.operations : [];
             plan.action = plan.import_fields.length || plan.export_fields.length ? "reconcile" : "none";
-            if (plan.export_fields.length && (!Number.isSafeInteger(local.ado_rev) || Number(local.ado_rev) < 1)) {
+            if (plan.export_fields.length && !recoveredBases.has(local.id) && (!Number.isSafeInteger(local.ado_rev) || Number(local.ado_rev) < 1)) {
                 throw new CommandError(`Missing valid ado_rev for ${local.id}; import first`);
             }
             if (dryRun && mode === "export" && plan.export_fields.length && local.ado_rev !== remote.rev) {
@@ -311,24 +351,15 @@ export async function runSyncCommand(ctx, mode) {
         if (conflicts.length)
             return { ok: false, code: "ADO_CONFLICT", exit_code: EXIT_CODE.conflict, dry_run: dryRun, plans, conflicts, diagnostics };
         if (!dryRun) {
-            const sdk = loadResolutionSdk();
-            const author = sdk.selectImportAuthor(ctx.global.author, (await sdk.readSettings(ctx.pm_root)).author_default);
             const versions = new Map(items.map((item) => [item.id, item.updated_at]));
-            /** Fence every local write against the inspected revision, including our own earlier writes. */
-            const update = async (id, options) => {
-                const transactionId = `ado-sync-${randomUUID()}`;
-                // Closing via update performs two internal writes. Guard the scalar write
-                // once, then let the SDK close step own its lifecycle mutation.
-                const closing = options.status === "closed";
-                const mutations = [{ op: "update", id,
-                        options: closing ? { ...options, status: undefined } : options,
-                        match: { key: "updated_at", value: versions.get(id) } }];
-                if (closing)
-                    mutations.push({ op: "close", id, reason: options.closeReason });
+            /** Commit one native SDK mutation against the revision returned by our preceding commit. */
+            const persist = async (id, options) => {
+                const expected = versions.get(id);
+                const transactionId = `ado-sync-${sdk.deriveMutationTransactionId(JSON.stringify([id, "update", expected, options]))}`;
+                await observer?.({ boundary: "local", phase: "before", operation: "update", item: id });
                 try {
-                    await sdk.commitItemMutations({ pmRoot: ctx.pm_root, transactionId,
-                        author,
-                        mutations });
+                    await sdk.commitItemMutations({ pmRoot: ctx.pm_root, transactionId, author,
+                        mutations: [{ op: "update", id, options, match: { key: "updated_at", value: expected } }] });
                 }
                 catch (error) {
                     if (error instanceof sdk.PmCliError && error.exitCode === EXIT_CODE.conflict) {
@@ -336,9 +367,19 @@ export async function runSyncCommand(ctx, mode) {
                     }
                     throw error;
                 }
-                // Read our own durable event, never adopt a later writer's current revision.
+                await observer?.({ boundary: "local", phase: "after", operation: "update", item: id });
                 const history = await sdk.readHistorySnapshot(sdk.getHistoryPath(ctx.pm_root, id), id);
-                versions.set(id, history.entries.filter((entry) => entry.message?.startsWith(`bulk-item-transaction ${transactionId} `)).at(-1).ts);
+                const own = history.entries.filter((entry) => entry.message?.startsWith(`bulk-item-transaction ${transactionId} `)).at(-1);
+                // A native no-op emits no history; retain the inspected revision in that case.
+                versions.set(id, own?.ts ?? expected);
+            };
+            /** A status-only SDK update routes directly to one guarded close, without an unguarded second step. */
+            const update = async (id, options) => {
+                if (options.status !== sdk.resolveRuntimeStatusRegistry(settings.schema).close_status)
+                    return persist(id, options);
+                const { status, closeReason, completedAt, ...scalars } = options;
+                await persist(id, scalars);
+                await persist(id, { status, closeReason: closeReason, completedAt, force: options.force });
             };
             for (const entry of entries) {
                 const { plan, local, values } = entry;
@@ -350,18 +391,36 @@ export async function runSyncCommand(ctx, mode) {
                             if (fields[name] === "")
                                 delete fields[name];
                         // Creation has no prior revision; the server allocates identity and rev 1.
-                        remote = await client.createWorkItem(option(ctx.options, "type") ?? process.env.ADO_WORK_ITEM_TYPE ?? "Task", fields);
+                        const created = await outbox.create(local.id, option(ctx.options, "type") ?? process.env.ADO_WORK_ITEM_TYPE ?? "Task", fields, localValues(local));
+                        remote = created.remote;
                         // Creation is not idempotent: retain its identity before any later work can fail.
                         plan.ado_id = remote.id;
                         const field = [`ado_id=${remote.id}`, `ado_rev=${remote.rev}`, `ado_project=${config.project}`,
                             `ado_org_url=${config.orgUrl}`, `ado_url=${config.orgUrl}/_apis/wit/workItems/${remote.id}`];
                         await update(local.id, { field, message: `Linked to Azure DevOps work item ${remote.id}` });
                         plan.linked_fields = field.map((value) => value.slice(0, value.indexOf("=")));
-                        Object.assign(values, remoteValues(remote, states));
+                        if (created.recovered) {
+                            // A retry links the existing object before reconciling the newly inspected local edit.
+                            const accepted = remoteValues(created.accepted, states);
+                            const current = remoteValues(remote, states);
+                            for (const key of Object.keys(values)) {
+                                if (created.base !== null && equal(values[key], created.base[key]))
+                                    values[key] = accepted[key];
+                                if (threeWayFieldConflict(values[key], current[key], accepted[key]))
+                                    throw new CommandError("Azure creation recovery needs an explicit field decision", EXIT_CODE.conflict);
+                                if (equal(values[key], accepted[key]))
+                                    values[key] = current[key];
+                            }
+                            const changed = Object.keys(values).filter((key) => !equal(values[key], current[key]));
+                            if (changed.length)
+                                remote = await outbox.patch(local.id, remote, azureFields(values, changed, exportStates), [], localValues(local));
+                        }
+                        else
+                            Object.assign(values, remoteValues(remote, states));
                         identities.set(remote.id, local.id);
                     }
                     else if (plan.export_fields.length) {
-                        remote = await client.updateWorkItem(remote.id, mode === "sync" ? remote.rev : Number(local.ado_rev), azureFields(values, plan.export_fields, exportStates), entry.operations);
+                        remote = await outbox.patch(local.id, { ...remote, rev: mode === "sync" ? remote.rev : Number(local.ado_rev) }, azureFields(values, plan.export_fields, exportStates), entry.operations, localValues(local));
                     }
                 }
                 catch (error) {
@@ -374,8 +433,10 @@ export async function runSyncCommand(ctx, mode) {
                 // Persist the base only after relation import succeeds below.
                 if (local === undefined) {
                     const initial = pmFields(values, remote, config);
+                    await observer?.({ boundary: "local", phase: "before", operation: "create" });
                     const { item } = await pm.create({ ...initial, type: "Task", unset: undefined,
                         field: initial.field.filter((field) => !field.startsWith("ado_sync_base=")) });
+                    await observer?.({ boundary: "local", phase: "after", operation: "create", item: item.id });
                     entry.local = item;
                     versions.set(item.id, item.updated_at);
                     plan.pm_id = item.id;
@@ -392,7 +453,7 @@ export async function runSyncCommand(ctx, mode) {
                 entry.values.relations = relationValues(applyRelations(entry.remote, relationPlan.operations), config, identities);
                 if (relationPlan.operations.length) {
                     try {
-                        entry.remote = await client.updateWorkItem(entry.remote.id, entry.remote.rev, {}, relationPlan.operations);
+                        entry.remote = await outbox.patch(entry.local.id, entry.remote, {}, relationPlan.operations, localValues(entry.local));
                     }
                     catch (error) {
                         if (!(error instanceof RevisionConflict))
@@ -412,7 +473,7 @@ export async function runSyncCommand(ctx, mode) {
                 const fields = pmFields(values, remote, config);
                 if (values.status === local.status)
                     delete fields.status;
-                if (fields.status === "closed")
+                if (fields.status === sdk.resolveRuntimeStatusRegistry(settings.schema).close_status)
                     fields.closeReason = "Azure DevOps state synchronized";
                 if (!equal(localValues(local), Object.fromEntries(Object.entries(values).filter(([key]) => key !== "relations"))) ||
                     local.ado_rev !== remote.rev || local.ado_sync_base !== JSON.stringify(values))

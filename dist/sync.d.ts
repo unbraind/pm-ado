@@ -1,3 +1,4 @@
+import { type SyncObserver } from "./sync-outbox.ts";
 import type { CommandHandlerContext, FlagDefinition } from "@unbrained/pm-cli/sdk/authoring";
 import type { ItemMetadata, PmUpdateActionOptions } from "@unbrained/pm-cli/sdk";
 import { type AdoConfig, type AdoWorkItem } from "./index.ts";
@@ -65,7 +66,7 @@ export declare function transport(method: string, url: string, body: string | un
     body: string;
 }>;
 /** Build and apply one command plan using only the host-bound SDK client. */
-export declare function runSyncCommand(ctx: CommandHandlerContext, mode: "import" | "export" | "sync"): Promise<{
+export declare function runSyncCommand(ctx: CommandHandlerContext, mode: "import" | "export" | "sync", observer?: SyncObserver): Promise<{
     ok: boolean;
     code: string;
     exit_code: 4;

@@ -130,7 +130,7 @@ items and the two stores are not a distributed transaction: earlier successful
 remote operations can remain if a later write or SDK mutation fails. The receipt
 includes the item plan; inspect both stores before retrying a partial failure.
 
-Every local sync update now uses the SDK's `commitItemMutations` with an
+Every local sync update uses the SDK's `commitItemMutations` with an
 `updated_at` match checked under the item lock. A local edit after planning
 refuses persistence with `ADO_CONFLICT` (exit 4), keeping the newer item and
 history intact. Re-read both trackers before retrying; an earlier Azure write
@@ -138,8 +138,12 @@ may already have succeeded. SDK persistence conflicts, including ownership or
 lock refusals, also use this conflict receipt instead of a generic remote error.
 Sync's own link and relation writes advance its
 expected revision from their immutable transaction history. SDK transaction
-markers are now recorded in update history messages; ordinary command receipts
-and mapped values are unchanged.
+markers are recorded in update history messages. Terminal changes use a
+separately matched status-only SDK update after the scalar update, preserving
+concurrent edits between those steps. Azure creation and PATCH use durable
+intents and scoped operation markers; retries resolve pending export ownership
+before import pairing. See [conditional commits and recovery](sync-recovery.md)
+for the dispatch-ambiguity boundary and fault matrix.
 
 ## Preview and conflict receipts
 

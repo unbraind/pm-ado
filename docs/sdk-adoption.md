@@ -62,8 +62,9 @@ Intentional differences:
 [pm-ado-sdk-match-close-1025](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-sdk-match-close-1025.toon)
 records a pinned SDK limitation for the orchestrator to report upstream: an
 update's timestamp match also runs during its internal terminal close, after
-its preliminary write has changed the timestamp. The package uses a guarded
-scalar update followed by an explicit SDK close step in one transaction.
+its preliminary write has changed the timestamp. The package now uses two separately matched SDK update commits: a scalar
+update followed by a status-only update, carrying forward the prior revision.
+The original unguarded close workaround was rejected in review and replaced.
 A match consumed once per top-level update, or a match on a close mutation,
 would remove this workaround. Both audit findings are replaced; none deferred.
 
@@ -96,3 +97,10 @@ PR: [46](https://github.com/unbraind/pm-ado/pull/46). The initial published
 head passed all four CI jobs (Node 22, Node 26, npm release gate, Bun release
 gate); final-head results are linked from the PR checks. The adoption claim is
 released for orchestrator verification; neither pm item is closed.
+
+## Blocking review follow-up
+
+The initial CI evidence above belongs to the initial adoption commits. The
+review repairs, durable outbox, process-crash matrix and remaining provider
+constraint are documented in [sync recovery](sync-recovery.md). New gate and
+revert evidence is appended to the adoption item; earlier evidence is retained.

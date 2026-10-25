@@ -130,6 +130,10 @@ preserved. No apply option is exposed. Limits are 50 items, 200 direct links and
 56 requests; JSON and TOON output omit item bodies and remote error messages.
 See the [SDK/CLI example and limits](docs/move-simulator.md).
 
+Durable creation recovery and conditional local publication are described in
+[Sync recovery](docs/sync-recovery.md), including the fail-closed ambiguous
+create-dispatch boundary.
+
 ## Without git
 
 `ado validate`, `ado contract`, `ado import`, `ado export`, `ado sync`,

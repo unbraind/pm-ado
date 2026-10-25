@@ -1,0 +1,32 @@
+id: pm-ado-sparse-refresh
+title: Compile sparse Azure refresh plans with explicit field accounting
+description: "Overlap rechecked: sync.ts owns transport batching and three-way field reconciliation; core list output budgets shape local output; pm-jira search projections and pm-linear GraphQL selection own different provider protocols. This adds a read-only, reviewable, costed refresh compiler using saved Azure revisions/bases and declared pm field needs."
+type: Feature
+pm_format_version: 2
+status: in_progress
+priority: 2
+tags: []
+created_at: "2026-10-25T21:50:36.590Z"
+updated_at: "2026-10-25T22:08:35.100Z"
+author: codex-agent
+acceptance_criteria: "A 1000-item fixture uses at most five batch reads per refresh phase; unchanged items cause zero pm mutations; every requested field is accounted for; unavailable rows never become deletions. Typed SDK and CLI, compact output, typed remedies, no-git real tracker validation, seeded property and boundary tests, unchanged release gates."
+comments[6]{created_at,author,text}:
+  "2026-10-25T21:54:35.625Z",codex-agent,"Implemented read-only compileRefreshPlan and observeRefreshPlan plus ado refresh-plan. Uses certified listAllComplete reads, existing Azure batchIds and AdoClient transport, and the existing field map/base reader. Fresh revision probes distinguish exact matches from unavailable rows. Artifacts contain read requests only, no journal, idempotency keys, apply path, status-name inference or shared mutable state. Foreign/unlinked records are skipped with counted reasons. Testing strict schema boundaries, 1000-item costs, SDK readback and real non-git trackers next."
+  "2026-10-25T22:00:02.728Z",codex-agent,"Model-based acceptance passed: 500 seeded import/export/sync sequences with SDK-read reference state, CRLF/whitespace variants, all mapped native fields, custom active/blocked/done/canceled/draft statuses, hierarchy and related edges, exact replays and older-input refusals. Found and fixed older-revision rollback in existing sync. Terminal transitions now use SDK registry roles. Additional 500 seeded refresh sequences cover accounting/omissions/extreme revisions. Six competing transitions at every async observation boundary preserve peer writes. Read-only public main tracker copy: 32 items, 69 authoritative files hash-identical; unchanged projection 1 probe/0 hydration, all-changed 1/1 and 288 cells; mixed 17 unchanged, 8 changed, 7 unavailable, 72 cells; complete JSON 1095/1419/1351 bytes. Synthetic Azure evidence only; no live Azure credential validation."
+  "2026-10-25T22:03:03.947Z",codex-agent,"Behavioral revert proof: forcing eager hydration in compileRefreshPlan makes the 1000-item regression fail (5 hydration reads versus required 0 for unchanged rows). Replacing only runSyncCommand with its main implementation makes the older-revision regression fail because import succeeds instead of refusing. Restored implementations pass both targeted regressions (2/2). New refresh.ts targeted V8 coverage is 100% lines/branches/functions; full unchanged-threshold npm and Bun release gates will run in CI."
+  "2026-10-25T22:07:22.399Z",codex-agent,"Open-PR overlap reviewed: PR 46 owns SDK-guarded sync mutations and remote-effect recovery/outboxes, not sparse refresh compilation. This branch remains based on main as requested and adds no journal or mutation executor. Its two small sync repairs cover older-revision refusal and terminal registry roles discovered by the required model tests; integration with PR 46 may need source conflict resolution after either branch lands. Local normal-home health sees an unrelated global pm-github host-version skew; isolated-home strict health passes. No global extension or telemetry configuration was changed."
+  "2026-10-25T22:07:24.100Z",codex-agent,"The linked targeted suite exceeded pm test default 120 seconds; rerunning with an explicit 600-second allowance. The first run also caught invalid fractional saved revisions being misclassified as stale conflicts; the new rollback guard now applies only to valid integer revisions, preserving the existing usage-refusal contract. Test-result tracking is disabled by existing project policy, so command results are recorded here and in PR evidence rather than enabling tracking."
+  "2026-10-25T22:08:33.248Z",codex-agent,"Linked targeted verification passed: node --test test/refresh.test.ts test/sync.test.ts via pm test --run --progress --timeout 600: 59/59, zero failures/cancellations/skips, 142 seconds. Typecheck, test typecheck, docstring lint (97 documented declarations), whitespace check and isolated-home strict health pass. Added full SDK readback of both model targets and mode-count diagnostics for final CI. Final npm/Bun release gates are delegated to the existing CI matrix at unchanged thresholds to avoid another local full-gate run on the saturated host. Remaining validation boundary: synthetic Azure REST contract, no live credentials."
+files[6]{path,scope}:
+  index.ts,project
+  refresh.ts,project
+  sync.ts,project
+  test/real-data-refresh.ts,project
+  test/refresh.test.ts,project
+  test/sync.test.ts,project
+tests[1]{command,scope,timeout_seconds,provenance{author,created_at,source_kind,source_ref},updated_by,updated_at}:
+  node --test test/refresh.test.ts test/sync.test.ts,project,600,codex-agent,"2026-10-25T22:02:33.966Z",local_mutation,feat/sparse-refresh-plans,codex-agent,"2026-10-25T22:04:52.879Z"
+docs[2]{path,scope}:
+  docs/sparse-refresh-validation.md,project
+  docs/sparse-refresh.md,project
+body: ""

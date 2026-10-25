@@ -1,4 +1,6 @@
 import type { ExtensionApi, PreflightOverrideContext } from "@unbrained/pm-cli/sdk/authoring";
+export { compileRefreshPlan, validateRefreshInput, refreshSaved, observeRefreshPlan, RefreshRefusal } from "./refresh.ts";
+export type { RefreshInput, RefreshSaved, RefreshRevision, RefreshField, RefreshBatch, RefreshPlan, RefreshRefusalCode } from "./refresh.ts";
 export { simulateMove, MoveRefusal, MOVE_LIMITS } from "./moves.ts";
 export type { MoveOptions, MoveScope, MoveRow, MoveRelation, MovePreview, MoveRefusalCode } from "./moves.ts";
 export { AdoResolutionService, ResolutionRefusal, resolutionDigest, resolutionScopeReference, resolutionFields, validateResolutionPlan } from "./resolution.ts";
@@ -353,9 +355,13 @@ export declare class AdoClient {
      * whole sync or silently dropping items.
      *
      * @param ids - The work item ids to fetch.
+     * @param projection - Optional sparse field references and explicit relation expansion; omitted preserves full reads.
      * @returns The found items and the ids the service omitted.
      */
-    getWorkItemsReport(ids: readonly number[]): Promise<BatchReadResult>;
+    getWorkItemsReport(ids: readonly number[], projection?: {
+        fields: readonly string[];
+        relations?: boolean;
+    }): Promise<BatchReadResult>;
     /**
      * Run a WIQL query and return the work item ids it selects.
      *

@@ -312,6 +312,7 @@ export async function runSyncCommand(ctx, mode) {
             return { ok: false, code: "ADO_CONFLICT", exit_code: EXIT_CODE.conflict, dry_run: dryRun, plans, conflicts, diagnostics };
         if (!dryRun) {
             const sdk = loadResolutionSdk();
+            const author = sdk.selectImportAuthor(ctx.global.author, (await sdk.readSettings(ctx.pm_root)).author_default);
             const versions = new Map(items.map((item) => [item.id, item.updated_at]));
             /** Fence every local write against the inspected revision, including our own earlier writes. */
             const update = async (id, options) => {
@@ -326,7 +327,7 @@ export async function runSyncCommand(ctx, mode) {
                     mutations.push({ op: "close", id, reason: options.closeReason });
                 try {
                     await sdk.commitItemMutations({ pmRoot: ctx.pm_root, transactionId,
-                        author: ctx.global.author ?? process.env.PM_AUTHOR ?? "unknown",
+                        author,
                         mutations });
                 }
                 catch (error) {

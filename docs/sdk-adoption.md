@@ -48,7 +48,9 @@ in.
 Intentional differences:
 
 - Concurrent local changes now refuse persistence with `ADO_CONFLICT` (exit 4)
-  instead of overwriting the newer item. Earlier remote writes can remain.
+  instead of overwriting the newer item. SDK persistence conflicts such as
+  ownership/lock refusals also use that receipt instead of a generic remote
+  error. Earlier remote writes can remain.
 - SDK update history messages use mandatory `bulk-item-transaction` markers in
   place of adapter prose; the differential asserts each expected message form.
   SDK journals remain ignored runtime state.
@@ -78,8 +80,19 @@ Git identity (`HOME` set to a fresh disposable directory,
 `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`). Each runs 230 tests
 in both V8 and independent statement-instrumented passes, with zero
 failures/skips. All eight required source files have 100% statements, lines,
-branches and functions; statements are 1380/1380. The gates also pass
+branches and functions; statements are 1381/1381. The gates also pass
 typecheck/build, 90/90 documented declarations, zero production audit
 vulnerabilities, pack, changelog, publish-attestation and date checks.
 Pinned-pm linked tests pass 2/2. Isolated-identity strict tracker health and
 `git diff --check` pass. The repository has no standalone lint script.
+
+Sync author attribution also uses `selectImportAuthor` with the configured
+`readSettings.author_default`, preserving the canonical explicit/environment/
+configured author precedence. The configured-default regression and final
+lookup/race/terminal/error checks pass 5/5; the public differential was repeated
+after this adjustment and still passes all 14 comparisons.
+
+PR: [46](https://github.com/unbraind/pm-ado/pull/46). The initial published
+head passed all four CI jobs (Node 22, Node 26, npm release gate, Bun release
+gate); final-head results are linked from the PR checks. The adoption claim is
+released for orchestrator verification; neither pm item is closed.

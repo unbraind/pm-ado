@@ -1264,6 +1264,7 @@ test("SDK sync failures preserve valid items for invalid state mappings and unus
   assert.equal(readFileSync(historyPath, "utf8"), before);
   rmSync(journal);
   delete f.env.PM_AUTHOR;
+  await f.pm.config("project", "set", "author-default", "configured-agent");
   assert.equal((await f.command("import")).ok, true);
-  assert.equal(JSON.parse(readFileSync(historyPath, "utf8").trim().split("\n").at(-1)!).author, "unknown");
+  assert.equal(JSON.parse(readFileSync(historyPath, "utf8").trim().split("\n").at(-1)!).author, "configured-agent");
 });

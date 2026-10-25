@@ -134,7 +134,9 @@ Every local sync update now uses the SDK's `commitItemMutations` with an
 `updated_at` match checked under the item lock. A local edit after planning
 refuses persistence with `ADO_CONFLICT` (exit 4), keeping the newer item and
 history intact. Re-read both trackers before retrying; an earlier Azure write
-may already have succeeded. Sync's own link and relation writes advance its
+may already have succeeded. SDK persistence conflicts, including ownership or
+lock refusals, also use this conflict receipt instead of a generic remote error.
+Sync's own link and relation writes advance its
 expected revision from their immutable transaction history. SDK transaction
 markers are now recorded in update history messages; ordinary command receipts
 and mapped values are unchanged.

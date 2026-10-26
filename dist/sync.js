@@ -230,6 +230,9 @@ export async function runSyncCommand(ctx, mode) {
                 pairs.push({ local, remote: undefined });
         const entries = [];
         for (const { local, remote } of pairs) {
+            if (local !== undefined && remote !== undefined && Number.isSafeInteger(local.ado_rev) && Number(local.ado_rev) > remote.rev) {
+                throw new CommandError("Azure returned an older revision; re-read the current work item before importing or exporting", EXIT_CODE.conflict);
+            }
             const plan = { pm_id: local?.id ?? null, ado_id: remote?.id ?? null, action: "none", import_fields: [], export_fields: [] };
             plans.push(plan);
             const remoteFields = remote === undefined ? undefined : remoteValues(remote, states);
@@ -379,8 +382,11 @@ export async function runSyncCommand(ctx, mode) {
                 const fields = pmFields(values, remote, config);
                 if (values.status === local.status)
                     delete fields.status;
-                if (fields.status === "closed")
-                    fields.closeReason = "Azure DevOps state synchronized";
+                if (fields.status !== undefined) {
+                    const { status } = await pm.schemaShowStatus(fields.status);
+                    if (status.roles.some((role) => ["terminal", "terminal_done", "terminal_canceled"].includes(role)))
+                        fields.closeReason = "Azure DevOps state synchronized";
+                }
                 if (!equal(localValues(local), Object.fromEntries(Object.entries(values).filter(([key]) => key !== "relations"))) ||
                     local.ado_rev !== remote.rev || local.ado_sync_base !== JSON.stringify(values))
                     await pm.update(local.id, fields);

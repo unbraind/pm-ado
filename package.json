@@ -22,7 +22,8 @@
     "docs/sync.md",
     "docs/field-contracts.md",
     "docs/conflict-resolution.md",
-    "docs/move-simulator.md"
+    "docs/move-simulator.md",
+    "docs/sparse-refresh.md"
   ],
   "scripts": {
     "build": "tsc",
@@ -112,7 +113,8 @@
       "docs/sync.md",
       "docs/field-contracts.md",
       "docs/conflict-resolution.md",
-      "docs/move-simulator.md"
+      "docs/move-simulator.md",
+      "docs/sparse-refresh.md"
     ],
     "examples": [
       "README.md"

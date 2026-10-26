@@ -159,7 +159,7 @@ See the [SDK/CLI example and limits](docs/move-simulator.md).
 ## Without git
 
 `ado validate`, `ado contract`, `ado import`, `ado export`, `ado sync`,
-`ado move-preview`, `ado resolve-plan` and `ado resolve-apply` work in
+`ado move-preview`, `ado resolve-plan`, `ado resolve-apply` and `ado refresh-plan` work in
 plain trackers without git. Network operations still need Azure configuration;
 contract discovery requires an explicit project. Package release/changelog and
 GitHub workflows need a git checkout and are separate from tracker operations.
@@ -176,3 +176,13 @@ configuration.
 The [SDK, portable artifact example and refusal remedies](docs/conflict-resolution.md)
 describe the lease and cross-system recovery boundaries. Requires pm CLI
 2026.10.23 or newer.
+
+## Sparse refresh plans
+
+`pm ado refresh-plan --fields title,status,relations --json` reads current Azure
+revisions and compiles sparse, 200-item follow-up batches with costs and complete
+field accounting. Exact revision matches reuse saved base fields; omitted rows
+remain unavailable. The SDK and CLI never mutate either tracker.
+
+See the [typed SDK example, limits and remedies](docs/sparse-refresh.md). This
+command works in a plain tracker without git and includes every configured status.

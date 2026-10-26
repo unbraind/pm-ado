@@ -40,7 +40,25 @@ contain the plan itself, not the command's `{ok, plan}` envelope.
 SDK consumers import `AdoResolutionService`, `ResolutionPlan`,
 `ResolutionChoice`, `ResolutionReceipt` and `ResolutionRefusal` from `pm-ado`.
 Construct the service with the tracker root, author, real `PmClient`, `AdoClient`
-and `AdoConfig`; call `plan(id)`, fill `choices`, then `apply(plan)`. The service
+and `AdoConfig`; the documented five-argument call remains supported. An optional
+public SDK namespace and observer can follow. Call `plan(id)`,
+fill `choices`, then `apply(plan)`:
+
+```ts
+import * as sdk from "@unbrained/pm-cli/sdk";
+import { AdoResolutionService } from "pm-ado";
+// pm, azure and config are the caller's already-bound clients/configuration.
+const service = new AdoResolutionService(pmRoot, author, pm, azure, config);
+const explicit = new AdoResolutionService(pmRoot, author, pm, azure, config, sdk);
+```
+
+When the SDK argument is omitted, the service imports its installed public SDK
+package. Explicit injection remains supported. No SDK is discovered from the launcher. Resolution commands are the
+only command paths needing low-level history/mutation primitives beyond the
+injected `ctx.sdk.client`. They load those lazily through the SDK link maintained
+by `pm install`, using a canonical module file and standard Node resolution.
+A missing link produces a typed `configuration` refusal with an installation
+remedy. Invalid command selections do not acquire this runtime. The service
 uses certified complete SDK reads, authoritative item reads, core mutation
 preview, and the audited mutation pipeline; there are no git subprocesses.
 

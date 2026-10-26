@@ -2,13 +2,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { chmodSync, cpSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { PmClient } from "@unbrained/pm-cli/sdk";
+import * as runtimeSdk from "@unbrained/pm-cli/sdk";
+import { PmClient, resolveRuntimeStatusRegistry, readSettings } from "@unbrained/pm-cli/sdk";
 import { createExtensionTestHarness } from "@unbrained/pm-cli/sdk/testing";
 import extension, { type AdoWorkItem, type AdoRelation, type JsonPatchOperation } from "../index.ts";
 import { buildWiql, localValues, remoteValues, IMPORT_STATE_MAP } from "../sync.ts";
@@ -61,7 +62,8 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
     }
     if (url.pathname.endsWith("/workitemsbatch")) {
       assert.equal(req.method, "POST");
-      assert.equal(body!.$expand, "relations");
+      if (body!.fields !== undefined) assert.deepEqual(body!.fields, ["System.Rev"]);
+      else assert.equal(body!.$expand, "relations");
       assert.equal(body!.errorPolicy, "omit");
       assert.ok((body!.ids as number[]).length <= 200);
       send(200, { count: items.size, value: omit ? [] : (body!.ids as number[]).flatMap((id) => items.has(id) ? [items.get(id)] : []) }); return;
@@ -117,6 +119,8 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
   const installed = join(pmRoot, "extensions/pm-ado");
   mkdirSync(installed);
   cpSync(join(repo, "dist"), join(installed, "dist"), { recursive: true });
+  mkdirSync(join(root, "node_modules/@unbrained"), { recursive: true });
+  symlinkSync(join(repo, "node_modules/@unbrained/pm-cli"), join(root, "node_modules/@unbrained/pm-cli"), "junction");
   writeFileSync(join(installed, "manifest.json"), readFileSync(join(repo, "manifest.json")));
   const env: NodeJS.ProcessEnv = { ...process.env, PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1", ADO_ORG_URL: org,
     ADO_PROJECT: "Project", ADO_TOKEN: "synthetic-token" };
@@ -703,7 +707,7 @@ import { loadResolutionSdk, validateResolutionPlan } from "../resolution.ts";
 /** Bind decisions to the existing non-git tracker and REST transport. */
 function resolver(f: Awaited<ReturnType<typeof fixture>>, observer?: ResolutionObserver) {
   const config = { orgUrl: f.org, project: "Project", token: "synthetic-token" };
-  return new AdoResolutionService(f.pmRoot, "fixture-agent", f.pm, new AdoClient(config, transport), config, loadResolutionSdk(), observer);
+  return new AdoResolutionService(f.pmRoot, "fixture-agent", f.pm, new AdoClient(config, transport), config, runtimeSdk, observer);
 }
 
 /** Choose each differing value explicitly, with a selectable winning snapshot. */
@@ -779,8 +783,6 @@ test("remote field choices and same-value plans commit once; malformed coordinat
     { ...plan, mapping: 5 }, { ...plan, choices: [null] }, { ...plan, scope: { ...plan.scope, org: "legacy" } }]) {
     assert.throws(() => validateResolutionPlan(invalid), ResolutionRefusal);
   }
-  assert.throws(() => loadResolutionSdk([]), { code: "configuration" });
-  assert.throws(() => loadResolutionSdk(["relative"]), { code: "configuration" });
 });
 
 test("portable choices reject scope changes, edited digests, missing links and REST races", async (t) => {
@@ -904,10 +906,19 @@ test("resolution clears empty assignees and sanitizes local validation or transp
   await assert.rejects(service.apply(plan), { code: "ado_partial_apply" });
   delete f.env.PM_AUTHOR;
   assert.equal((await f.command("resolve-plan")).code, "configuration");
-  const argv = process.argv;
-  process.argv = [];
-  try { assert.equal(typeof loadResolutionSdk().mutateItemWithHistoryContext, "function"); }
-  finally { process.argv = argv; }
+  assert.equal((await f.command("resolve-plan", { item: item.id })).ok, true, "read-only planning does not need a mutation author");
+  assert.equal(typeof runtimeSdk.mutateItemWithHistoryContext, "function");
+  for (const value of [undefined, null, "failed", { code: "OTHER" }]) assert.equal(ResolutionRefusal.from(value).code, "apply_failed");
+  for (const code of ["MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND"]) {
+    assert.equal(ResolutionRefusal.from(Object.assign(new Error("Missing SDK"), { code })).code, "configuration");
+  }
+  const config = { orgUrl: f.org, project: "Project", token: "synthetic-token" };
+  assert.doesNotThrow(() => new AdoResolutionService(f.pmRoot, "fixture-agent", f.pm, new AdoClient(config, transport), config));
+  assert.doesNotThrow(() => new AdoResolutionService(f.pmRoot, "fixture-agent", f.pm, new AdoClient(config, transport), config, undefined));
+  assert.throws(() => loadResolutionSdk([]), { code: "configuration" });
+  assert.throws(() => loadResolutionSdk(["relative"]), { code: "configuration" });
+  assert.equal(typeof loadResolutionSdk([join(tmpdir(), "ado-sdk-unavailable", "module.js"), import.meta.url]).readSettings, "function");
+  assert.equal(typeof loadResolutionSdk([join(repo, "package.json")]).readSettings, "function");
 });
 
 
@@ -948,7 +959,7 @@ test("resolution recovery settles after lease expiry following PATCH without a s
   await f.pm.update(item.id, { title: "Reviewed lease recovery" });
   const service = resolver(f);
   const plan = choices(await service.plan(item.id));
-  const sdk = loadResolutionSdk();
+  const sdk = runtimeSdk;
   let recorded: Record<string, unknown> | undefined;
   f.afterPatch(async () => {
     const raw = (await f.pm.get(item.id, { depth: "full" })).item.ado_resolution_intent;
@@ -986,7 +997,7 @@ test("resolution recovery settles after a real tracker write failure following P
   await f.pm.update(item.id, { title: "Reviewed write recovery" });
   const service = resolver(f);
   const plan = choices(await service.plan(item.id));
-  const located = await loadResolutionSdk().locateItem(f.pmRoot, item.id);
+  const located = await runtimeSdk.locateItem(f.pmRoot, item.id);
   assert.ok(located);
   const parent = dirname(located.itemPath);
   const mode = statSync(parent).mode & 0o777;
@@ -1039,7 +1050,7 @@ test("resolution recovery recognizes an applied PATCH despite an error response 
   await assert.rejects(service.apply(plan), { code: "ado_partial_apply" });
   const pending = await row(f.pm);
   const expected = plan.remote.revision + 1;
-  const peer = await loadResolutionSdk().acquireLockLease(f.pmRoot, item.id, 60, "fixture-peer");
+  const peer = await runtimeSdk.acquireLockLease(f.pmRoot, item.id, 60, "fixture-peer");
   const previousWait = process.env.PM_LOCK_WAIT_MS;
   process.env.PM_LOCK_WAIT_MS = "0";
   try { await assert.rejects(resolver(f).apply(plan), { code: "ado_partial_apply" }); }
@@ -1128,7 +1139,7 @@ test("resolution recovery settles local-only decisions and rejects altered PATCH
   f.items.get(1)!.fields["System.Title"] = "Remote selected";
   f.items.get(1)!.rev++;
   const plan = choices(await resolver(f).plan(item.id), "remote");
-  const located = await loadResolutionSdk().locateItem(f.pmRoot, item.id);
+  const located = await runtimeSdk.locateItem(f.pmRoot, item.id);
   assert.ok(located);
   const parent = dirname(located.itemPath);
   const mode = statSync(parent).mode & 0o777;
@@ -1163,4 +1174,135 @@ test("resolution recovery refuses an intent replaced by another writer between p
   });
   await assert.rejects(service.apply(plan), { code: "ado_partial_apply" });
   assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 0);
+});
+
+/** Seeded operation sequences use SDK storage as the normalization oracle, never a handwritten trim/CRLF model. */
+test("500 seeded import/export/sync sequences preserve every owned field, relationships and older replay refusals", async (t) => {
+  const f = await fixture(t, [workItem(1), workItem(2)]);
+  f.items.get(1)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Reverse", url: `${f.org}/_apis/wit/workItems/2` },
+    { rel: "System.LinkTypes.Related", url: `${f.org}/_apis/wit/workItems/2` }];
+  assert.equal((await f.command("import")).ok, true);
+  const initial = (await f.pm.listAllComplete()).items;
+  const ids = new Map(initial.map((item) => [Number(item.ado_id), item.id]));
+  // Independent reference tracker applies desired native state through the SDK.
+  const modelRoot = mkdtempSync(join(tmpdir(), "ado-reference-"));
+  t.after(() => rmSync(modelRoot, { recursive: true, force: true }));
+  const model = new PmClient({ cwd: modelRoot, pmRoot: join(modelRoot, ".agents/pm"), author: "fixture-agent" });
+  await model.run("init", { prefix: "model" });
+  const reference = new Map<number, string>();
+  for (const item of initial) reference.set(Number(item.ado_id), (await model.create({ title: item.title, type: "Task", description: item.description,
+    priority: item.priority, tags: JSON.stringify(item.tags), assignee: item.assignee })).item.id);
+  await model.update(reference.get(1)!, { parent: reference.get(2)!, dep: [`id=${reference.get(2)},kind=related,source_kind=System.LinkTypes.Related`] });
+  let seed = 0x5a17c0de;
+  /** Deterministic bounded pseudo-random choices make failures reproducible. */
+  const random = (bound: number) => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed % bound; };
+  const statuses = Array.from({ length: 5 }, (_, index) => `stage_${random(100000)}_${index}`);
+  const roles = [["active"], ["blocked"], ["terminal", "terminal_done"], ["terminal", "terminal_canceled"], ["draft"]];
+  for (let index = 0; index < statuses.length; index++) {
+    await f.pm.schemaAddStatus(statuses[index]!, { role: roles[index] });
+    await model.schemaAddStatus(statuses[index]!, { role: roles[index] });
+  }
+  const registry = resolveRuntimeStatusRegistry((await readSettings(f.pmRoot)).schema);
+  f.env.ADO_STATUS_MAP = JSON.stringify(Object.fromEntries(statuses.map((status, index) => [`Remote${index}`, status])));
+  f.env.ADO_EXPORT_STATE_MAP = JSON.stringify(Object.fromEntries(statuses.map((status, index) => [status, `Remote${index}`])));
+  let remoteMirrored = false, localMirrored = false;
+  let mirrorMetadata: unknown;
+  const archive: AdoWorkItem[] = [];
+  const modeCounts: Record<string, number> = { import: 0, export: 0, sync: 0 };
+  for (let sequence = 0; sequence < 500; sequence++) {
+    const remote = f.items.get(1)!;
+    const mode = ["import", "export", "sync"][random(3)]!;
+    modeCounts[mode]++;
+    const title = `Sequence ${sequence} ${random(1000)}`;
+    const description = random(2) ? `  details ${sequence}\r\nnext line  ` : `details ${sequence}\nnext line`;
+    const priority = random(5);
+    const statusIndex = random(5), status = statuses[statusIndex]!;
+    const closeReason = registry.terminal_statuses.has(status) ? "Model transition" : undefined;
+    const tags = ["blue", `tag-${random(7)}`];
+    const assignee = `agent-${random(5)}@example.invalid`;
+    const area = `Project\\Area${random(4)}`, iteration = `Project\\Sprint${random(4)}`;
+    const beforeRemote = structuredClone(remote);
+    archive.push(beforeRemote);
+    await model.update(reference.get(1)!, { title, description, status, closeReason, priority, tags: JSON.stringify(tags), assignee });
+    if (mode === "export") {
+      await f.pm.update(ids.get(1)!, { title, description, status, closeReason, priority, tags: JSON.stringify(tags), assignee });
+      await f.setFields(ids.get(1)!, { ado_area_path: area, ado_iteration_path: iteration });
+    } else {
+      remote.rev++;
+      Object.assign(remote.fields, { "System.Title": title, "System.Description": description, "Microsoft.VSTS.Common.Priority": priority,
+        "System.Tags": tags.join("; "), "System.State": `Remote${statusIndex}`, "System.AssignedTo": { uniqueName: assignee }, "System.AreaPath": area, "System.IterationPath": iteration });
+    }
+    // Azure related links export symmetrically; additive import materializes the inverse on its next import.
+    if (mode === "import" && remoteMirrored && !localMirrored) {
+      await model.update(reference.get(2)!, { dep: [`id=${reference.get(1)},kind=related,source_kind=System.LinkTypes.Related`] });
+      localMirrored = true;
+    }
+    if (mode !== "import") remoteMirrored = true;
+    const result = await f.command(mode);
+    assert.equal(result.ok, true, `seed ${seed} sequence ${sequence} mode ${mode}: ${JSON.stringify(result)}`);
+    const actualRows = (await f.pm.listAllComplete()).items;
+    const expectedRows = (await model.listAllComplete()).items;
+    const actual = actualRows.find((item) => item.id === ids.get(1))!;
+    const expected = expectedRows.find((item) => item.id === reference.get(1))!;
+    const actualOther = actualRows.find((item) => item.id === ids.get(2))!;
+    const expectedOther = expectedRows.find((item) => item.id === reference.get(2))!;
+    for (const field of ["title", "description", "status", "priority", "tags", "assignee", "parent"] as const) assert.deepEqual(actualOther[field], expectedOther[field], `${sequence}: peer ${field}`);
+    assert.deepEqual(actualOther.dependencies?.map((edge) => ({ id: reference.get(1), kind: edge.kind, source_kind: edge.source_kind })),
+      expectedOther.dependencies?.map((edge) => ({ id: edge.id, kind: edge.kind, source_kind: edge.source_kind })));
+    if (localMirrored && mirrorMetadata === undefined) mirrorMetadata = actualOther.dependencies;
+    if (localMirrored) assert.deepEqual(actualOther.dependencies, mirrorMetadata);
+    for (const field of ["title", "description", "status", "priority", "tags", "assignee"] as const) assert.deepEqual(actual[field], expected[field], `${sequence}: ${field}`);
+    assert.equal(actual.parent, ids.get(2));
+    assert.equal(actual.dependencies?.length, expected.dependencies?.length);
+    assert.deepEqual(actual.dependencies?.map((edge) => ({ id: reference.get(2), kind: edge.kind, source_kind: edge.source_kind })),
+      expected.dependencies?.map((edge) => ({ id: edge.id, kind: edge.kind, source_kind: edge.source_kind })));
+    // Creation metadata belongs to each tracker; it must stay stable within its own tracker.
+    assert.deepEqual(actual.dependencies, initial.find((item) => item.id === ids.get(1))!.dependencies);
+    assert.equal(actual.ado_id, 1); assert.equal(actual.ado_type, "Task");
+    assert.equal(actual.ado_org_url, f.org); assert.equal(actual.ado_project, "Project");
+    assert.equal(actual.ado_url, `${f.org}/_apis/wit/workItems/1`);
+    assert.equal(actual.ado_area_path, area); assert.equal(actual.ado_iteration_path, iteration);
+    assert.equal(actual.ado_rev, f.items.get(1)!.rev);
+    const before = snapshot(f.pmRoot);
+    assert.equal((await f.command(mode)).ok, true);
+    assert.deepEqual(snapshot(f.pmRoot), before, `${sequence}: exact replay must not mutate history`);
+    if (sequence % 10 === 0) {
+      const latest = f.items.get(1)!;
+      const old = archive[random(archive.length)]!;
+      f.items.set(1, structuredClone(old));
+      const replay = await f.command("import");
+      assert.equal(replay.ok, false, `${sequence}: older revision input must be refused`);
+      assert.deepEqual(snapshot(f.pmRoot), before);
+      f.items.set(1, latest);
+    }
+  }
+  t.diagnostic(JSON.stringify({ sequences: 500, mode_counts: modeCounts, exact_replays: 500, older_replays: 50 }));
+});
+
+test("refresh-plan host JSON and TOON work without git and leave item/history bytes unchanged", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const before = snapshot(f.pmRoot);
+  const env = { PATH: "", GIT_CEILING_DIRECTORIES: tmpdir() };
+  const json = await f.host(["ado", "refresh-plan", "--fields", "title,status,relations", "--json"], env);
+  assert.equal(json.code, 0, json.stdout + json.stderr);
+  const plan = JSON.parse(json.stdout) as { cost: { pm_mutations: number; hydrate_reads: number }; unchanged: number[] };
+  assert.equal(plan.cost.pm_mutations, 0); assert.equal(plan.cost.hydrate_reads, 0); assert.deepEqual(plan.unchanged, [1]);
+  const toon = await f.host(["ado", "refresh-plan", "--fields", "title,status", "--output-format", "toon"], env);
+  assert.equal(toon.code, 0, toon.stdout + toon.stderr); assert.match(toon.stdout, /pm_mutations: 0/u);
+  const refused = await f.host(["ado", "refresh-plan", "--fields", "unknown", "--json"], env);
+  assert.equal(refused.code, 2); assert.equal(JSON.parse(refused.stdout).code, "invalid_input");
+  assert.deepEqual(snapshot(f.pmRoot), before);
+});
+
+test("older remote revision snapshots refuse import, export and sync before any mutations", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  f.items.get(1)!.rev = 2; f.items.get(1)!.fields["System.Title"] = "Newer snapshot";
+  assert.equal((await f.command("import")).ok, true);
+  const before = snapshot(f.pmRoot);
+  f.items.get(1)!.rev = 1; f.items.get(1)!.fields["System.Title"] = "Older snapshot";
+  for (const mode of ["import", "export", "sync"]) {
+    assert.equal((await f.command(mode)).code, "ADO_CONFLICT"); assert.deepEqual(snapshot(f.pmRoot), before);
+  }
 });

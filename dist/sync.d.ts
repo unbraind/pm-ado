@@ -1,7 +1,7 @@
 import { type SyncObserver } from "./sync-outbox.ts";
 import type { CommandHandlerContext, FlagDefinition } from "@unbrained/pm-cli/sdk/authoring";
-import type { ItemMetadata, PmUpdateActionOptions } from "@unbrained/pm-cli/sdk";
-import { type AdoConfig, type AdoWorkItem } from "./index.ts";
+import type { ItemMetadata, PmUpdateActionOptions, PmClient } from "@unbrained/pm-cli/sdk";
+import { type AdoConfig, type AdoRelation, type AdoWorkItem } from "./index.ts";
 /** Default Azure state names mapped to local lifecycle states. */
 export declare const IMPORT_STATE_MAP: Readonly<Record<string, string>>;
 /** Shared flags are typed by the host, which also owns JSON/TOON rendering. */
@@ -60,6 +60,22 @@ export declare function azureFields(values: Values, keys: readonly string[], sta
 export declare function pmFields(values: Values, remote: AdoWorkItem, config: AdoConfig): PmUpdateActionOptions & {
     field: string[];
 };
+/** Canonical recognized relations; opaque or out-of-scope links stay with the adapter. */
+export declare function relationValues(relations: readonly AdoRelation[], config: AdoConfig, identities: ReadonlyMap<number, string>): string[];
+/** Read actual local graph edges independently of a remote snapshot or proposed patch. */
+export declare function readLocalAgreement(pm: Pick<PmClient, "listAllComplete">, id: string, config: AdoConfig): Promise<{
+    item: import("@unbrained/pm-cli/sdk").ListTreeItem | import("@unbrained/pm-cli/sdk").ListedItem;
+    identities: Map<number, string>;
+    values: {
+        relations: string[];
+    };
+    version: string;
+    base: Values | undefined;
+}>;
+/** Project an actual Azure read, preserving only an equivalent configured local status alias. */
+export declare function remoteAgreement(remote: AdoWorkItem, local: Values, config: AdoConfig, identities: ReadonlyMap<number, string>, imports: Readonly<Record<string, string>>, exports: Readonly<Record<string, string>>): Values;
+/** Compare a proven owned effect without claiming its unrelated remote fields were ever agreed. */
+export declare function recoveredField(local: unknown, remote: unknown, original: unknown, accepted: unknown): "local" | "remote" | "conflict";
 /** Execute the real REST transport; failures are converted to stable command receipts. */
 export declare function transport(method: string, url: string, body: string | undefined, headers: Readonly<Record<string, string>>): Promise<{
     status: number;

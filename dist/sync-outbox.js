@@ -116,7 +116,7 @@ export class SyncOutbox {
     /** Recover pending export owners before import/sync can allocate another local identity. */
     async owners(remotes, locals) {
         const owners = new Map();
-        for (const local of locals.filter((item) => item.ado_id === undefined || item.ado_sync_base === undefined)) {
+        for (const local of locals.filter((item) => item.ado_id === undefined || item.ado_sync_base === undefined || item.ado_rev === undefined)) {
             const name = resolutionDigest([this.scope, local.id, "create", ""]);
             let intent;
             try {
@@ -173,14 +173,14 @@ export class SyncOutbox {
         for (const intent of records.sort((left, right) => left.revision - right.revision)) {
             const local = localById.get(intent.item);
             const current = remoteById.get(intent.remote);
-            if (local === undefined || current === undefined || local.ado_id !== intent.remote || !Number.isSafeInteger(local.ado_rev) || Number(local.ado_rev) > intent.revision ||
+            if (local === undefined || current === undefined || local.ado_id !== intent.remote || local.ado_rev !== undefined && (!Number.isSafeInteger(local.ado_rev) || Number(local.ado_rev) > intent.revision) ||
                 intent.base === null || intent.state === "prepared" || intent.state === "rejected" || current.rev <= intent.revision)
                 continue;
             this.validate(intent, local.id, "patch");
             const accepted = await this.client.request("GET", `/_apis/wit/workitems/${intent.remote}/revisions/${intent.revision + 1}?api-version=7.1&$expand=relations`);
             if (accepted.fields["System.History"] !== `pm-ado operation ${intent.key}`)
                 continue;
-            recovered.set(local.id, { original: intent.base, accepted });
+            recovered.set(local.id, { original: intent.base, accepted, fields: intent.fields });
         }
         return recovered;
     }

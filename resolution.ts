@@ -1,4 +1,5 @@
 /** Portable, revision-bound decisions over the existing Azure sync field map. */
+import { advanceSyncBase } from "./agreement.ts";
 import { createHash, createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -6,7 +7,7 @@ import { resolve } from "node:path";
 import type * as Sdk from "@unbrained/pm-cli/sdk";
 import type { CommandHandlerContext } from "@unbrained/pm-cli/sdk/authoring";
 import { AdoClient, CommandError, RevisionConflict, STATE_MAP, readConfig, type AdoConfig, type AdoWorkItem, type JsonPatchOperation, buildUpdatePatch, PATCH_MEDIA_TYPE } from "./index.ts";
-import { ADO_FIELD_MAP, IMPORT_STATE_MAP, azureFields, localValues, readBase, remoteValues, stateMap, transport, threeWayFieldConflict, type Values } from "./sync.ts";
+import { ADO_FIELD_MAP, IMPORT_STATE_MAP, azureFields, localValues, readBase, remoteValues, stateMap, transport, threeWayFieldConflict, readLocalAgreement, remoteAgreement, type Values } from "./sync.ts";
 
 /** Stable refusals agents can branch on without parsing error prose. */
 export type ResolutionRefusalCode = "invalid_plan" | "invalid_choices" | "stale_local" | "stale_remote" | "scope" | "configuration" | "apply_failed" | "ado_partial_apply";
@@ -168,7 +169,7 @@ export function resolutionFields(item: Sdk.ItemMetadata, remote: AdoWorkItem, ma
   const local = localValues(item);
   const incoming = remoteValues(remote, maps.imports);
   const base = readBase(item, { ...incoming, relations: [] });
-  if (base !== undefined && maps.exports[String(base.status)] === remote.fields["System.State"]) incoming.status = base.status;
+  if (base !== undefined && Object.hasOwn(base, "status") && Object.hasOwn(maps.exports, String(base.status)) && maps.exports[String(base.status)] === remote.fields["System.State"]) incoming.status = base.status;
   return Object.keys(ADO_FIELD_MAP).map((field) => ({ field, base: base === undefined ? null : resolutionDigest(base[field]),
     local: resolutionDigest(local[field]), remote: resolutionDigest(incoming[field]),
     conflict: threeWayFieldConflict(local[field], incoming[field], base?.[field]) }));
@@ -315,7 +316,7 @@ export class AdoResolutionService {
         const local = localValues(item);
         const values = remoteValues(remote, maps.imports);
         const base = readBase(item, { ...values, relations: [] });
-        if (base !== undefined && maps.exports[String(base.status)] === remote.fields["System.State"]) values.status = base.status;
+        if (base !== undefined && Object.hasOwn(base, "status") && Object.hasOwn(maps.exports, String(base.status)) && maps.exports[String(base.status)] === remote.fields["System.State"]) values.status = base.status;
         for (const choice of plan.choices) if (choice.take === "local") values[choice.field] = local[choice.field];
         await this.sdk.previewItemMutations({ pmRoot: this.pmRoot, transactionId: `ado-${decision}`, author: this.author,
           mutations: [{ op: "update", id: item.id, options: { title: String(values.title), description: String(values.description),
@@ -341,9 +342,9 @@ export class AdoResolutionService {
   }
 
   /** Commit mapped values, lifecycle evidence and the settled receipt as one fenced SDK mutation. */
-  private async settle(plan: ResolutionPlan, decision: string, intent: ResolutionIntent, maps: ResolutionMaps, settings: Sdk.PmSettings): Promise<boolean> {
+  private async settle(plan: ResolutionPlan, decision: string, intent: ResolutionIntent, maps: ResolutionMaps, settings: Sdk.PmSettings): Promise<{ replayed: boolean; version: string }> {
     let replayed = false;
-    await this.sdk.mutateItemWithHistoryContext({ pmRoot: this.pmRoot, settings, id: plan.local.id, author: this.author,
+    const settled = await this.sdk.mutateItemWithHistoryContext({ pmRoot: this.pmRoot, settings, id: plan.local.id, author: this.author,
       op: "update", skipNoop: true, message: `Settle Azure resolution ${decision}`, historyContext: { ado_resolution: decision },
       mutate: async (document) => {
         const item = document.metadata;
@@ -376,13 +377,11 @@ export class AdoResolutionService {
             }
           }
         }
-        item.ado_rev = remote.rev;
-        if (intent.base !== null) item.ado_sync_base = JSON.stringify({ ...intent.base, ...values });
         item.ado_resolution_receipt = decision;
         delete item.ado_resolution_intent;
-        return { changedFields: [...lifecycleFields, ...Object.keys(ADO_FIELD_MAP), "ado_rev", "ado_sync_base", "ado_resolution_receipt", "ado_resolution_intent"] };
+        return { changedFields: [...lifecycleFields, ...Object.keys(ADO_FIELD_MAP), "ado_resolution_receipt", "ado_resolution_intent"] };
       } });
-    return replayed;
+    return { replayed, version: settled.item.updated_at };
   }
 
   /** Prepare durably, then resume or settle under core item leases without replaying a successful PATCH. */
@@ -399,7 +398,9 @@ export class AdoResolutionService {
         throw new ResolutionRefusal("scope", "Restore the original local configuration and token, or regenerate the plan before any intent is prepared.");
       }
       const settings = await this.sdk.readSettings(this.pmRoot);
-      const pending = (await this.document(plan.local.id)).metadata.ado_resolution_intent;
+      const inspected = (await this.document(plan.local.id)).metadata;
+      const pending = inspected.ado_resolution_intent;
+      let expectedVersion = inspected.updated_at;
       if (pending !== undefined) recovery = this.intent(pending, plan, decision, maps);
       const intent = await this.prepare(plan, decision, maps, settings);
       recovery = intent;
@@ -407,10 +408,28 @@ export class AdoResolutionService {
       if (intent !== null) {
         try {
           await this.observer?.({ phase: "prepared", decision });
-          replayed = await this.settle(plan, decision, intent, maps, settings);
+          const result = await this.settle(plan, decision, intent, maps, settings);
+          replayed = result.replayed; expectedVersion = result.version;
         }
         catch { throw this.partial(decision, intent.expected_remote_revision); }
       }
+      let readback: Awaited<ReturnType<typeof readLocalAgreement>>;
+      const agreement = await advanceSyncBase({ expectedVersion,
+        readLocal: async () => { readback = await readLocalAgreement(this.pm, plan.local.id, this.config); return readback; },
+        readRemote: async (local) => {
+          const remote = await this.remote(plan.remote.id);
+          this.scope(readback.item, remote);
+          return { revision: remote.rev, values: remoteAgreement(remote, local.values, this.config, readback.identities, maps.imports, maps.exports) };
+        },
+        publish: async (base, revision, version) => {
+          const field: string[] = [];
+          if (readback.item.ado_sync_base !== JSON.stringify(base)) field.push(`ado_sync_base=${JSON.stringify(base)}`);
+          if (revision !== undefined && readback.item.ado_rev !== revision) field.push(`ado_rev=${revision}`);
+          if (field.length) await this.sdk.commitItemMutations({ pmRoot: this.pmRoot, author: this.author,
+            transactionId: `ado-agreement-${this.sdk.deriveMutationTransactionId(JSON.stringify([plan.local.id, version, field]))}`,
+            mutations: [{ op: "update", id: plan.local.id, options: { field, message: "Azure read-back agreement" }, match: { key: "updated_at", value: version } }] });
+        } });
+      if (agreement.differences.length) throw this.partial(decision, agreement.remote.revision);
       return { ok: true, decision, replayed, pm_id: plan.local.id };
     } catch (error) {
       if (recovery !== null && !(error instanceof ResolutionRefusal)) throw this.partial(recovery.plan_id, recovery.expected_remote_revision);

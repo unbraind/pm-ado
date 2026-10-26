@@ -69,6 +69,7 @@ export declare class SyncOutbox {
     bases(remotes: readonly AdoWorkItem[], locals: readonly ItemMetadata[]): Promise<Map<string, {
         original: Values;
         accepted: AdoWorkItem;
+        fields: Record<string, unknown>;
     }>>;
     /** Find the stamped object before considering creation; never silently choose between duplicate markers. */
     private lookup;

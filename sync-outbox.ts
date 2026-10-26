@@ -180,7 +180,7 @@ export class SyncOutbox {
   /** Recover pending export owners before import/sync can allocate another local identity. */
   async owners(remotes: readonly AdoWorkItem[], locals: readonly ItemMetadata[]): Promise<Map<number, { item: string; creation: CreatedRemote }>> {
     const owners = new Map<number, { item: string; creation: CreatedRemote }>();
-    for (const local of locals.filter((item) => item.ado_id === undefined || item.ado_sync_base === undefined)) {
+    for (const local of locals.filter((item) => item.ado_id === undefined || item.ado_sync_base === undefined || item.ado_rev === undefined)) {
       const name = resolutionDigest([this.scope, local.id, "create", ""]);
       let intent: Intent;
       try { intent = JSON.parse(await readFile(join(this.pmRoot, "transactions/pm-ado-sync", `${name}.json`), "utf8")) as Intent; }
@@ -208,9 +208,9 @@ export class SyncOutbox {
   }
 
   /** Reconcile a proven prior PATCH before treating its own effect as a competing writer. */
-  async bases(remotes: readonly AdoWorkItem[], locals: readonly ItemMetadata[]): Promise<Map<string, { original: Values; accepted: AdoWorkItem }>> {
+  async bases(remotes: readonly AdoWorkItem[], locals: readonly ItemMetadata[]): Promise<Map<string, { original: Values; accepted: AdoWorkItem; fields: Record<string, unknown> }>> {
     const directory = join(this.pmRoot, "transactions/pm-ado-sync");
-    const recovered = new Map<string, { original: Values; accepted: AdoWorkItem }>();
+    const recovered = new Map<string, { original: Values; accepted: AdoWorkItem; fields: Record<string, unknown> }>();
     let names: string[];
     try { names = await readdir(directory); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return recovered; throw error; }
@@ -225,12 +225,12 @@ export class SyncOutbox {
     for (const intent of records.sort((left, right) => left.revision - right.revision)) {
       const local = localById.get(intent.item);
       const current = remoteById.get(intent.remote);
-      if (local === undefined || current === undefined || local.ado_id !== intent.remote || !Number.isSafeInteger(local.ado_rev) || Number(local.ado_rev) > intent.revision ||
+      if (local === undefined || current === undefined || local.ado_id !== intent.remote || local.ado_rev !== undefined && (!Number.isSafeInteger(local.ado_rev) || Number(local.ado_rev) > intent.revision) ||
           intent.base === null || intent.state === "prepared" || intent.state === "rejected" || current.rev <= intent.revision) continue;
       this.validate(intent, local.id, "patch");
       const accepted = await this.client.request("GET", `/_apis/wit/workitems/${intent.remote}/revisions/${intent.revision + 1}?api-version=7.1&$expand=relations`) as AdoWorkItem;
       if (accepted.fields["System.History"] !== `pm-ado operation ${intent.key}`) continue;
-      recovered.set(local.id, { original: intent.base, accepted });
+      recovered.set(local.id, { original: intent.base, accepted, fields: intent.fields });
     }
     return recovered;
   }

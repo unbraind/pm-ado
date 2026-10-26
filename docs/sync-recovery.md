@@ -31,9 +31,8 @@ later sync under the existing mapping; this lifecycle policy is retained. Crash
 assertions explicitly disallow every reopening PATCH and compare settled values
 on both sides, including that policy.
 
- There is no
-unguarded close step. If another agent changes status, body, comments or other
-metadata between commits, the second commit refuses with `ADO_CONFLICT` and
+Each close and publication step is guarded. If another agent changes status,
+body, comments or other metadata between commits, the next commit refuses with `ADO_CONFLICT` and
 keeps that newer document intact. Earlier committed scalar changes can remain;
 this is a sequence of conditional commits, not an all-or-nothing distributed
 transaction. A fresh explicit import uses a fresh inspected revision.
@@ -170,7 +169,7 @@ Behavioural revert evidence and exact gate results are recorded on
 The SDK terminal-update limitation remains tracked by
 [pm-ado-sdk-match-close-1025](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-sdk-match-close-1025.toon).
 
-## Review repair verification
+## Round-1 review repair verification
 
 Repair commit `a735bd1` passed [CI](https://github.com/unbraind/pm-ado/actions/runs/40236418608)
 with all four jobs successful: Node 22, Node 26, npm release gate and Bun release
@@ -213,3 +212,16 @@ corrected input and one accepted creation. A rejection response lost before
 its journal write is correctly unknown: repeated sync sends no additional POST.
 That held case is reported separately, rather than counted as unconditional
 convergence.
+
+Current local round-2 evidence: 196 semantic fault cells across six scenarios;
+83 non-matrix tests with 100% lines/branches/functions in both sync modules;
+18 restored focused tests; 14/14 public-corpus differential comparisons; and
+three function-only reverts each failing 1/1. Full statement and package-wide
+coverage evidence comes from the round-2 npm/Bun CI gates linked by the PR.
+
+Round-2 repair `4c29583`, with current main incorporated at `9fe7628`, passed
+[CI](https://github.com/unbraind/pm-ado/actions/runs/40266894633): all four jobs,
+469/469 tests in both coverage passes per job, zero failures/skips. Statements
+are 1607/1607; statements, lines, branches and functions are all 100% across
+nine required sources. [CodeQL](https://github.com/unbraind/pm-ado/actions/runs/40266894638)
+passed. The final pinned PM linked run passes all 18 focused tests.

@@ -906,6 +906,7 @@ test("resolution clears empty assignees and sanitizes local validation or transp
   await assert.rejects(service.apply(plan), { code: "ado_partial_apply" });
   delete f.env.PM_AUTHOR;
   assert.equal((await f.command("resolve-plan")).code, "configuration");
+  assert.equal((await f.command("resolve-plan", { item: item.id })).ok, true, "read-only planning does not need a mutation author");
   assert.equal(typeof runtimeSdk.mutateItemWithHistoryContext, "function");
   for (const value of [undefined, null, "failed", { code: "OTHER" }]) assert.equal(ResolutionRefusal.from(value).code, "apply_failed");
   for (const code of ["MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND"]) {

@@ -2,7 +2,6 @@
 import { createHash, createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import type * as Sdk from "@unbrained/pm-cli/sdk";
 import type { CommandHandlerContext } from "@unbrained/pm-cli/sdk/authoring";
@@ -132,9 +131,15 @@ export function resolutionDigest(value: unknown): string {
       ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a < b ? -1 : 1)) : entry)).digest("hex");
 }
 
-/** Load low-level resolution primitives lazily through the host-installed SDK link, never the launcher path. */
-function loadResolutionSdk(): typeof Sdk {
-  return createRequire(realpathSync(fileURLToPath(import.meta.url)))("@unbrained/pm-cli/sdk") as typeof Sdk;
+/** Load resolution primitives from package imports or caller-supplied anchors, never inferred launcher paths. */
+export function loadResolutionSdk(anchors: readonly string[] = [import.meta.url]): typeof Sdk {
+  for (const anchor of anchors) {
+    try {
+      const request = createRequire(anchor);
+      return request(realpathSync(request.resolve("@unbrained/pm-cli/sdk"))) as typeof Sdk;
+    } catch { /* Try the next explicitly supplied package anchor. */ }
+  }
+  throw new ResolutionRefusal("configuration", "Install pm-ado with pm install so the host links its SDK, or supply the installed SDK explicitly to AdoResolutionService.");
 }
 
 /** Refuse malformed portable input before opening a mutation or contacting Azure. */
@@ -186,10 +191,9 @@ export class AdoResolutionService {
   private readonly config: AdoConfig;
   private readonly sdk: typeof Sdk;
   private readonly observer: ResolutionObserver | undefined;
-  /** Bind one public SDK workspace and Azure REST client to an attributable caller. */
+  /** Bind the tracker and REST client; omitted SDK preserves the legacy package-import default. */
   constructor(pmRoot: string, author: string, pm: Sdk.PmClient,
-    client: AdoClient, config: AdoConfig, sdk: typeof Sdk, observer?: ResolutionObserver) {
-    if (sdk === undefined) throw new ResolutionRefusal("configuration", "Pass the public pm SDK explicitly when constructing AdoResolutionService outside the host.");
+    client: AdoClient, config: AdoConfig, sdk = loadResolutionSdk(), observer?: ResolutionObserver) {
     this.pmRoot = pmRoot; this.author = author; this.pm = pm;
     this.client = client; this.config = config; this.sdk = sdk; this.observer = observer;
   }

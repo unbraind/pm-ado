@@ -53,7 +53,7 @@ coverage thresholds remain unchanged in all four dimensions.
 
 Import/export/sync and refresh preview use the host-injected client. Sync reads
 status roles with `client.schemaShowStatus` only when a transition needs them.
-Resolution services accept an explicitly injected SDK; their CLI acquires the
+Resolution services preserve five-argument construction and optional SDK injection; their CLI acquires the
 additional history/lease primitives lazily through the host-installed SDK link,
 with a canonical module anchor. No command derives SDK locations from argv, PATH
 or an executable symlink. Missing resolution primitives yield a typed
@@ -80,3 +80,27 @@ Bun's explicit global directory/bin settings follow its
 [documented global configuration](https://bun.sh/docs/runtime/bunfig).
 No real user configuration, global package installation or Azure credential is
 used or changed.
+
+
+## Previous public API compatibility
+
+The compatibility gate pins the previous published `pm-ado@2026.10.26` API from
+npm. Five declaration modules and documentation hashes retain their tarball
+integrity/provenance in `test/fixtures/public-api/published-provenance.json`;
+no binary archive is tracked. The legacy consumer imports all 35 published value
+exports and 32 type exports, including the restored deep-module
+`loadResolutionSdk(anchors?)` function.
+
+The same immutable consumer compiles against both those published declarations
+and the current built declarations, then runs against current built JavaScript
+under Node and Bun. Real non-git SDK trackers exercise all five constructor forms
+(five arguments; explicit undefined; SDK; SDK plus observer; undefined plus
+observer), legacy one-argument batch reads, and default/explicit loader anchors.
+The SDK parameter remains optional and defaults only to normal package import;
+there is no launcher-path fallback.
+
+Complete current built declaration snapshots cover every module name, export and
+signature. Removal or required-parameter additions fail exact snapshot comparison.
+Snapshot updates are explicit and separate from the frozen published baseline:
+run the build, review compatibility, then run
+`node test/fixtures/public-api/update-snapshot.ts`. CI never refreshes snapshots.

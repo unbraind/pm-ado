@@ -702,7 +702,7 @@ test("planning three linked pairs reads the real SDK tracker once", async (t) =>
 // Resolution regressions share the real SDK tracker and revision-checking HTTP fixture.
 import { AdoClient, AdoResolutionService, ResolutionRefusal, RevisionConflict, resolutionDigest, type ResolutionPlan, type ResolutionObserver } from "../index.ts";
 import { transport } from "../sync.ts";
-import { validateResolutionPlan } from "../resolution.ts";
+import { loadResolutionSdk, validateResolutionPlan } from "../resolution.ts";
 
 /** Bind decisions to the existing non-git tracker and REST transport. */
 function resolver(f: Awaited<ReturnType<typeof fixture>>, observer?: ResolutionObserver) {
@@ -913,7 +913,12 @@ test("resolution clears empty assignees and sanitizes local validation or transp
     assert.equal(ResolutionRefusal.from(Object.assign(new Error("Missing SDK"), { code })).code, "configuration");
   }
   const config = { orgUrl: f.org, project: "Project", token: "synthetic-token" };
-  assert.throws(() => new AdoResolutionService(f.pmRoot, "fixture-agent", f.pm, new AdoClient(config, transport), config, undefined as unknown as typeof runtimeSdk), { code: "configuration" });
+  assert.doesNotThrow(() => new AdoResolutionService(f.pmRoot, "fixture-agent", f.pm, new AdoClient(config, transport), config));
+  assert.doesNotThrow(() => new AdoResolutionService(f.pmRoot, "fixture-agent", f.pm, new AdoClient(config, transport), config, undefined));
+  assert.throws(() => loadResolutionSdk([]), { code: "configuration" });
+  assert.throws(() => loadResolutionSdk(["relative"]), { code: "configuration" });
+  assert.equal(typeof loadResolutionSdk([join(tmpdir(), "ado-sdk-unavailable", "module.js"), import.meta.url]).readSettings, "function");
+  assert.equal(typeof loadResolutionSdk([join(repo, "package.json")]).readSettings, "function");
 });
 
 

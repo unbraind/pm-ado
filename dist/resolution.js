@@ -2,7 +2,6 @@
 import { createHash, createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { AdoClient, CommandError, RevisionConflict, STATE_MAP, readConfig, buildUpdatePatch, PATCH_MEDIA_TYPE } from "./index.js";
 import { ADO_FIELD_MAP, IMPORT_STATE_MAP, azureFields, localValues, readBase, remoteValues, stateMap, transport, threeWayFieldConflict } from "./sync.js";
@@ -45,9 +44,16 @@ export function resolutionDigest(value) {
     return createHash("sha256").update(JSON.stringify(value, (_key, entry) => typeof entry === "object" && entry !== null && !Array.isArray(entry)
         ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a < b ? -1 : 1)) : entry)).digest("hex");
 }
-/** Load low-level resolution primitives lazily through the host-installed SDK link, never the launcher path. */
-function loadResolutionSdk() {
-    return createRequire(realpathSync(fileURLToPath(import.meta.url)))("@unbrained/pm-cli/sdk");
+/** Load resolution primitives from package imports or caller-supplied anchors, never inferred launcher paths. */
+export function loadResolutionSdk(anchors = [import.meta.url]) {
+    for (const anchor of anchors) {
+        try {
+            const request = createRequire(anchor);
+            return request(realpathSync(request.resolve("@unbrained/pm-cli/sdk")));
+        }
+        catch { /* Try the next explicitly supplied package anchor. */ }
+    }
+    throw new ResolutionRefusal("configuration", "Install pm-ado with pm install so the host links its SDK, or supply the installed SDK explicitly to AdoResolutionService.");
 }
 /** Refuse malformed portable input before opening a mutation or contacting Azure. */
 export function validateResolutionPlan(input) {
@@ -89,10 +95,8 @@ export class AdoResolutionService {
     config;
     sdk;
     observer;
-    /** Bind one public SDK workspace and Azure REST client to an attributable caller. */
-    constructor(pmRoot, author, pm, client, config, sdk, observer) {
-        if (sdk === undefined)
-            throw new ResolutionRefusal("configuration", "Pass the public pm SDK explicitly when constructing AdoResolutionService outside the host.");
+    /** Bind the tracker and REST client; omitted SDK preserves the legacy package-import default. */
+    constructor(pmRoot, author, pm, client, config, sdk = loadResolutionSdk(), observer) {
         this.pmRoot = pmRoot;
         this.author = author;
         this.pm = pm;

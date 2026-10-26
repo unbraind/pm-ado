@@ -814,7 +814,7 @@ export class AdoClient {
    * @param projection - Optional sparse field references and explicit relation expansion; omitted preserves full reads.
    * @returns The found items and the ids the service omitted.
    */
-  async getWorkItemsReport(ids: readonly number[], projection?: { fields: readonly string[]; relations?: boolean }): Promise<BatchReadResult> {
+  async getWorkItemsReport(ids: readonly number[], projection: { fields: readonly string[]; relations?: boolean } | undefined = undefined): Promise<BatchReadResult> {
     const items: AdoWorkItem[] = [];
     const missing: number[] = [];
     for (const batch of batchIds(ids)) {

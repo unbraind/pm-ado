@@ -108,6 +108,8 @@ export interface ResolutionIntent {
 export declare function resolutionScopeReference(config: AdoConfig): string;
 /** Hash recursively sorted JSON so artifact property order has no semantics. */
 export declare function resolutionDigest(value: unknown): string;
+/** Load resolution primitives from package imports or caller-supplied anchors, never inferred launcher paths. */
+export declare function loadResolutionSdk(anchors?: readonly string[]): typeof Sdk;
 /** Refuse malformed portable input before opening a mutation or contacting Azure. */
 export declare function validateResolutionPlan(input: unknown): asserts input is ResolutionPlan;
 /** Configured state interpretation bound into every portable plan. */
@@ -128,8 +130,8 @@ export declare class AdoResolutionService {
     private readonly config;
     private readonly sdk;
     private readonly observer;
-    /** Bind one public SDK workspace and Azure REST client to an attributable caller. */
-    constructor(pmRoot: string, author: string, pm: Sdk.PmClient, client: AdoClient, config: AdoConfig, sdk: typeof Sdk, observer?: ResolutionObserver);
+    /** Bind the tracker and REST client; omitted SDK preserves the legacy package-import default. */
+    constructor(pmRoot: string, author: string, pm: Sdk.PmClient, client: AdoClient, config: AdoConfig, sdk?: typeof Sdk, observer?: ResolutionObserver);
     /** Load authoritative item bytes with the same SDK normalization used by the mutation lock. */
     private document;
     /** Check identity and scope on every read, including when applying a portable artifact. */

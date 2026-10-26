@@ -87,6 +87,6 @@ Import, export, sync and refresh preview acquire their tracker client from the
 host command context. Sync requests configured status roles through that client
 only when a status transition needs them. No command searches argv, PATH or the
 `pm` symlink for an SDK. The separate resolution runtime is acquired lazily via
-the host-installed SDK link; standalone resolution services require explicit SDK
-injection. Packed acceptance covers npm/Bun global bins, npx/bunx, local bins and
+the host-installed SDK link; standalone resolution services preserve the five-argument form by importing
+the installed SDK package when the optional SDK argument is omitted. Packed acceptance covers npm/Bun global bins, npx/bunx, local bins and
 a copied extension whose optional module link is absent, all on non-git trackers.

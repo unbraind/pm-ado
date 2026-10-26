@@ -361,7 +361,7 @@ export declare class AdoClient {
     getWorkItemsReport(ids: readonly number[], projection?: {
         fields: readonly string[];
         relations?: boolean;
-    }): Promise<BatchReadResult>;
+    } | undefined): Promise<BatchReadResult>;
     /**
      * Run a WIQL query and return the work item ids it selects.
      *

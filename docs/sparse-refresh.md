@@ -82,3 +82,11 @@ bounded evidence), `scope` (re-probe after identity changes), `configuration`
 (configure tracker/credentials/fields), `remote_failure` (retry a fresh probe
 after checking read permissions), and `output_budget` (select fewer items or
 increase the complete receipt budget).
+
+Import, export, sync and refresh preview acquire their tracker client from the
+host command context. Sync requests configured status roles through that client
+only when a status transition needs them. No command searches argv, PATH or the
+`pm` symlink for an SDK. The separate resolution runtime is acquired lazily via
+the host-installed SDK link; standalone resolution services require explicit SDK
+injection. Packed acceptance covers npm/Bun global bins, npx/bunx, local bins and
+a copied extension whose optional module link is absent, all on non-git trackers.

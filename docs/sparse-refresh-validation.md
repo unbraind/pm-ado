@@ -48,3 +48,35 @@ the unchanged-items contract request five unwanted reads; replacing only
 of refusing it. Restored implementations pass those two regressions. Full npm
 and Bun release-gate results are reported in the PR's CI checks at the final head;
 coverage thresholds remain unchanged in all four dimensions.
+
+## SDK acquisition and packed launchers
+
+Import/export/sync and refresh preview use the host-injected client. Sync reads
+status roles with `client.schemaShowStatus` only when a transition needs them.
+Resolution services accept an explicitly injected SDK; their CLI acquires the
+additional history/lease primitives lazily through the host-installed SDK link,
+with a canonical module anchor. No command derives SDK locations from argv, PATH
+or an executable symlink. Missing resolution primitives yield a typed
+`configuration` refusal with a `pm install` remedy.
+
+`test/packed-install-shapes.test.ts` packs this package and CLI 2026.10.25, then
+installs real consumers into private temporary prefixes and caches. It exercises
+npm's actual global symlink, Bun's global executable, npx, bunx, the project-local
+bin, and a copied tracker extension installed with `pm install` in another plain
+tracker. Every shape runs actual import/export/sync and refresh preview, checks
+SDK-read terminal status/revision state, and has no git executable on PATH.
+Npx uses its isolated, already-primed offline package cache; it still executes
+through npx, with no project-local host package to shadow the launcher.
+
+The copied-extension regression removes only SDK links created by that temporary
+fixture's install. The four client-only commands still succeed, and the separate
+resolution command must report its typed installation remedy. The other five
+shapes also execute resolution planning through the installed link. This covers
+both lazy acquisition and the absence of launcher-based fallback.
+
+Temporary HOME, XDG configuration, npm prefix/cache/configuration and Bun global
+prefix/bin/cache all remain under the fixture root and are removed on cleanup.
+Bun's explicit global directory/bin settings follow its
+[documented global configuration](https://bun.sh/docs/runtime/bunfig).
+No real user configuration, global package installation or Azure credential is
+used or changed.

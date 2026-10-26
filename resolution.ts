@@ -1,8 +1,9 @@
 /** Portable, revision-bound decisions over the existing Azure sync field map. */
 import { createHash, createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { resolve } from "node:path";
 import type * as Sdk from "@unbrained/pm-cli/sdk";
 import type { CommandHandlerContext } from "@unbrained/pm-cli/sdk/authoring";
 import { AdoClient, CommandError, RevisionConflict, STATE_MAP, readConfig, type AdoConfig, type AdoWorkItem, type JsonPatchOperation, buildUpdatePatch, PATCH_MEDIA_TYPE } from "./index.ts";
@@ -30,6 +31,10 @@ export class ResolutionRefusal extends Error {
   static from(error: unknown): ResolutionRefusal {
     if (error instanceof ResolutionRefusal) return error;
     if (error instanceof CommandError && error.exitCode === 2) return new ResolutionRefusal("configuration", "Check configured state maps and field values before generating a new plan.");
+    if (typeof error === "object" && error !== null && "code" in error &&
+        ["MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND"].includes(String(error.code))) {
+      return new ResolutionRefusal("configuration", "Install pm-ado with pm install so the host links its SDK; standalone callers must inject their SDK into AdoResolutionService.");
+    }
     if (error instanceof RevisionConflict) return new ResolutionRefusal("stale_remote", "Azure changed during PATCH. Generate a fresh plan; the revision assertion applied no fields.");
     return new ResolutionRefusal("apply_failed", "Inspect tracker health and Azure connectivity. Re-read both sides before retrying; an external write may have succeeded before a local failure.");
   }
@@ -127,12 +132,9 @@ export function resolutionDigest(value: unknown): string {
       ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a < b ? -1 : 1)) : entry)).digest("hex");
 }
 
-/** Resolve the public SDK from this package or the running host, including copied extensions. */
-export function loadResolutionSdk(anchors: readonly string[] = [import.meta.url, resolve(process.argv[1] ?? "pm")]): typeof Sdk {
-  for (const anchor of anchors) {
-    try { return createRequire(anchor)("@unbrained/pm-cli/sdk") as typeof Sdk; } catch { /* Try the host's package resolution anchor. */ }
-  }
-  throw new ResolutionRefusal("configuration", "Run with pm CLI 2026.10.23 or newer, which fences expired item mutation leases.");
+/** Load low-level resolution primitives lazily through the host-installed SDK link, never the launcher path. */
+function loadResolutionSdk(): typeof Sdk {
+  return createRequire(realpathSync(fileURLToPath(import.meta.url)))("@unbrained/pm-cli/sdk") as typeof Sdk;
 }
 
 /** Refuse malformed portable input before opening a mutation or contacting Azure. */
@@ -186,7 +188,8 @@ export class AdoResolutionService {
   private readonly observer: ResolutionObserver | undefined;
   /** Bind one public SDK workspace and Azure REST client to an attributable caller. */
   constructor(pmRoot: string, author: string, pm: Sdk.PmClient,
-    client: AdoClient, config: AdoConfig, sdk = loadResolutionSdk(), observer?: ResolutionObserver) {
+    client: AdoClient, config: AdoConfig, sdk: typeof Sdk, observer?: ResolutionObserver) {
+    if (sdk === undefined) throw new ResolutionRefusal("configuration", "Pass the public pm SDK explicitly when constructing AdoResolutionService outside the host.");
     this.pmRoot = pmRoot; this.author = author; this.pm = pm;
     this.client = client; this.config = config; this.sdk = sdk; this.observer = observer;
   }
@@ -423,10 +426,12 @@ export async function runResolutionCommand(ctx: CommandHandlerContext, mode: "pl
   try {
     const config = readConfig(process.env);
     if (config === undefined || ctx.sdk === undefined) throw new ResolutionRefusal("configuration", "Set ADO_ORG_URL, ADO_PROJECT and ADO_TOKEN; run with pm CLI 2026.10.23 or newer.");
-    const service = new AdoResolutionService(ctx.pm_root, ctx.global.author ?? process.env.PM_AUTHOR ?? "unknown", ctx.sdk.client, new AdoClient(config, transport), config);
+    const client = ctx.sdk.client;
+    /** Acquire low-level primitives only after the command selection is valid. */
+    const service = () => new AdoResolutionService(ctx.pm_root, ctx.global.author ?? process.env.PM_AUTHOR ?? "unknown", client, new AdoClient(config, transport), config, loadResolutionSdk());
     if (mode === "plan") {
       if (typeof ctx.options.item !== "string") throw new ResolutionRefusal("configuration", "Supply --item with one linked pm item ID.");
-      const plan = await service.plan(ctx.options.item);
+      const plan = await service().plan(ctx.options.item);
       if (ctx.options.save === true) {
         const saved = await ctx.sdk.client.planCreate({ title: "Azure field conflict decisions", body: JSON.stringify(plan) });
         return { ok: true, plan_id: saved.plan.id, plan };
@@ -440,7 +445,7 @@ export async function runResolutionCommand(ctx: CommandHandlerContext, mode: "pl
       : await readFile(String(ctx.options.artifact), "utf8");
     let plan: unknown;
     try { plan = JSON.parse(String(raw)); } catch { throw new ResolutionRefusal("invalid_plan", "Use a core Plan body or JSON artifact produced by ado resolve-plan."); }
-    return await service.apply(plan);
+    return await service().apply(plan);
   } catch (error) {
     const refusal = ResolutionRefusal.from(error);
     return { ok: false, code: refusal.code, remedy: refusal.remedy, exit_code: refusal.exitCode };

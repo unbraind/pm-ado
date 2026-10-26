@@ -2,12 +2,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { chmodSync, cpSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
+import * as runtimeSdk from "@unbrained/pm-cli/sdk";
 import { PmClient, resolveRuntimeStatusRegistry, readSettings } from "@unbrained/pm-cli/sdk";
 import { createExtensionTestHarness } from "@unbrained/pm-cli/sdk/testing";
 import extension, { type AdoWorkItem, type AdoRelation, type JsonPatchOperation } from "../index.ts";
@@ -118,6 +119,8 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
   const installed = join(pmRoot, "extensions/pm-ado");
   mkdirSync(installed);
   cpSync(join(repo, "dist"), join(installed, "dist"), { recursive: true });
+  mkdirSync(join(root, "node_modules/@unbrained"), { recursive: true });
+  symlinkSync(join(repo, "node_modules/@unbrained/pm-cli"), join(root, "node_modules/@unbrained/pm-cli"), "junction");
   writeFileSync(join(installed, "manifest.json"), readFileSync(join(repo, "manifest.json")));
   const env: NodeJS.ProcessEnv = { ...process.env, PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1", ADO_ORG_URL: org,
     ADO_PROJECT: "Project", ADO_TOKEN: "synthetic-token" };
@@ -699,12 +702,12 @@ test("planning three linked pairs reads the real SDK tracker once", async (t) =>
 // Resolution regressions share the real SDK tracker and revision-checking HTTP fixture.
 import { AdoClient, AdoResolutionService, ResolutionRefusal, RevisionConflict, resolutionDigest, type ResolutionPlan, type ResolutionObserver } from "../index.ts";
 import { transport } from "../sync.ts";
-import { loadResolutionSdk, validateResolutionPlan } from "../resolution.ts";
+import { validateResolutionPlan } from "../resolution.ts";
 
 /** Bind decisions to the existing non-git tracker and REST transport. */
 function resolver(f: Awaited<ReturnType<typeof fixture>>, observer?: ResolutionObserver) {
   const config = { orgUrl: f.org, project: "Project", token: "synthetic-token" };
-  return new AdoResolutionService(f.pmRoot, "fixture-agent", f.pm, new AdoClient(config, transport), config, loadResolutionSdk(), observer);
+  return new AdoResolutionService(f.pmRoot, "fixture-agent", f.pm, new AdoClient(config, transport), config, runtimeSdk, observer);
 }
 
 /** Choose each differing value explicitly, with a selectable winning snapshot. */
@@ -780,8 +783,6 @@ test("remote field choices and same-value plans commit once; malformed coordinat
     { ...plan, mapping: 5 }, { ...plan, choices: [null] }, { ...plan, scope: { ...plan.scope, org: "legacy" } }]) {
     assert.throws(() => validateResolutionPlan(invalid), ResolutionRefusal);
   }
-  assert.throws(() => loadResolutionSdk([]), { code: "configuration" });
-  assert.throws(() => loadResolutionSdk(["relative"]), { code: "configuration" });
 });
 
 test("portable choices reject scope changes, edited digests, missing links and REST races", async (t) => {
@@ -905,10 +906,13 @@ test("resolution clears empty assignees and sanitizes local validation or transp
   await assert.rejects(service.apply(plan), { code: "ado_partial_apply" });
   delete f.env.PM_AUTHOR;
   assert.equal((await f.command("resolve-plan")).code, "configuration");
-  const argv = process.argv;
-  process.argv = [];
-  try { assert.equal(typeof loadResolutionSdk().mutateItemWithHistoryContext, "function"); }
-  finally { process.argv = argv; }
+  assert.equal(typeof runtimeSdk.mutateItemWithHistoryContext, "function");
+  for (const value of [undefined, null, "failed", { code: "OTHER" }]) assert.equal(ResolutionRefusal.from(value).code, "apply_failed");
+  for (const code of ["MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND"]) {
+    assert.equal(ResolutionRefusal.from(Object.assign(new Error("Missing SDK"), { code })).code, "configuration");
+  }
+  const config = { orgUrl: f.org, project: "Project", token: "synthetic-token" };
+  assert.throws(() => new AdoResolutionService(f.pmRoot, "fixture-agent", f.pm, new AdoClient(config, transport), config, undefined as unknown as typeof runtimeSdk), { code: "configuration" });
 });
 
 
@@ -949,7 +953,7 @@ test("resolution recovery settles after lease expiry following PATCH without a s
   await f.pm.update(item.id, { title: "Reviewed lease recovery" });
   const service = resolver(f);
   const plan = choices(await service.plan(item.id));
-  const sdk = loadResolutionSdk();
+  const sdk = runtimeSdk;
   let recorded: Record<string, unknown> | undefined;
   f.afterPatch(async () => {
     const raw = (await f.pm.get(item.id, { depth: "full" })).item.ado_resolution_intent;
@@ -987,7 +991,7 @@ test("resolution recovery settles after a real tracker write failure following P
   await f.pm.update(item.id, { title: "Reviewed write recovery" });
   const service = resolver(f);
   const plan = choices(await service.plan(item.id));
-  const located = await loadResolutionSdk().locateItem(f.pmRoot, item.id);
+  const located = await runtimeSdk.locateItem(f.pmRoot, item.id);
   assert.ok(located);
   const parent = dirname(located.itemPath);
   const mode = statSync(parent).mode & 0o777;
@@ -1040,7 +1044,7 @@ test("resolution recovery recognizes an applied PATCH despite an error response 
   await assert.rejects(service.apply(plan), { code: "ado_partial_apply" });
   const pending = await row(f.pm);
   const expected = plan.remote.revision + 1;
-  const peer = await loadResolutionSdk().acquireLockLease(f.pmRoot, item.id, 60, "fixture-peer");
+  const peer = await runtimeSdk.acquireLockLease(f.pmRoot, item.id, 60, "fixture-peer");
   const previousWait = process.env.PM_LOCK_WAIT_MS;
   process.env.PM_LOCK_WAIT_MS = "0";
   try { await assert.rejects(resolver(f).apply(plan), { code: "ado_partial_apply" }); }
@@ -1129,7 +1133,7 @@ test("resolution recovery settles local-only decisions and rejects altered PATCH
   f.items.get(1)!.fields["System.Title"] = "Remote selected";
   f.items.get(1)!.rev++;
   const plan = choices(await resolver(f).plan(item.id), "remote");
-  const located = await loadResolutionSdk().locateItem(f.pmRoot, item.id);
+  const located = await runtimeSdk.locateItem(f.pmRoot, item.id);
   assert.ok(located);
   const parent = dirname(located.itemPath);
   const mode = statSync(parent).mode & 0o777;

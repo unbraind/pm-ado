@@ -1,6 +1,5 @@
 /** Command orchestration and per-field Azure DevOps reconciliation. */
 import type { CommandHandlerContext, FlagDefinition } from "@unbrained/pm-cli/sdk/authoring";
-import { loadResolutionSdk } from "./resolution.ts";
 import type { ItemMetadata, PmUpdateActionOptions } from "@unbrained/pm-cli/sdk";
 import {
   AdoClient, CommandError, EXIT_CODE, RevisionConflict, RELATION_MAP, STATE_MAP,
@@ -233,8 +232,6 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
     if (config === undefined) throw new CommandError(preflightMessage(ctx.command, missingEnv(process.env)));
     const pm = ctx.sdk?.client;
     if (pm === undefined) throw new CommandError("This command requires a host-bound SDK (pm CLI 2026.10.12 or newer)");
-    const sdk = loadResolutionSdk();
-    const statuses = sdk.resolveRuntimeStatusRegistry((await sdk.readSettings(ctx.pm_root)).schema);
     const limit = Number(ctx.options.limit ?? 100);
     if (!Number.isSafeInteger(limit) || limit < 1) throw new CommandError("--limit must be a positive safe integer");
     const states = stateMap(process.env.ADO_STATUS_MAP, IMPORT_STATE_MAP);
@@ -383,7 +380,10 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
         values.relations = relationValues(remote!.relations!, config, identities);
         const fields = pmFields(values, remote!, config);
         if (values.status === local!.status) delete fields.status;
-        if (fields.status !== undefined && sdk.isTerminalStatus(fields.status, statuses)) fields.closeReason = "Azure DevOps state synchronized";
+        if (fields.status !== undefined) {
+          const { status } = await pm.schemaShowStatus(fields.status);
+          if (status.roles.some((role) => ["terminal", "terminal_done", "terminal_canceled"].includes(role))) fields.closeReason = "Azure DevOps state synchronized";
+        }
         if (!equal(localValues(local!), Object.fromEntries(Object.entries(values).filter(([key]) => key !== "relations"))) ||
             local!.ado_rev !== remote!.rev || local!.ado_sync_base !== JSON.stringify(values)) await pm.update(local!.id, fields);
       }

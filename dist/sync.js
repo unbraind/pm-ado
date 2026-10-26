@@ -1,4 +1,3 @@
-import { loadResolutionSdk } from "./resolution.js";
 import { AdoClient, CommandError, EXIT_CODE, RevisionConflict, RELATION_MAP, STATE_MAP, exportRelations, importRelations, missingEnv, preflightMessage, readConfig, relationTargetId, } from "./index.js";
 /** Default Azure state names mapped to local lifecycle states. */
 export const IMPORT_STATE_MAP = {
@@ -185,8 +184,6 @@ export async function runSyncCommand(ctx, mode) {
         const pm = ctx.sdk?.client;
         if (pm === undefined)
             throw new CommandError("This command requires a host-bound SDK (pm CLI 2026.10.12 or newer)");
-        const sdk = loadResolutionSdk();
-        const statuses = sdk.resolveRuntimeStatusRegistry((await sdk.readSettings(ctx.pm_root)).schema);
         const limit = Number(ctx.options.limit ?? 100);
         if (!Number.isSafeInteger(limit) || limit < 1)
             throw new CommandError("--limit must be a positive safe integer");
@@ -385,8 +382,11 @@ export async function runSyncCommand(ctx, mode) {
                 const fields = pmFields(values, remote, config);
                 if (values.status === local.status)
                     delete fields.status;
-                if (fields.status !== undefined && sdk.isTerminalStatus(fields.status, statuses))
-                    fields.closeReason = "Azure DevOps state synchronized";
+                if (fields.status !== undefined) {
+                    const { status } = await pm.schemaShowStatus(fields.status);
+                    if (status.roles.some((role) => ["terminal", "terminal_done", "terminal_canceled"].includes(role)))
+                        fields.closeReason = "Azure DevOps state synchronized";
+                }
                 if (!equal(localValues(local), Object.fromEntries(Object.entries(values).filter(([key]) => key !== "relations"))) ||
                     local.ado_rev !== remote.rev || local.ado_sync_base !== JSON.stringify(values))
                     await pm.update(local.id, fields);

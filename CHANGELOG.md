@@ -36,6 +36,7 @@
 
 ### Other
 
+- Release readiness behind PM_RELEASE_APPROVED ([pm-ado-release-gate](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-release-gate.toon))
 - Reconcile stale in-progress tracker records (2026-10-23) ([pm-ado-reconcile-1023](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-reconcile-1023.toon))
 - Certify pm-ado on PM CLI/SDK 2026.10.4 and consolidate pending dependency updates ([pm-ado-qq1p](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-qq1p.toon))
 - Auto-merge green Dependabot updates and group the pm toolchain into one daily PR ([pm-ado-14nn](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/tasks/pm-ado-14nn.toon))

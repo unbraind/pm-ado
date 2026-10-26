@@ -62,8 +62,9 @@ Intentional differences:
 [pm-ado-sdk-match-close-1025](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-sdk-match-close-1025.toon)
 records a pinned SDK limitation for the orchestrator to report upstream: an
 update's timestamp match also runs during its internal terminal close, after
-its preliminary write has changed the timestamp. The package now uses two separately matched SDK update commits: a scalar
-update followed by a status-only update, carrying forward the prior revision.
+its preliminary write has changed the timestamp. The package uses separately matched SDK updates: scalars excluding agreement,
+a status-only close, then base/revision publication last. Each carries forward
+the preceding revision; crash recovery resumes with ordinary three-way sync.
 The original unguarded close workaround was rejected in review and replaced.
 A match consumed once per top-level update, or a match on a close mutation,
 would remove this workaround. Both audit findings are replaced; none deferred.

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { ItemMetadata, LockLease } from "@unbrained/pm-cli/sdk";
 import type { Values } from "./sync.ts";
 import { loadResolutionSdk, resolutionDigest } from "./resolution.ts";
-import { AdoClient, CommandError, EXIT_CODE, RevisionConflict, type AdoConfig, type AdoWorkItem, type JsonPatchOperation } from "./index.ts";
+import { AdoClient, AdoHttpError, CommandError, EXIT_CODE, RevisionConflict, type AdoConfig, type AdoWorkItem, type JsonPatchOperation } from "./index.ts";
 
 /** Observable SDK/REST boundaries; observers never provide or replace storage or transport. */
 export interface SyncBoundary {
@@ -19,6 +19,24 @@ export interface SyncBoundary {
 }
 /** Optional boundary observer for diagnostics and real process-crash acceptance. */
 export type SyncObserver = (event: SyncBoundary) => void | Promise<void>;
+
+/** Durable knowledge about one original Azure plan, including definitive refusal. */
+export type OutboxState = "prepared" | "dispatched" | "observed" | "rejected";
+/** Every input affecting durable operation knowledge, including a corrected retry. */
+export type OutboxEvent = "dispatch" | "success" | "rejection" | "ambiguity" | "retry";
+/** Total transition table; successful proof is never downgraded by a later failure. */
+export const OUTBOX_TRANSITIONS: Readonly<Record<OutboxState, Readonly<Record<OutboxEvent, OutboxState>>>> = {
+  prepared: { dispatch: "dispatched", success: "observed", rejection: "rejected", ambiguity: "dispatched", retry: "prepared" },
+  dispatched: { dispatch: "dispatched", success: "observed", rejection: "rejected", ambiguity: "dispatched", retry: "dispatched" },
+  observed: { dispatch: "observed", success: "observed", rejection: "observed", ambiguity: "observed", retry: "observed" },
+  rejected: { dispatch: "dispatched", success: "observed", rejection: "rejected", ambiguity: "dispatched", retry: "prepared" },
+};
+
+/** Distinguish a proven atomic refusal from an unknown external outcome. */
+export function classifyOutboxFailure(error: unknown): "rejection" | "ambiguity" {
+  return error instanceof RevisionConflict || error instanceof AdoHttpError && error.status >= 400 && error.status < 500 && error.status !== 408
+    ? "rejection" : "ambiguity";
+}
 
 /** Private journal record, retained across commands and local revision conflicts. */
 interface Intent {
@@ -45,7 +63,7 @@ interface Intent {
   /** Zero for creation, otherwise the asserted revision. */
   revision: number;
   /** Dispatch is durable before POST; ambiguous outcomes never authorize another POST. */
-  state: "prepared" | "dispatched" | "observed";
+  state: OutboxState;
   /** Exact successful response, recoverable even when subsequent local linking refuses. */
   response?: AdoWorkItem;
 }
@@ -98,7 +116,7 @@ export class SyncOutbox {
 
   /** Keep the first create plan stable across local edits, under a fenced SDK lease. */
   private async withIntent<T>(initial: Omit<Intent, "schema" | "scope" | "key" | "state">,
-    run: (intent: Intent, persist: () => Promise<void>) => Promise<T>): Promise<T> {
+    run: (intent: Intent, persist: () => Promise<void>, replan: () => Promise<void>, changed: boolean) => Promise<T>): Promise<T> {
     const key = `${initial.item}:${initial.operation}:${resolutionDigest([this.scope, initial])}`;
     const name = resolutionDigest([this.scope, initial.item, initial.operation, initial.operation === "create" ? "" : key]);
     const directory = join(this.pmRoot, "transactions/pm-ado-sync");
@@ -117,7 +135,13 @@ export class SyncOutbox {
         await persist();
       }
       this.validate(intent, initial.item, initial.operation);
-      return await run(intent, persist);
+      /** Only an undispatched or durably rejected plan may be replaced by corrected input. */
+      const replan = async () => {
+        Object.assign(intent, initial, { key, state: OUTBOX_TRANSITIONS[intent.state].retry });
+        delete intent.response;
+        await persist();
+      };
+      return await run(intent, persist, replan, intent.key !== key);
     } finally { await lease.release(); }
   }
 
@@ -126,9 +150,31 @@ export class SyncOutbox {
     const { schema, scope, key, state, response: _response, ...plan } = intent;
     if (schema !== "pm-ado/outbox/1" || scope !== this.scope || plan.item !== item || plan.operation !== operation ||
         key !== `${plan.item}:${plan.operation}:${resolutionDigest([scope, plan])}` ||
-        !["prepared", "dispatched", "observed"].includes(state)) {
+        !["prepared", "dispatched", "observed", "rejected"].includes(state)) {
       throw new CommandError("Azure outbox intent is invalid; preserve it and inspect recovery before retrying", EXIT_CODE.conflict);
     }
+  }
+
+  /** Record successful effect proof, including a response recovered by marker lookup. */
+  private async accept(intent: Intent, persist: () => Promise<void>, response: AdoWorkItem): Promise<AdoWorkItem> {
+    intent.response = response;
+    intent.state = OUTBOX_TRANSITIONS[intent.state].success;
+    await persist();
+    return response;
+  }
+
+  /** One outcome policy for every create/PATCH, with dispatch durable before effects. */
+  private async execute(intent: Intent, persist: () => Promise<void>, request: () => Promise<AdoWorkItem>): Promise<AdoWorkItem> {
+    intent.state = OUTBOX_TRANSITIONS[intent.state].dispatch;
+    await persist();
+    let response: AdoWorkItem;
+    try { response = await request(); }
+    catch (error) {
+      intent.state = OUTBOX_TRANSITIONS[intent.state][classifyOutboxFailure(error)];
+      await persist();
+      throw error;
+    }
+    return this.accept(intent, persist, response);
   }
 
   /** Recover pending export owners before import/sync can allocate another local identity. */
@@ -180,7 +226,7 @@ export class SyncOutbox {
       const local = localById.get(intent.item);
       const current = remoteById.get(intent.remote);
       if (local === undefined || current === undefined || local.ado_id !== intent.remote || !Number.isSafeInteger(local.ado_rev) || Number(local.ado_rev) > intent.revision ||
-          intent.base === null || intent.state === "prepared" || current.rev <= intent.revision) continue;
+          intent.base === null || intent.state === "prepared" || intent.state === "rejected" || current.rev <= intent.revision) continue;
       this.validate(intent, local.id, "patch");
       const accepted = await this.client.request("GET", `/_apis/wit/workitems/${intent.remote}/revisions/${intent.revision + 1}?api-version=7.1&$expand=relations`) as AdoWorkItem;
       if (accepted.fields["System.History"] !== `pm-ado operation ${intent.key}`) continue;
@@ -205,55 +251,60 @@ export class SyncOutbox {
 
   /** Reuse the first durable create intent and remote marker after crashes or failed local links. */
   async create(item: string, type: string, fields: Record<string, unknown>, base: Values | null = null): Promise<CreatedRemote> {
-    return this.withIntent({ item, operation: "create", type, fields, base, relations: [], remote: 0, revision: 0 }, async (intent, persist) => {
+    return this.withIntent({ item, operation: "create", type, fields, base, relations: [], remote: 0, revision: 0 }, async (intent, persist, replan, changed) => {
       const found = await this.lookup(intent);
-      if (found !== undefined) return this.creation(intent, found, true);
+      if (found !== undefined) {
+        const creation = await this.creation(intent, found, true);
+        await this.accept(intent, persist, creation.accepted);
+        return creation;
+      }
       if (intent.response !== undefined) {
         const current = await this.client.getWorkItemsReport([intent.response.id]);
         if (current.missing.length) throw new CommandError("Recorded Azure creation is unavailable; preserve its intent. No replacement POST was sent.", EXIT_CODE.conflict);
         return this.creation(intent, current.items[0]!, true);
       }
+      if (intent.state === "rejected" || intent.state === "prepared" && changed) await replan();
       if (intent.state !== "prepared") {
         throw new CommandError("Azure create outcome is uncertain and its marker is not visible; retry lookup later. No second POST was sent.", EXIT_CODE.conflict);
       }
       await this.observer?.({ boundary: "remote", phase: "before", operation: "create", item });
-      intent.state = "dispatched";
-      await persist();
-      const marked = [String(intent.fields["System.Tags"] ?? ""), this.marker(intent)].filter(Boolean).join("; ");
-      const remote = await this.client.createWorkItem(intent.type, { ...intent.fields, "System.Tags": marked });
-      await this.observer?.({ boundary: "remote", phase: "after", operation: "create", item });
-      intent.response = remote;
-      intent.state = "observed";
-      await persist();
+      const remote = await this.execute(intent, persist, async () => {
+        const marked = [String(intent.fields["System.Tags"] ?? ""), this.marker(intent)].filter(Boolean).join("; ");
+        let response: AdoWorkItem;
+        try { response = await this.client.createWorkItem(intent.type, { ...intent.fields, "System.Tags": marked }); }
+        finally { await this.observer?.({ boundary: "remote", phase: "after", operation: "create", item }); }
+        // A malformed 2xx response proves neither rejection nor a usable identity.
+        await this.creation({ ...intent, response }, response, false);
+        return response;
+      });
       return this.creation(intent, remote, false);
     });
   }
 
   /** Journal links/comments/scalars before PATCH; its revision assertion makes exact replay safe. */
   async patch(item: string, remote: AdoWorkItem, fields: Record<string, unknown>, relations: readonly JsonPatchOperation[], base: Values | null = null): Promise<AdoWorkItem> {
-    return this.withIntent({ item, operation: "patch", type: "", fields, base, relations: [...relations], remote: remote.id, revision: remote.rev }, async (intent, persist) => {
+    return this.withIntent({ item, operation: "patch", type: "", fields, base, relations: [...relations], remote: remote.id, revision: remote.rev }, async (intent, persist, replan) => {
       if (intent.response !== undefined) return intent.response;
       const marker = `pm-ado operation ${intent.key}`;
       if (intent.state === "dispatched") {
         const [current] = await this.client.getWorkItems([intent.remote]);
         if (current.rev > intent.revision) {
           const historical = await this.client.request("GET", `/_apis/wit/workitems/${intent.remote}/revisions/${intent.revision + 1}?api-version=7.1&$expand=relations`) as AdoWorkItem;
-          if (historical.fields["System.History"] !== marker) throw new RevisionConflict(intent.remote, intent.revision, current);
-          return historical;
+          if (historical.fields["System.History"] !== marker) {
+            intent.state = OUTBOX_TRANSITIONS[intent.state].rejection;
+            await persist();
+            throw new RevisionConflict(intent.remote, intent.revision, current);
+          }
+          return this.accept(intent, persist, historical);
         }
       }
-      intent.state = "dispatched";
-      await persist();
+      if (intent.state === "rejected") await replan();
       const outgoing: Record<string, unknown> = { ...intent.fields, "System.History": marker };
       if (Object.hasOwn(outgoing, "System.Tags")) {
         const protocol = String(remote.fields["System.Tags"] ?? "").split(";").filter(isProtocolTag);
         outgoing["System.Tags"] = [String(outgoing["System.Tags"]), ...protocol].filter(Boolean).join("; ");
       }
-      const response = await this.client.updateWorkItem(intent.remote, intent.revision, outgoing, intent.relations);
-      intent.response = response;
-      intent.state = "observed";
-      await persist();
-      return response;
+      return this.execute(intent, persist, () => this.client.updateWorkItem(intent.remote, intent.revision, outgoing, intent.relations));
     });
   }
 }

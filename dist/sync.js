@@ -202,10 +202,13 @@ export async function runSyncCommand(ctx, mode, observer) {
             const create = method === "POST" && url.includes("/workitems/$");
             if (!create)
                 await observer?.({ boundary: "remote", phase: "before", operation });
-            const result = await transport(method, url, body, headers);
-            if (!create)
-                await observer?.({ boundary: "remote", phase: "after", operation });
-            return result;
+            try {
+                return await transport(method, url, body, headers);
+            }
+            finally {
+                if (!create)
+                    await observer?.({ boundary: "remote", phase: "after", operation });
+            }
         });
         const sdk = loadResolutionSdk();
         const settings = await sdk.readSettings(ctx.pm_root);
@@ -378,8 +381,13 @@ export async function runSyncCommand(ctx, mode, observer) {
                 if (options.status !== sdk.resolveRuntimeStatusRegistry(settings.schema).close_status)
                     return persist(id, options);
                 const { status, closeReason, completedAt, ...scalars } = options;
+                // A base may describe only durable values on BOTH sides. Closing takes a
+                // separate native SDK mutation, so publish agreement after it, never before.
+                const publication = scalars.field.filter((field) => field.startsWith("ado_sync_base=") || field.startsWith("ado_rev="));
+                scalars.field = scalars.field.filter((field) => !publication.includes(field));
                 await persist(id, scalars);
                 await persist(id, { status, closeReason: closeReason, completedAt, force: options.force });
+                await persist(id, { field: publication, message: options.message });
             };
             for (const entry of entries) {
                 const { plan, local, values } = entry;

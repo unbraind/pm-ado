@@ -14,6 +14,14 @@ export interface SyncBoundary {
 }
 /** Optional boundary observer for diagnostics and real process-crash acceptance. */
 export type SyncObserver = (event: SyncBoundary) => void | Promise<void>;
+/** Durable knowledge about one original Azure plan, including definitive refusal. */
+export type OutboxState = "prepared" | "dispatched" | "observed" | "rejected";
+/** Every input affecting durable operation knowledge, including a corrected retry. */
+export type OutboxEvent = "dispatch" | "success" | "rejection" | "ambiguity" | "retry";
+/** Total transition table; successful proof is never downgraded by a later failure. */
+export declare const OUTBOX_TRANSITIONS: Readonly<Record<OutboxState, Readonly<Record<OutboxEvent, OutboxState>>>>;
+/** Distinguish a proven atomic refusal from an unknown external outcome. */
+export declare function classifyOutboxFailure(error: unknown): "rejection" | "ambiguity";
 /** Creation ownership and its initial accepted snapshot survive delayed local publication. */
 export interface CreatedRemote {
     /** Current scoped Azure object. */
@@ -46,6 +54,10 @@ export declare class SyncOutbox {
     private withIntent;
     /** Refuse altered scope, ownership or plan bytes before consulting remote identities. */
     private validate;
+    /** Record successful effect proof, including a response recovered by marker lookup. */
+    private accept;
+    /** One outcome policy for every create/PATCH, with dispatch durable before effects. */
+    private execute;
     /** Recover pending export owners before import/sync can allocate another local identity. */
     owners(remotes: readonly AdoWorkItem[], locals: readonly ItemMetadata[]): Promise<Map<number, {
         item: string;

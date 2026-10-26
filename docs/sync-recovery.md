@@ -12,12 +12,26 @@ update uses `commitItemMutations` with an update `match` on that revision.
 Expected revisions advance only from this command's immutable history markers.
 Native no-ops retain the prior expected revision.
 
-A terminal import has two **separately conditional** SDK commits:
+A terminal import has three **separately conditional** SDK commits:
 
-1. A scalar update without lifecycle options, matched to the inspected revision.
-2. A status-only update, matched to the revision returned by the scalar commit.
+1. Scalars without lifecycle options, `ado_sync_base` or `ado_rev`, matched to the inspected revision.
+2. A status-only close, matched to the revision returned by the scalar commit.
+3. Agreement publication (`ado_sync_base` and `ado_rev`), matched to the durable close revision.
 
-The second SDK update routes directly to the native close mutation. There is no
+The second SDK update routes directly to the native close mutation. The base
+advances last. A crash after scalars leaves the old base, so ordinary `ado sync`
+imports the outstanding close instead of treating the old local status as a new
+reopening decision. A crash after close leaves both statuses equal and the old
+base; sync can finish publication. Non-terminal scalar/status changes and their
+base remain one conditional SDK update. Relation import and compensation finish
+before publication. Initial local creates deliberately omit the base.
+
+Native SDK close clears assignment. Its resulting local change reconciles on a
+later sync under the existing mapping; this lifecycle policy is retained. Crash
+assertions explicitly disallow every reopening PATCH and compare settled values
+on both sides, including that policy.
+
+ There is no
 unguarded close step. If another agent changes status, body, comments or other
 metadata between commits, the second commit refuses with `ADO_CONFLICT` and
 keeps that newer document intact. Earlier committed scalar changes can remain;
@@ -44,8 +58,9 @@ state and successful response. The key is:
 ```
 
 The scope digest binds the configured organization and project. A create pointer
-is stable for that scoped local identity even if the local item changes later;
-retry never silently replaces the original plan/key. The SDK atomic writer
+is stable for that scoped local identity even if the local item changes later.
+An undispatched or durably rejected request may be replaced by corrected input and a new
+plan/key; an unknown or successful request retains its original identity. The SDK atomic writer
 persists the intent before the first side effect and records dispatch before POST.
 Do not delete an intent to bypass a recovery refusal.
 
@@ -79,6 +94,46 @@ local edits. This also recovers repeated local conflicts across several PATCHes
 without mistaking the adapter's own earlier effects for competing remote edits. Provider API references: [create](https://learn.microsoft.com/en-us/rest/api/azure/devops/wit/work-items/create?view=azure-devops-rest-7.1)
 and [revision lookup](https://learn.microsoft.com/en-us/rest/api/azure/devops/wit/revisions/get?view=azure-devops-rest-7.1).
 
+## Total outbox outcome state machine
+
+`sync-outbox.ts` owns `OUTBOX_TRANSITIONS`, error classification, dispatch,
+success recording, rejection recording and corrected-plan replacement.
+`AdoHttpError` preserves HTTP status facts without changing command receipts.
+The four durable states mean:
+
+| State | Durable knowledge | Permitted recovery |
+| --- | --- | --- |
+| `prepared` | Original plan exists; dispatch has not been recorded | Use the latest input while no dispatch is recorded, then persist `dispatched` before the call |
+| `dispatched` | Request might have reached Azure; outcome unproved | Lookup original key; create never blindly resends; PATCH may replay only the same revision assertion |
+| `observed` | Exact accepted response or provider history proves the effect | Reuse identity/result; no new create or repeated link/comment |
+| `rejected` | Atomic request definitively refused; no effect from that request is assumed | Replan corrected input under the same lease, persist `prepared`, then dispatch |
+
+| Event / remote outcome | Transition and action |
+| --- | --- |
+| First plan / changed undispatched plan / corrected rejected plan | Persist `prepared`; corrected create replaces type, fields, local projection and key together |
+| About to call create or PATCH | Persist `dispatched` before the call |
+| Valid 2xx response | Persist response and `observed` |
+| Definitive 4xx except HTTP 408 | Persist `rejected`; return the original typed HTTP error; corrected input can retry |
+| Revision assertion refusal / proven foreign next revision | Persist `rejected`; return typed revision conflict; inspect a fresh revision before a corrected plan |
+| HTTP 408, 5xx, other non-success statuses, invalid JSON, timeout or network failure | Retain/persist `dispatched`; resolve original key or exact historical PATCH result before another effect |
+| Marker lookup proves original create / history proves original PATCH | Persist exact accepted snapshot and `observed`; finish local linking/publication conditionally |
+| Create key is not visible after unknown dispatch | Remain `dispatched`; typed conflict, no second POST |
+| PATCH has no accepted effect and asserted revision is unchanged | Same CAS request may safely retry; at most one link/history effect can commit |
+| Crash before durable dispatch | `prepared`; safe to resume that plan |
+| Crash after dispatch, including after a response but before recording it | `dispatched`; reconcile remote proof first, even if the lost response was a rejection |
+| Crash after durable success / rejection | `observed` reuses proof; `rejected` permits corrected retry |
+
+The complete table maps each of the five events (`dispatch`, `success`,
+`rejection`, `ambiguity`, `retry`) for every durable state. Existing successful
+proof is absorbing: a later error cannot downgrade `observed`. Only `prepared` (never dispatched) or `rejected`
+plans invoke the corrected-plan transition; an ordinary retry cannot overwrite
+unknown dispatch. Lookup/read failures never authorize an effect.
+
+A rejection whose response was lost in a crash is **unknown**, not evidence of
+rejection. HTTP 408 is also unknown. These are held safely until provider proof
+exists; the API limitation below still applies. The model does not pretend
+that absent visibility proves an unsent create.
+
 ## Ambiguous create dispatch: unresolved provider constraint
 
 The documented Work Item Create API exposes no server-enforced idempotency key
@@ -96,12 +151,13 @@ assert the held state before simulating delayed provider visibility.
 
 ## Fault acceptance
 
-`test/sync.test.ts` exercises five scenarios: terminal import, fresh export,
+`test/sync.test.ts` exercises six scenarios: terminal import, terminal export, fresh export,
 relation/scalar export, pending-export recovery and mixed sync. A recording REST
 server keeps object revisions and actual call counts. Tests enumerate before and
 after every REST call, SDK local commit and outbox write observed in each path.
 They either edit the real tracker or kill a real SDK worker process with
-`SIGKILL`, then retry. Assertions cover unique remote objects, unique local
+`SIGKILL`, then restart with ordinary three-way sync. Assertions cover the intended
+settled field values on both sides, no transient reopening PATCH, unique remote objects, unique local
 identities, completed links, and preserved body/comment edits. Ambiguous create
 dispatch is asserted to hold without another POST; recovery resumes only after
 the marker is visible. Additional fixed cases cover concurrent status changes,
@@ -134,3 +190,26 @@ latest focused regressions 6/6 through pinned `pm test`; restored revert cases
 checks pass. Duplicate local full release runs were interrupted after the
 requested complete CI gates passed; those interrupted runs are not counted as
 successful release checks. There is no standalone lint script.
+
+## Round-2 semantic and model verification
+
+The two fixed cases reproduce SIGKILL after scalar import and HTTP 400 followed
+by corrected export. The crash case restarts with ordinary `ado sync`, asserts
+both sides stay closed, and rejects every transient reopening PATCH.
+
+The seeded fake-server model drives 36 create and 33 PATCH sequences through
+HTTP refusal, success, HTTP 408/5xx/redirect, connection loss before/after effects,
+malformed success bodies, and interrupted journal/response boundaries. It also
+changes rejected fields and type. It checks durable state, stable identity,
+new corrected-plan keys, exactly one accepted remote object or revision/link,
+and replay without another effect. Unknown create outcomes explicitly hold with
+no second POST until the model supplies provider visibility. Convergence is
+conditional on that proof; an actually unsent ambiguous POST remains the
+provider-contract limitation above.
+
+The rejection crash checks kill a real worker immediately after the HTTP 400
+call and before/after the `rejected` journal write. A durable rejection permits
+corrected input and one accepted creation. A rejection response lost before
+its journal write is correctly unknown: repeated sync sends no additional POST.
+That held case is reported separately, rather than counted as unconditional
+convergence.

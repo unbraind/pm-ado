@@ -73,6 +73,17 @@ export class CommandError extends Error {
   }
 }
 
+/** HTTP response facts retained for provider-specific durable recovery policy. */
+export class AdoHttpError extends CommandError {
+  /** Status actually returned by Azure; transport failures have no such proof. */
+  readonly status: number;
+  /** Preserve the existing command receipt while exposing the response status. */
+  constructor(message: string, status: number, exitCode: number) {
+    super(message, exitCode);
+    this.status = status;
+  }
+}
+
 /** Revision refusal carrying the diagnostic snapshot without retrying a write. */
 export class RevisionConflict extends CommandError {
   /** Revision asserted by the rejected patch. */
@@ -769,13 +780,13 @@ export class AdoClient {
       // The guard on `method` keeps a 412 arriving on a non-PATCH call (a batch
       // read, a WIQL query) classified as a transport error rather than a
       // conflict — a 412 on a GET is not a revision assertion failure.
-      throw new CommandError(
+      throw new AdoHttpError(
         `the work item changed since it was read, so the update was refused (${url})`,
-        EXIT_CODE.conflict,
+        response.status, EXIT_CODE.conflict,
       );
     }
     if (response.status < 200 || response.status >= 300) {
-      throw new CommandError(`Azure DevOps returned ${response.status} for ${method} ${url}`, EXIT_CODE.remote);
+      throw new AdoHttpError(`Azure DevOps returned ${response.status} for ${method} ${url}`, response.status, EXIT_CODE.remote);
     }
     try {
       return JSON.parse(response.body) as unknown;

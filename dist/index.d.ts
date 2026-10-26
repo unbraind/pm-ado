@@ -41,6 +41,13 @@ export declare class CommandError extends Error {
      */
     constructor(message: string, exitCode?: number);
 }
+/** HTTP response facts retained for provider-specific durable recovery policy. */
+export declare class AdoHttpError extends CommandError {
+    /** Status actually returned by Azure; transport failures have no such proof. */
+    readonly status: number;
+    /** Preserve the existing command receipt while exposing the response status. */
+    constructor(message: string, status: number, exitCode: number);
+}
 /** Revision refusal carrying the diagnostic snapshot without retrying a write. */
 export declare class RevisionConflict extends CommandError {
     /** Revision asserted by the rejected patch. */

@@ -13,7 +13,7 @@ import { createExtensionTestHarness } from "@unbrained/pm-cli/sdk/testing";
 import extension, { type AdoWorkItem, type AdoRelation, type JsonPatchOperation } from "../index.ts";
 import { buildWiql, localValues, remoteValues, IMPORT_STATE_MAP, runSyncCommand } from "../sync.ts";
 
-import { SyncOutbox, isProtocolTag, type SyncBoundary, type SyncObserver } from "../sync-outbox.ts";
+import { SyncOutbox, isProtocolTag, type OutboxState, type SyncBoundary, type SyncObserver } from "../sync-outbox.ts";
 
 const run = promisify(execFile);
 const repo = resolve(import.meta.dirname, "..");
@@ -37,6 +37,7 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
   let writeStatus = 0;
   let patchStatus = 0;
   let afterPatchStatus = 200;
+  const effects: (number | "network-before" | "network-after" | "server-after" | "malformed")[] = [];
   let vanish = false;
   let omitRelations = false;
   let afterPatch: ((item: AdoWorkItem) => Promise<void>) | undefined;
@@ -77,6 +78,9 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
     }
     const revision = url.pathname.match(/workitems\/(\d+)\/revisions\/(\d+)$/u);
     if (revision) { send(200, revisions.get(`${revision[1]}:${revision[2]}`)); return; }
+    const effect = req.method === "PATCH" || url.pathname.includes("/workitems/$") ? effects.shift() : undefined;
+    if (typeof effect === "number") { send(effect, { message: "Synthetic outcome" }); return; }
+    if (effect === "network-before") { req.socket.destroy(); return; }
     const tail = decodeURIComponent(url.pathname.split("/").at(-1)!);
     if (req.method === "GET") { send(200, items.get(Number(tail))); return; }
     assert.equal(req.headers["content-type"], "application/json-patch+json");
@@ -90,6 +94,9 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
       const item = workItem(id, { ...fields, "System.WorkItemType": tail.slice(1) });
       items.set(id, item); revisions.set(`${id}:${item.rev}`, structuredClone(item));
       await afterCreate?.();
+      if (effect === "network-after") { req.socket.destroy(); return; }
+      if (effect === "server-after") { send(503, { message: "Response unavailable after acceptance" }); return; }
+      if (effect === "malformed") { res.statusCode = 201; res.end("not JSON"); return; }
       send(200, omitRelations ? { ...item, relations: undefined } : item); return;
     }
     assert.equal(req.method, "PATCH");
@@ -116,6 +123,9 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
     items.set(next.id, next);
     revisions.set(`${next.id}:${next.rev}`, structuredClone(next));
     await afterPatch?.(next);
+    if (effect === "network-after") { req.socket.destroy(); return; }
+    if (effect === "server-after") { send(503, { message: "Response unavailable after acceptance" }); return; }
+    if (effect === "malformed") { res.statusCode = 200; res.end("not JSON"); return; }
     send(afterPatchStatus, omitRelations ? { ...next, relations: undefined } : next);
   });
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
@@ -176,6 +186,7 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
     afterBatch: (hook: () => Promise<void>) => { afterBatch = hook; },
     afterPatch: (hook: (item: AdoWorkItem) => Promise<void>) => { afterPatch = hook; },
     response: (endpoint: string, value: unknown) => { responses.set(endpoint, value); },
+    effect: (outcome: (typeof effects)[number]) => { effects.push(outcome); },
     failPatch: (status: number) => { patchStatus = status; },
     afterPatchStatus: (status: number) => { afterPatchStatus = status; },
     failWrite: (status: number) => { writeStatus = status; },
@@ -1382,7 +1393,9 @@ async function matrixFixture(t: test.TestContext, scenario: string) {
     await f.pm.create({ title: "Matrix unlinked", type: "Task" }); mode = "sync";
   } else {
     assert.equal((await f.command("import")).ok, true);
-    if (scenario === "import-close") {
+    if (scenario === "export-close") {
+      await f.pm.update((await row(f.pm)).id, { status: "closed", closeReason: "Planned terminal export" }); mode = "export";
+    } else if (scenario === "import-close") {
       f.items.get(1)!.fields["System.State"] = "Closed"; f.items.get(1)!.rev++; mode = "import";
     } else {
       const items = (await f.pm.listAllComplete()).items;
@@ -1394,12 +1407,15 @@ async function matrixFixture(t: test.TestContext, scenario: string) {
   return { f, mode, edited: (await row(f.pm)).id, expected: scenario === "sync-mixed" || scenario === "export-relations" ? 2 : 1 };
 }
 
-for (const scenario of ["import-close", "export-create", "export-relations", "export-recover", "sync-mixed"]) {
+for (const scenario of ["import-close", "export-close", "export-create", "export-relations", "export-recover", "sync-mixed"]) {
   test(`boundary matrix ${scenario}: every REST/local/intent boundary preserves edits or holds an ambiguous create safely`, async (t) => {
     const probe = await matrixFixture(t, scenario);
     const trace: SyncBoundary[] = [];
     const normal = await probe.f.observed(probe.mode, (event) => { trace.push(event); });
     assert.equal(normal.ok, true, JSON.stringify(normal));
+    // Include native SDK lifecycle policy (close clears assignee) in the settled oracle.
+    assert.equal((await probe.f.command("sync")).ok, true);
+    const intended = new Map([...probe.f.items].map(([id, remote]) => [id, remoteValues(remote, IMPORT_STATE_MAP)]));
     const boundaries = trace.map((event, index) => ({ event, index }));
     assert.ok(boundaries.length >= 6);
     for (const fault of ["edit", "crash"] as const) {
@@ -1422,7 +1438,8 @@ for (const scenario of ["import-close", "export-create", "export-relations", "ex
             assert.equal(kept.body, label);
             assert.ok((kept.comments as { text: string }[]).some((comment) => comment.text === label));
           }
-          let retried = await f.command(mode);
+          // Recovery must use ordinary three-way sync, not force the interrupted direction again.
+          let retried = await f.command("sync");
           if (!retried.ok && fault === "crash" && boundary.boundary === "intent" && boundary.operation === "dispatched" && boundary.phase === "after" && retried.error?.includes("outcome is uncertain")) {
             // A durable dispatch without an observed POST cannot authorize another create.
             const journal = intentFiles(f).map((file) => JSON.parse(readFileSync(file, "utf8")) as {
@@ -1430,14 +1447,14 @@ for (const scenario of ["import-close", "export-create", "export-relations", "ex
             }).find((intent) => intent.operation === "create" && intent.state === "dispatched" && intent.response === undefined)!;
             assert.ok(journal);
             const creates = f.requests.filter((request) => request.path.includes("/workitems/$")).length;
-            assert.equal((await f.command(mode)).code, "ADO_CONFLICT");
+            assert.equal((await f.command("sync")).code, "ADO_CONFLICT");
             assert.equal(f.requests.filter((request) => request.path.includes("/workitems/$")).length, creates);
             sub.diagnostic("Ambiguous dispatch is held without another POST; recovery resumes only after provider visibility.");
             // If the original request later becomes visible, lookup finishes recovery without a POST.
             const id = Math.max(0, ...f.items.keys()) + 1;
             const marker = `pm-ado-idempotency-${resolutionDigest([journal.scope, journal.key])}`;
             f.items.set(id, workItem(id, { ...journal.fields, "System.Tags": [String(journal.fields["System.Tags"] ?? ""), marker].filter(Boolean).join("; ") }));
-            retried = await f.command(mode);
+            retried = await f.command("sync");
           }
           assert.equal(retried.ok, true, JSON.stringify(retried));
           assert.equal(f.items.size, expected, "no duplicate Azure work item across retries");
@@ -1447,7 +1464,17 @@ for (const scenario of ["import-close", "export-create", "export-relations", "ex
           assert.equal(linked.length, expected, "no duplicate local imports");
           if (fault === "edit") assert.equal((await f.pm.get(edited, { depth: "full" })).item.body, label);
           const count = f.requests.filter((request) => request.method === "POST" && request.path.includes("/workitems/$")).length;
-          assert.equal((await f.command(mode)).ok, true);
+          assert.equal((await f.command("sync")).ok, true);
+          for (const [id, expectedValues] of intended) {
+            assert.deepEqual(remoteValues(f.items.get(id)!, IMPORT_STATE_MAP), expectedValues, "restart never reverses Azure's intended values");
+            if (scenario === "import-close" || scenario === "export-close") {
+              for (const request of f.requests.filter((entry) => entry.method === "PATCH")) {
+                assert.ok(!(request.body as JsonPatchOperation[]).some((operation) => operation.path === "/fields/System.State" && operation.value !== "Closed"), "no transient reopening PATCH is allowed");
+              }
+            }
+            const kept = (await f.pm.listAllComplete()).items.find((item) => item.ado_id === id)!;
+            assert.deepEqual(localValues(kept), expectedValues, "both sides converge to the intended values");
+          }
           assert.equal(f.requests.filter((request) => request.method === "POST" && request.path.includes("/workitems/$")).length, count);
         });
       }
@@ -1573,6 +1600,7 @@ test("conditional outbox PATCH replay proves revision markers, preserves protoco
       if (fault === "foreign") {
         await new AdoClient(config, transport).updateWorkItem(1, 1, { "System.History": "Another writer" });
         await assert.rejects(outbox(f).patch("fixture-owner", initial, fields, []), RevisionConflict);
+        assert.equal(JSON.parse(readFileSync(intentFiles(f)[0]!, "utf8")).state, "rejected");
         return;
       }
       const response = await outbox(f).patch("fixture-owner", initial, fields, []);
@@ -1715,6 +1743,9 @@ test("pending PATCH bases ignore unrelated or unapplied records and prove only t
     await assert.rejects(service.patch(local.id, remote, fields, [], projection), /Interrupted journal/u);
     assert.equal((await outbox(f).bases([remote], [local])).size, 0);
   }
+  f.effect(400);
+  await assert.rejects(outbox(f).patch(local.id, remote, { "System.Title": "Rejected projected effect" }, [], projection), CommandError);
+  assert.equal((await outbox(f).bases([remote], [local])).size, 0);
   // An effect made without a local projection cannot silently invent a merge base.
   await outbox(f).patch(local.id, remote, { "System.Title": "Unprojected effect" }, []);
   assert.equal((await outbox(f).bases([f.items.get(1)!], [local])).size, 0);
@@ -1773,4 +1804,233 @@ test("successive mapped edits after PATCH recover the entire proven effect chain
   assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 3);
   assert.equal((await f.command("sync")).ok, true);
   assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 3);
+});
+
+test("round-2 fixed case: SIGKILL between scalar import and close never reopens Azure on next sync", async (t) => {
+  const probe = await matrixFixture(t, "import-close");
+  const trace: SyncBoundary[] = [];
+  assert.equal((await probe.f.observed("import", (event) => { trace.push(event); })).ok, true);
+  const position = trace.findIndex((event) => event.boundary === "local" && event.operation === "update" && event.phase === "after");
+  const { f } = await matrixFixture(t, "import-close");
+  await crashAt(f, "import", position);
+  const before = await row(f.pm);
+  const restarted = await f.command("sync");
+  assert.equal(restarted.ok, true, JSON.stringify(restarted));
+  assert.equal(f.items.get(1)!.fields["System.State"], "Closed", "a stale local status must never reverse the imported close");
+  assert.equal((await row(f.pm)).status, "closed");
+  assert.equal(JSON.parse(String(before.ado_sync_base)).status, "open", "agreement stayed behind the unfinished close");
+  assert.equal(JSON.parse(String((await row(f.pm)).ado_sync_base)).status, "closed");
+  assert.equal((await f.command("sync")).ok, true);
+  for (const request of f.requests.filter((entry) => entry.method === "PATCH")) {
+    assert.ok(!(request.body as JsonPatchOperation[]).some((operation) => operation.path === "/fields/System.State" && operation.value !== "Closed"), "no transient reopening PATCH is allowed");
+  }
+});
+
+test("round-2 fixed case: definitive create rejection permits a corrected export with a new plan key", async (t) => {
+  const f = await fixture(t, []);
+  const { item } = await f.pm.create({ title: "Rejected input", type: "Task" });
+  f.effect(400);
+  const refused = await f.command("export");
+  assert.equal(refused.code, "ADO_REMOTE");
+  assert.match(refused.error!, /returned 400/u);
+  const file = intentFiles(f)[0]!;
+  const rejected = JSON.parse(readFileSync(file, "utf8")) as { state: OutboxState; key: string };
+  assert.equal(f.items.size, 0);
+  await f.pm.update(item.id, { title: "Corrected input" });
+  const retried = await f.command("export");
+  assert.equal(retried.ok, true, JSON.stringify(retried));
+  const observed = JSON.parse(readFileSync(file, "utf8")) as { state: OutboxState; key: string };
+  assert.equal(rejected.state, "rejected");
+  assert.equal(observed.state, "observed");
+  assert.notEqual(observed.key, rejected.key);
+  assert.equal(f.items.size, 1);
+  assert.equal(f.items.get(1)!.fields["System.Title"], "Corrected input");
+  assert.equal(f.requests.filter((request) => request.path.includes("/workitems/$")).length, 2, "one rejected request and one accepted creation");
+  assert.equal((await f.command("sync")).ok, true);
+  assert.equal(f.items.size, 1);
+});
+
+/** Independent deterministic source of fault/input sequences for the durable model. */
+function modelRandom(seed: number) {
+  let state = seed >>> 0;
+  return () => { state = (Math.imul(state, 1664525) + 1013904223) >>> 0; return state >>> 8; };
+}
+
+/** Inspect actual private journal knowledge; never substitute SDK state or transport. */
+function modelIntent(f: Awaited<ReturnType<typeof fixture>>, owner: string, operation: "create" | "patch", title?: string) {
+  return intentFiles(f).map((file) => JSON.parse(readFileSync(file, "utf8")) as {
+    item: string; operation: string; state: OutboxState; key: string; scope: string; type: string; fields: Record<string, unknown>;
+  }).find((intent) => intent.item === owner && intent.operation === operation && (title === undefined || intent.fields["System.Title"] === title))!;
+}
+
+test("round-2 model: random create outcomes and corrected plans preserve identity and converge after proof", async (t) => {
+  const f = await fixture(t, []);
+  const random = modelRandom(0x10262026);
+  const outcomes = ["success", "http-500", "http-408", "http-302", "network-before", "network-after", "server-after", "malformed", "crash-prepared", "crash-dispatched", "crash-after", "crash-observed"] as const;
+  const refusals = [400, 401, 403, 404, 409, 412, 422, 429];
+  let rejected = 0; let held = 0; let calls = 0;
+  for (let sequence = 0; sequence < 36; sequence++) {
+    const owner = `model-create-${sequence}`;
+    let fields = { "System.Title": `Original ${sequence}`, "System.Tags": "model" };
+    let type = "Task";
+    const prefix = random() % 4;
+    const outcome = outcomes[sequence < outcomes.length ? sequence : random() % outcomes.length]!;
+    const before = f.items.size;
+    for (let attempt = 0; attempt < prefix; attempt++) {
+      f.effect(refusals[(sequence + attempt) % refusals.length]!);
+      await assert.rejects(outbox(f).create(owner, type, fields), CommandError);
+      const refused = modelIntent(f, owner, "create");
+      assert.equal(refused.state, "rejected", "a definitive refusal must not become an unknown dispatch");
+      assert.equal(f.items.size, before);
+      const previousKey = refused.key;
+      fields = { ...fields, "System.Title": `Corrected ${sequence}-${attempt}` };
+      type = attempt % 2 === 0 ? "Bug" : "Task";
+      if (attempt === prefix - 1) assert.ok(previousKey.includes(":create:"));
+      rejected++;
+    }
+    if (outcome.startsWith("http-")) f.effect(Number(outcome.slice(5)));
+    else if (outcome === "network-before" || outcome === "network-after" || outcome === "server-after" || outcome === "malformed") f.effect(outcome);
+    let interrupted = false;
+    const service = outbox(f, (event) => {
+      if (!interrupted && (outcome === `crash-${event.operation}` && event.boundary === "intent" && event.phase === "after" ||
+          outcome === "crash-after" && event.boundary === "remote" && event.operation === "create" && event.phase === "after")) {
+        interrupted = true; throw new Error("Model crash at a durable boundary");
+      }
+    });
+    const attemptsBefore = f.requests.filter((request) => request.path.includes("/workitems/$")).length;
+    if (outcome === "success") await service.create(owner, type, fields);
+    else await assert.rejects(service.create(owner, type, fields));
+    let intent = modelIntent(f, owner, "create");
+    const expected = outcome === "success" || outcome === "crash-observed" ? "observed" : outcome === "crash-prepared" ? "prepared" : "dispatched";
+    assert.equal(intent.state, expected);
+    const marker = `pm-ado-idempotency-${resolutionDigest([intent.scope, intent.key])}`;
+    const visible = () => [...f.items.values()].filter((item) => String(item.fields["System.Tags"]).split(";").some((tag) => tag.trim() === marker));
+    const dispatchedAttempts = f.requests.filter((request) => request.path.includes("/workitems/$")).length;
+    if (expected === "dispatched" && visible().length === 0) {
+      // Unknown dispatch cannot be made safe by changing inputs or blindly retrying.
+      for (let query = 0; query < 1 + random() % 3; query++) {
+        await assert.rejects(outbox(f).create(owner, "Task", { "System.Title": "A later unconfirmed edit" }), /outcome is uncertain/u);
+        assert.equal(modelIntent(f, owner, "create").key, intent.key);
+        assert.equal(f.requests.filter((request) => request.path.includes("/workitems/$")).length, dispatchedAttempts);
+      }
+      held++;
+      // The model now supplies authoritative provider visibility of the original key.
+      // This is an explicit fairness condition, not permission to resend an unsent POST.
+      const id = Math.max(0, ...f.items.keys()) + 1;
+      f.items.set(id, workItem(id, { ...intent.fields, "System.WorkItemType": intent.type,
+        "System.Tags": [String(intent.fields["System.Tags"]), marker].join("; ") }));
+    }
+    const accepted = await outbox(f).create(owner, type, fields);
+    intent = modelIntent(f, owner, "create");
+    assert.equal(intent.state, "observed", "no rejected or provably accepted plan remains stuck");
+    assert.equal(visible().length, 1);
+    assert.equal(f.items.size, before + 1);
+    assert.equal(accepted.remote.fields["System.Title"], fields["System.Title"]);
+    const settledCalls = f.requests.filter((request) => request.path.includes("/workitems/$")).length;
+    for (let replay = 0; replay < 1 + random() % 3; replay++) assert.equal((await outbox(f).create(owner, "Task", { "System.Title": "Later edit cannot allocate another identity" })).remote.id, accepted.remote.id);
+    assert.equal(f.requests.filter((request) => request.path.includes("/workitems/$")).length, settledCalls);
+    assert.ok(settledCalls - attemptsBefore <= 1, "all replays together perform at most one non-rejected POST");
+    calls += settledCalls - attemptsBefore;
+  }
+  t.diagnostic(`36 seeded create sequences; ${rejected} definitive rejections corrected; ${held} ambiguous outcomes held until proof; ${calls} non-rejected POST attempts; 36 unique observed identities.`);
+});
+
+test("round-2 model: random conditional PATCH outcomes recover exactly one link and history effect", async (t) => {
+  const f = await fixture(t);
+  const random = modelRandom(0x52621026);
+  const outcomes = ["success", "http-500", "http-408", "http-302", "network-before", "network-after", "server-after", "malformed", "crash-prepared", "crash-dispatched", "crash-observed"] as const;
+  let rejected = 0;
+  for (let sequence = 0; sequence < 33; sequence++) {
+    const owner = `model-patch-${sequence}`;
+    const original = structuredClone(f.items.get(1)!);
+    const fields = { "System.Title": `Patch plan ${sequence}` };
+    const relation: JsonPatchOperation = { op: "add", path: "/relations/-", value: { rel: "System.LinkTypes.Related", url: `${f.org}/_apis/wit/workItems/${100 + sequence}` } };
+    if (random() % 2 === 0) {
+      f.effect(400);
+      await assert.rejects(outbox(f).patch(owner, original, fields, [relation]), CommandError);
+      assert.equal(modelIntent(f, owner, "patch", fields["System.Title"]).state, "rejected");
+      assert.equal(f.items.get(1)!.rev, original.rev);
+      rejected++;
+    }
+    const outcome = outcomes[sequence < outcomes.length ? sequence : random() % outcomes.length]!;
+    if (outcome.startsWith("http-")) f.effect(Number(outcome.slice(5)));
+    else if (outcome === "network-before" || outcome === "network-after" || outcome === "server-after" || outcome === "malformed") f.effect(outcome);
+    let interrupted = false;
+    const service = outbox(f, (event) => {
+      if (!interrupted && outcome === `crash-${event.operation}` && event.boundary === "intent" && event.phase === "after") {
+        interrupted = true; throw new Error("Model PATCH crash");
+      }
+    });
+    if (outcome === "success") await service.patch(owner, original, fields, [relation]);
+    else await assert.rejects(service.patch(owner, original, fields, [relation]));
+    const response = await outbox(f).patch(owner, original, fields, [relation]);
+    assert.equal(response.rev, original.rev + 1);
+    assert.equal(modelIntent(f, owner, "patch", fields["System.Title"]).state, "observed");
+    assert.equal(f.items.get(1)!.rev, original.rev + 1, "link and generated comment commit only once");
+    assert.equal(f.items.get(1)!.relations!.filter((link) => link.url === (relation.value as AdoRelation).url).length, 1);
+    assert.equal(f.items.get(1)!.fields["System.Title"], fields["System.Title"]);
+    const calls = f.requests.filter((request) => request.method === "PATCH").length;
+    for (let replay = 0; replay < 1 + random() % 3; replay++) assert.equal((await outbox(f).patch(owner, original, fields, [relation])).rev, response.rev);
+    assert.equal(f.requests.filter((request) => request.method === "PATCH").length, calls);
+  }
+  assert.equal(f.items.size, 1);
+  assert.equal(f.items.get(1)!.relations!.length, 33);
+  t.diagnostic(`33 seeded PATCH sequences; ${rejected} definitive refusals retried; 33 accepted revisions, 33 unique links and no duplicate history effects.`);
+});
+
+test("round-2 rejection crash boundaries preserve known refusals and hold lost proof without another POST", async (t) => {
+  const probe = await fixture(t, []);
+  await probe.pm.create({ title: "Rejected crash input", type: "Task" });
+  probe.effect(400);
+  const trace: SyncBoundary[] = [];
+  assert.equal((await probe.observed("export", (event) => { trace.push(event); })).code, "ADO_REMOTE");
+  const positions = trace.flatMap((event, index) => event.boundary === "remote" && event.operation === "create" && event.phase === "after" ||
+    event.boundary === "intent" && event.operation === "rejected" ? [{ event, index }] : []);
+  assert.equal(positions.length, 3);
+  for (const { event, index } of positions) {
+    await t.test(`${event.phase} ${event.boundary} ${event.operation}`, async (sub) => {
+      const f = await fixture(sub, []);
+      const { item } = await f.pm.create({ title: "Rejected crash input", type: "Task" });
+      f.effect(400);
+      await crashAt(f, "export", index);
+      await f.pm.update(item.id, { title: "Corrected crash input" });
+      const saved = modelIntent(f, item.id, "create");
+      if (event.boundary === "intent" && event.phase === "after") {
+        assert.equal(saved.state, "rejected");
+        const retry = await f.command("sync");
+        assert.equal(retry.ok, true, JSON.stringify(retry));
+        assert.equal(f.items.size, 1);
+        assert.equal(f.items.get(1)!.fields["System.Title"], "Corrected crash input");
+        assert.equal(f.requests.filter((request) => request.path.includes("/workitems/$")).length, 2);
+      } else {
+        assert.equal(saved.state, "dispatched", "a rejection response lost before durable recording is unknown");
+        assert.equal((await f.command("sync")).code, "ADO_CONFLICT");
+        assert.equal((await f.command("sync")).code, "ADO_CONFLICT");
+        assert.equal(f.items.size, 0);
+        assert.equal(f.requests.filter((request) => request.path.includes("/workitems/$")).length, 1);
+      }
+    });
+  }
+});
+
+test("round-2 undispatched create retries use corrected inputs and preserve the latest local context", async (t) => {
+  const f = await fixture(t, []);
+  const { item } = await f.pm.create({ title: "Before undispatched interruption", type: "Task" });
+  let interrupted = false;
+  await f.observed("export", (event) => {
+    if (!interrupted && event.boundary === "intent" && event.operation === "prepared" && event.phase === "after") {
+      interrupted = true; throw new Error("Stop before any dispatch");
+    }
+  });
+  assert.equal(modelIntent(f, item.id, "create").state, "prepared");
+  assert.equal(f.items.size, 0);
+  await f.pm.update(item.id, { title: "Latest undispatched input", body: "Keep the latest context" });
+  const result = await f.command("export", { type: "Bug" });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(f.items.get(1)!.fields["System.Title"], "Latest undispatched input");
+  assert.equal(f.items.get(1)!.fields["System.WorkItemType"], "Bug");
+  const kept = (await f.pm.get(item.id, { depth: "full" })).item;
+  assert.equal(kept.title, "Latest undispatched input");
+  assert.equal(kept.body, "Keep the latest context");
+  assert.equal(f.requests.filter((request) => request.path.includes("/workitems/$")).length, 1);
 });

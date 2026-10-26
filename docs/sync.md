@@ -139,8 +139,9 @@ lock refusals, also use this conflict receipt instead of a generic remote error.
 Sync's own link and relation writes advance its
 expected revision from their immutable transaction history. SDK transaction
 markers are recorded in update history messages. Terminal changes use a
-separately matched status-only SDK update after the scalar update, preserving
-concurrent edits between those steps. Azure creation and PATCH use durable
+separately matched status-only SDK update after scalars, followed by a final
+matched base/revision publication. Agreement never advances ahead of durable
+close. Concurrent edits between any steps refuse persistence. Azure creation and PATCH use durable
 intents and scoped operation markers; retries resolve pending export ownership
 before import pairing. See [conditional commits and recovery](sync-recovery.md)
 for the dispatch-ambiguity boundary and fault matrix.

@@ -56,8 +56,8 @@
     "@unbrained/pm-cli": "2026.10.23",
     "istanbul-lib-coverage": "3.2.2",
     "istanbul-lib-instrument": "6.0.3",
-    "pm-changelog": "2026.10.21",
-    "pm-ops": "2026.10.20",
+    "pm-changelog": "2026.10.23",
+    "pm-ops": "2026.10.23",
     "typescript": "7.0.2"
   },
   "keywords": [

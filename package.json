@@ -1,6 +1,6 @@
 {
   "name": "pm-ado",
-  "version": "2026.9.2",
+  "version": "2026.10.26",
   "description": "Azure DevOps work-item sync for pm-cli, with revision-checked writes so concurrent agents cannot clobber each other",
   "repository": {
     "type": "git",
@@ -9,7 +9,7 @@
   "bugs": {
     "url": "https://github.com/unbraind/pm-ado/issues"
   },
-  "homepage": "https://github.com/unbraind/pm-ado#readme",
+  "homepage": "https://pm-cli.unbrained.dev/packages/pm-ado",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -57,8 +57,8 @@
     "@unbrained/pm-cli": "2026.10.23",
     "istanbul-lib-coverage": "3.2.2",
     "istanbul-lib-instrument": "6.0.3",
-    "pm-changelog": "2026.10.21",
-    "pm-ops": "2026.10.20",
+    "pm-changelog": "2026.10.23",
+    "pm-ops": "2026.10.23",
     "typescript": "7.0.2"
   },
   "keywords": [
@@ -75,7 +75,10 @@
   "engines": {
     "node": ">=22.18.0"
   },
-  "author": "@unbraind",
+  "author": {
+    "name": "unbrained",
+    "url": "https://unbrained.dev/about"
+  },
   "pm": {
     "aliases": [
       "ado",
@@ -134,5 +137,9 @@
       "functions": 100
     },
     "ignore": []
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

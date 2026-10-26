@@ -1,6 +1,6 @@
 {
   "name": "pm-ado",
-  "version": "2026.9.2",
+  "version": "2026.10.26",
   "description": "Azure DevOps import, export and sync through the pm SDK, with revision-checked updates, per-field three-way reconciliation and typed relations. Offline REST acceptance is implemented; live Azure acceptance is pending credentials.",
   "author": "@unbraind",
   "entry": "./dist/index.js",

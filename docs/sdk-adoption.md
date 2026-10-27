@@ -1,5 +1,13 @@
 # SDK adoption evidence (2026-10-25)
 
+**Current blocking status (R7):** SDK calls have replaced the two audited local
+implementations, but the native concurrency acceptance criterion remains unmet.
+The pinned lifecycle/bulk API cannot require a monotonic history head or item
+hash under its item lease; timestamp matches admit fixed-clock and ABA edits.
+See [pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576) and the executable
+probe below. Earlier successful distinct-timestamp tests do not certify this
+stronger contract.
+
 Tracker: [pm-ado-sdk-adoption](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-sdk-adoption.toon).
 Related certification: [pm-ado-qq1p](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-qq1p.toon).
 Baseline build: `origin/main` at `7f44a1dbd19ef2c9808c96944b34c41e890ebbcd`.
@@ -272,3 +280,51 @@ long crash matrix. Partial reporter counts are npm: 314 tests, 304 passed,
 not complete suite counts, and package-wide coverage is not certified for this
 head. All four 100% thresholds, test assertions and timeouts remain unchanged.
 Current CI and handoff receipts are linked from the adoption item and PR.
+
+
+## R7 monotonic-precondition audit
+
+`node scripts/sdk-native-precondition-probe.ts` runs the package against the
+real pinned SDK in a disposable non-git source copy, with no SDK mocks. It fixes
+Date to the inspected timestamp and injects both ordinary concurrent edits and
+ABA edits. Each case verifies that the SDK history length and last record hash
+advance while `updated_at` stays equal. The command requires a typed conflict
+and unchanged item state; it currently fails all 18 boundary cases (19 reported
+failures including the parent), with no skips or cancellations. Output contains
+only synthetic boundary receipts and counts; assertion stack paths are omitted.
+This is an explicitly failing SDK acceptance probe, not a passing regression.
+It is enforced after the ordinary release checks and by both Node CI jobs, so
+a green ordinary suite cannot hide the unresolved native contract.
+
+| Conditional-write family | Current implementation / outcome |
+| --- | --- |
+| Sync/import/export local prepare/replan, scalar/provenance, parent/dependency, close/assignment/recovery and agreement | All converge on `commitLocal`, whose native `commitItemMutations.match` compares `updated_at`; blocked on the native precondition |
+| Standalone SDK relation import and compensation (`index.ts`) | Opaque native client updates have no history precondition; same SDK gap |
+| Resolution agreement and replay publication | Same native timestamp match; same SDK gap |
+| Resolution prepare | Locked document digest detects content changes, but needs a history-bound plan to reject ABA |
+| Resolution settlement | Locked SDK callback also checks immutable last-prepare context; retain this ownership check |
+| Refresh and other read-only previews | No local mutations or compare-and-set; do not claim an atomic multi-provider snapshot |
+
+`mutateItemWithHistoryContext` exposes a locked callback and permits history
+reads, but it cannot nest a native update/close under the same non-reentrant
+item lease. The SDK's internal `runWithItemMutationPrecondition` is not public
+and its validator is synchronous. Public `setActiveExtensionHooks` replaces
+all active hooks; disabling extensions to install an isolated guard would
+bypass existing policy and extension-owned runtime behavior. Hand-applying
+native lifecycle or hierarchy changes would reimplement the SDK. The required
+public contract is an expected history head (length plus record hash), or item
+hash, on native lifecycle/bulk mutations; alternatively, an additive scoped
+transactional guard that preserves the existing extension runtime. This remains
+[pm-ado-sdk-history-fence](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-sdk-history-fence.toon),
+linked to upstream #1576. No replacement or passing revert proof is claimed for
+this unresolved class.
+
+The previous head's CI completed after the earlier handoff: all four V8 jobs
+passed 712 tests, zero failures/skips/cancellations, and 100% lines/functions,
+but failed the unchanged 100% branch gate at 99.36%. Statement instrumentation
+did not run. Added native schema-race, missing-provenance, unlinked-record,
+lookup/budget and scope cases cover the gaps. Move scope normalization is shared
+between selected and duplicate records; an impossible empty result from splitting
+an already validated nonempty string and an unreachable uncertified-ID fallback
+were removed without changing supported tracker behavior. Current gate receipts
+are recorded on the adoption item and PR.

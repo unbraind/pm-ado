@@ -77,8 +77,17 @@ export async function simulateMove(config, request, options, normalization) {
         if (selected.some((item) => !item || !Number.isSafeInteger(item.ado_id) || Number(item.ado_id) <= 0) || new Set(selected.map((item) => item.ado_id)).size !== selected.length)
             throw new MoveRefusal("selection");
         const local = selected;
-        if (local.some((item) => normalizeScopeValue(String(item.ado_org_url ?? ""), true) !== normalizeScopeValue(config.orgUrl, true) || normalizeScopeValue(String(item.ado_project ?? "")) !== normalizeScopeValue(config.project) ||
-            options.items.filter((entry) => entry.ado_id === item.ado_id && normalizeScopeValue(String(entry.ado_org_url ?? ""), true) === normalizeScopeValue(String(item.ado_org_url ?? ""), true) && normalizeScopeValue(String(entry.ado_project ?? "")) === normalizeScopeValue(String(item.ado_project ?? ""))).length !== 1))
+        /** Compare the same normalized scope for the selected record and potential duplicate identities. */
+        const identityScope = (item) => ({ org: normalizeScopeValue(String(item.ado_org_url ?? ""), true), project: normalizeScopeValue(String(item.ado_project ?? "")) });
+        if (local.some((item) => {
+            const current = identityScope(item);
+            return current.org !== config.orgUrl || current.project !== config.project || options.items.filter((entry) => {
+                if (entry.ado_id !== item.ado_id)
+                    return false;
+                const candidate = identityScope(entry);
+                return candidate.org === current.org && candidate.project === current.project;
+            }).length !== 1;
+        }))
             throw new MoveRefusal("selection");
         local.sort((a, b) => a.id < b.id ? -1 : Number(a.id > b.id));
         let requests = 0;
@@ -178,13 +187,15 @@ export async function runMoveCommand(ctx) {
         if (!project || !items || !ctx.sdk?.client || !process.env.ADO_ORG_URL?.trim() || !process.env.ADO_TOKEN?.trim())
             throw new MoveRefusal("configuration");
         const references = items.split(","), client = ctx.sdk.client;
-        if (references.length === 0 || references.length > MOVE_LIMITS.items)
+        if (references.length > MOVE_LIMITS.items)
             throw new MoveRefusal("selection");
         const snapshot = (await client.listAllComplete()).items;
         const canonical = new Map(snapshot.map((item) => [item.id, item.id]));
         for (const reference of references) {
             try {
-                canonical.set(reference, (await client.get(reference)).item.id);
+                const id = (await client.get(reference)).item.id;
+                canonical.set(reference, id);
+                canonical.set(id, id);
             }
             catch (error) {
                 if (ctx.sdk.isItemNotFoundError(error))
@@ -192,7 +203,8 @@ export async function runMoveCommand(ctx) {
                 throw error;
             }
         }
-        const normalization = { resolveReference: (value) => canonical.get(value) ?? value };
+        // simulateMove resolves only these certified references and snapshot IDs.
+        const normalization = { resolveReference: (value) => canonical.get(value) };
         return await simulateMove({ orgUrl: process.env.ADO_ORG_URL.trim(), project, token: process.env.ADO_TOKEN.trim() }, moveTransport, { items: snapshot, ids: references, areaPath: option("area-path"), iterationPath: option("iteration-path"), type: option("type"), expectedFingerprint: option("expect-fingerprint") }, normalization);
     }
     catch (error) {

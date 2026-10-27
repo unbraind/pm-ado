@@ -447,3 +447,16 @@ presence and request subsets, item/observed/per-field revisions, legacy unknown
 sets and stale witnesses. A real SDK publication property checks 18 successive
 partial agreements against the same preview predicate. Native non-git SDK,
 copied-extension JSON/TOON, and packed npm/Bun shapes cover the reported case.
+
+
+## Native monotonic-precondition limitation
+
+The base/order/outbox invariants above do not make timestamp equality a native
+item version. The pinned bulk lifecycle API still compares `updated_at`; a
+fixed-clock or ABA peer edit can advance history without changing that value.
+The current blocking acceptance probe is
+`node scripts/sdk-native-precondition-probe.ts`; it fails 18 boundary cases and
+must pass before claiming this native concurrency class is closed. The audited
+write families and missing public contract are documented in
+[SDK adoption evidence](sdk-adoption.md#r7-monotonic-precondition-audit) and
+[pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576).

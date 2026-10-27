@@ -4,12 +4,16 @@ description: "The new preview/CAS rule requires an under-lock monotonically grow
 type: Issue
 status: open
 priority: 2
-tags[1]: sdk-gap
+tags[3]: "gh:unbraind/pm-cli#1576",sdk-gap,"upstream:pm-cli#1576"
 created_at: "2026-10-27T13:44:23.397Z"
-updated_at: "2026-10-27T13:48:53.307Z"
+updated_at: "2026-10-27T17:08:11.670Z"
 author: codex-agent
 parent: pm-ado-sdk-adoption
-files[2]{path,scope}:
+comments[2]{created_at,author,text}:
+  "2026-10-27T16:36:12.343Z",codex-agent,"R7 audit links the already-open upstream issue https://github.com/unbraind/pm-cli/issues/1576. Installed SDK 2026.10.24 BulkItemUpdateMutation.match accepts only a metadata key/value; BulkItemCloseMutation has no match or expectedItemHash/expectedHistoryHead. commitWorkspaceTransaction provides a workspace lease but ordinary native writers acquire item leases independently. mutateItemWithHistoryContext permits history reads inside its callback, but cannot compose a native lifecycle update under that same non-reentrant item lease. The internal runWithItemMutationPrecondition callback is synchronous and not a public SDK export. A beforeMutation hook can inspect history under the native item lease; SDK setActiveExtensionHooks replaces the full registry and offers no public additive scoped guard or registry snapshot. Disabling extensions as in a hook workaround would bypass existing policy/hooks and lose extension-owned runtime schema; hand-applying native update/close/hierarchy behavior would violate SDK adoption. Required public contract: native lifecycle/bulk expectedHistoryHead (length plus record hash), or expectedItemHash, checked under the existing item lease; alternatively an additive request-scoped transactional guard that preserves the active extension runtime. Native sync update sites and resolution agreement publication remain blocked on this contract; not marked fixed. A package-level fixed-clock boundary probe is being captured in disposable source copies with the real SDK."
+  "2026-10-27T17:08:11.670Z",codex-agent,"R7 capability check also inspected the public SDK 2026.10.27 declarations from a credential-free npm pack without changing the pin. No native expected item/hash/history-head precondition was exported there either. RelationshipEventStore.expectedVersion guards its separate relationship ledger, not native item parent/dependency/lifecycle writes. Additional SDK facade audit: index.ts importRelations forward updates and compensation also call an opaque PmClient.update without a history precondition; that facade cannot enforce a native item CAS with its current client contract. These sites join sync commitLocal and resolution publication under upstream #1576. The fixed-clock probe fails all 18 cases: history advances in all 18; 15 return incorrect success; 6 overwrite the peer title; all 18 change item state after the peer edit. Revert proof is not applicable to an unimplemented SDK contract; the finding remains unresolved, not marked fixed."
+files[3]{path,scope}:
   resolution.ts,project
+  scripts/sdk-native-precondition-probe.ts,project
   sync.ts,project
 body: ""

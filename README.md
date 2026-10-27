@@ -176,7 +176,16 @@ GitHub workflows need a git checkout and are separate from tracker operations.
 `pm ado resolve-plan --item <id> [--save]` returns compact base/local/remote
 field digests. Review and add explicit `local`/`remote` choices, then use
 `pm ado resolve-apply --artifact decision.json` or `--plan <core-plan-id>`.
-Stale local or Azure revisions refuse; successful replay adds no writes.
+Changed local document hashes or Azure revisions refuse; successful replay adds no writes.
+
+The pinned SDK's native lifecycle updates still use timestamp-only matches.
+Same-millisecond edits and ABA edits can therefore escape their local guard.
+This is a blocking limitation tracked in
+[pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576), which requests a
+native expected-history/hash precondition. Run
+`node scripts/sdk-native-precondition-probe.ts` from a source checkout for the
+fixed-clock acceptance probe; it currently exits nonzero. Passing ordinary
+release tests does not establish that this concurrency contract is satisfied.
 Prepared intents resume settlement after a post-PATCH lease or write failure.
 Saved plans retain an opaque scope reference instead of organization/project
 configuration.

@@ -9,11 +9,12 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { PmClient } from "@unbrained/pm-cli/sdk";
+import { PmClient, createExtensionCommandSdk } from "@unbrained/pm-cli/sdk";
 import { createExtensionTestHarness } from "@unbrained/pm-cli/sdk/testing";
 import * as built from "../dist/index.js";
 import extension, { AdoClient, CommandError, ContractRefusal, discoverProjectContract, RELATION_MAP, type AdoTransport, type ProjectContract } from "../index.ts";
 import { ADO_FIELD_MAP, transport } from "../sync.ts";
+import { runContractCommand } from "../contracts.ts";
 
 const config = { orgUrl: "https://dev.azure.com/example", project: "Example Project", token: "synthetic-secret" };
 const run = promisify(execFile);
@@ -380,4 +381,30 @@ test("round-5 read-only contract comparisons use native aliases in host SDK JSON
   assert.equal(historical.compatible, false); assert.ok(historical.issues.some((issue) => issue.code === "import_state"));
   assert.deepEqual(snapshot(f.pmRoot), before);
   assert.ok(f.calls.every((call) => call.method === "GET"));
+});
+
+test("round-7 a native status added between schema and item reads remains a diagnosable value", async (t) => {
+  const f = await hostFixture(t); let raced = false;
+  /** Inject a genuine competing schema/item write, then delegate the complete snapshot to the SDK. */
+  class SchemaRaceClient extends PmClient {
+    /** Preserve native certification while exposing a status newer than the earlier schema snapshot. */
+    override async listAllComplete(...args: Parameters<PmClient["listAllComplete"]>) {
+      if (!raced) {
+        raced = true;
+        await this.schemaAddStatus("late_stage", { role: ["active"] });
+        await this.update(f.item.item.id, { status: "late_stage" });
+      }
+      return super.listAllComplete(...args);
+    }
+  }
+  const client = new SchemaRaceClient({ cwd: f.root, pmRoot: f.pmRoot, author: "fixture-agent" });
+  const previous = process.env, exit = process.exitCode; process.env = { ...f.env };
+  try {
+    const result = await runContractCommand({ command: "ado contract", args: [], options: { project: config.project, checkTracker: true },
+      global: {}, pm_root: f.pmRoot, sdk: createExtensionCommandSdk(f.pmRoot, client) });
+    assert.equal(result.ok, true); assert.equal(raced, true);
+    assert.ok("issues" in result && result.issues.some((issue) => issue.code === "export_state" && issue.target === "Task/late_stage"));
+    assert.equal((await f.pm.get(f.item.item.id)).item.status, "late_stage");
+    assert.ok(f.calls.every((call) => call.method === "GET"));
+  } finally { process.env = previous; process.exitCode = exit; }
 });

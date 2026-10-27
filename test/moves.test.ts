@@ -92,7 +92,7 @@ test("selection and destination errors refuse before the first request", async (
   const f = await fixture(t);
   for (const ids of [[], ["absent"], [...f.options.ids, ...f.options.ids], Array.from({ length: 51 }, (_, i) => String(i))]) await refuses(f.preview({ ids }), "selection");
   for (const value of [undefined, "1", 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) await refuses(f.preview({ items: [{ ...f.options.items[0]!, ado_id: value }] }), "selection");
-  for (const changes of [{ ado_org_url: undefined }, { ado_org_url: "https://dev.azure.com/other" }, { ado_project: "Other" }]) {
+  for (const changes of [{ ado_org_url: undefined }, { ado_org_url: "https://dev.azure.com/other" }, { ado_project: undefined }, { ado_project: "Other" }]) {
     await refuses(f.preview({ items: [{ ...f.options.items[0]!, ...changes }] }), "selection");
   }
   const second = { ...f.options.items[0]!, id: "fixture-other" };
@@ -244,4 +244,21 @@ test("round-5 move IDs use host SDK prefix case and hash-marker normalization wi
   const before = f.calls.length;
   const duplicate = await f.command({ project: "Example", items: `${id}, #${id.toUpperCase()}`, areaPath: "Example\\New" });
   assert.equal(duplicate.code, "selection"); assert.equal(f.calls.length, before);
+});
+
+test("round-7 move selection bounds and native lookup failures refuse before Azure reads", async (t) => {
+  const f = await host(t), base = { project: "Example", areaPath: "Example\\New" };
+  assert.equal((await f.command({ ...base, items: Array.from({ length: 51 }, (_, index) => "fixture-" + index).join(",") })).code, "selection");
+  assert.equal((await f.command({ ...base, items: "fixture-missing" })).code, "selection");
+  assert.equal((await f.command({ ...base, items: "," })).code, "remote_failure");
+  assert.equal(f.calls.length, 0);
+});
+
+test("round-7 unscoped duplicate Azure IDs cannot borrow a selected native record's scope", async (t) => {
+  const f = await fixture(t), first = f.options.items[0]!;
+  for (const missing of [{ ado_org_url: undefined }, { ado_project: undefined }]) {
+    const result = await f.preview({ items: [first, { ...first, id: "fixture-unscoped", ...missing }] });
+    assert.equal(result.rows.length, 1); assert.equal(result.rows[0]!.id, first.id);
+    assert.equal(result.ok, true);
+  }
 });

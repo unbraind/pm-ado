@@ -3169,3 +3169,27 @@ test("round-5 unprepared version-2 coordinates normalize on first apply interrup
     if (previousExports === undefined) delete process.env.ADO_EXPORT_STATE_MAP; else process.env.ADO_EXPORT_STATE_MAP = previousExports;
   }
 });
+
+test("round-7 resolution refuses missing native provenance without mutating tracker state", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm);
+  for (const field of ["ado_org_url", "ado_project"]) {
+    await f.setFields(item.id, {}, [field]);
+    const before = snapshot(f.pmRoot);
+    await assert.rejects(resolver(f).plan(item.id), { code: "scope" });
+    assert.deepEqual(snapshot(f.pmRoot), before);
+    await f.setFields(item.id, { [field]: field === "ado_org_url" ? f.org : "Project" });
+  }
+});
+
+test("round-7 native agreement read ignores unrelated unlinked records with no Azure scope", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const linked = await row(f.pm);
+  await f.pm.create({ title: "Unlinked native item", type: "Task" });
+  const before = snapshot(f.pmRoot);
+  const actual = await readLocalAgreement(f.pm, linked.id, { orgUrl: f.org, project: "Project", token: "synthetic-token" });
+  assert.equal(actual.identities.size, 1); assert.equal(actual.identities.get(1), linked.id);
+  assert.deepEqual(snapshot(f.pmRoot), before);
+});

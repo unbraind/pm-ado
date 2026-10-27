@@ -316,3 +316,32 @@ creation export, and a pending inverse endpoint that has not yet been read back
 on Azure. The last case refuses sync without a PATCH or tracker mutation, then
 converges after the matching remote inverse is observed. These use real SDK
 trackers; expected native behavior is not hand-written into the fixture.
+
+
+## Verified review-repair source gates
+
+Source checkpoint `d11f1f2e00d3a1f1e63dc8b7ab68a36f17830660` passes
+[all four CI jobs](https://github.com/unbraind/pm-ado/actions/runs/40447305631):
+Node 22, Node 26, the complete npm release gate and the complete Bun release
+gate. Each passes 667/667 tests twice, with zero failures or skips. All eleven
+required sources have 100% statements, lines, branches and functions;
+statements are 1955/1955. Real packed install-shape acceptance passes on CI.
+[CodeQL](https://github.com/unbraind/pm-ado/actions/runs/40447305694) also passes.
+
+The exact source passes 14/14 public-corpus differential comparisons across
+140 real items, alongside 5 fixed, 6 agreement and 4 added acceptance cases
+through the pinned pm test runner. Typecheck, test typecheck, build, 111/111
+documented declarations, changelog, whitespace, append-only history and public
+evidence privacy checks pass. Strict local tracker health passes with its
+pre-existing queued-telemetry advisory. No standalone lint script is configured.
+Local packed setup encountered a reproduced registry timeout; CI supplies the
+successful full npm/Bun acceptance evidence rather than counting that local
+attempt as a pass.
+
+Both audited SDK findings are replaced, none deferred. Seven original
+implementation lines are removed; the full change deletes 47 core lines
+relative to current main. The two SDK follow-ups and ambiguous-create provider
+constraint above remain explicit. The adoption item is left in progress and
+its claim released for orchestrator verification. The final tracker/docs-only
+commit is checked again through [PR checks](https://github.com/unbraind/pm-ado/pull/46/checks).
+No merge or release is performed.

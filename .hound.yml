@@ -1,0 +1,8 @@
+# Hound CI configuration.
+# `dist/` is generated ES2022 output (committed deliberately so the package can
+# be installed straight from the repo as a pm extension). Hound lints it with
+# jshint's default ES5 profile, which reports every `const` and template literal
+# in the generated file as an error — pure noise that buries real findings.
+# Same rationale as pm-web/.hound.yml.
+jshint:
+  enabled: false

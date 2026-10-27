@@ -2,13 +2,18 @@ id: pm-ado-hound-generated-dist
 title: Stop Hound from linting generated dist/ output
 description: "Disable Hound JSHint using the pm-slack and pm-web precedent: committed dist/ JavaScript targets ES2022, while Hound defaults to ES5 and produces false positives."
 type: Chore
-status: in_progress
+status: closed
 priority: 2
 tags[2]: ci,review-bots
 created_at: "2026-10-27T01:14:53.914Z"
-updated_at: "2026-10-27T01:47:02.346Z"
+updated_at: "2026-10-27T09:55:22.798Z"
+closed_at: "2026-10-27T09:55:22.793Z"
+completed_at: "2026-10-27T07:14:15.000Z"
 author: codex-agent
 acceptance_criteria: Hound no longer lints generated dist/ output; no other lint or gate changes
+resolution: "Delivered by https://github.com/unbraind/pm-ado/pull/54 (merge 64aca03cb7c2, head 2230d99873f8)"
+expected_result: Hound no longer lints generated dist/ output; no other lint or gate changes
+actual_result: "Merged at 2026-10-27T07:14:15Z; no readable required checks, so every completed head check run had to succeed, be neutral or be skipped; successful checks: CodeQL, CodeRabbit, codeql, release gate (bun), release gate (npm), test (22), test (26)"
 comments[5]{created_at,author,text}:
   "2026-10-27T01:14:59.337Z",codex-agent,"Plan: copy the documented pm-slack .hound.yml configuration, disabling only Hound JSHint. Preserve package lint and release gates. Verify the configuration fails when reverted, run both release gates with isolated Git identity and at most two CPUs, regenerate the changelog, and open an unmerged PR. Item remains open for orchestrator verification."
   "2026-10-27T01:15:24.686Z",codex-agent,"Configuration revert proof: the focused Node assertion passes with .hound.yml present, fails when the new file is removed, then passes after restoring its exact bytes. No source behavior or package gates change."
@@ -23,4 +28,5 @@ tests[3]{command,scope,timeout_seconds,pm_context_mode,workspace_context_mode,pr
   "HOME=\"$(mktemp -d)\" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 taskset -c 0,1 bun run release:check",project,2400,tracker,source,codex-agent,"2026-10-27T01:16:06.073Z",local_mutation,chore/hound-generated-dist
 docs[1]{path,scope}:
   CHANGELOG.md,project
+close_reason: "{\"pr\":54,\"url\":\"https://github.com/unbraind/pm-ado/pull/54\",\"merge_commit_sha\":\"64aca03cb7c21056855c322effe7ecc7f25755dd\",\"head_sha\":\"2230d99873f8b6033650b15d4b4d5863ace96ef6\",\"merged_at\":\"2026-10-27T07:14:15Z\",\"checks\":[\"CodeQL\",\"CodeRabbit\",\"codeql\",\"release gate (bun)\",\"release gate (npm)\",\"test (22)\",\"test (26)\"]}"
 body: ""

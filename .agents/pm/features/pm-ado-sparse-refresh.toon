@@ -3,13 +3,18 @@ title: Compile sparse Azure refresh plans with explicit field accounting
 description: "Overlap rechecked: sync.ts owns transport batching and three-way field reconciliation; core list output budgets shape local output; pm-jira search projections and pm-linear GraphQL selection own different provider protocols. This adds a read-only, reviewable, costed refresh compiler using saved Azure revisions/bases and declared pm field needs."
 type: Feature
 pm_format_version: 2
-status: in_progress
+status: closed
 priority: 2
 tags: []
 created_at: "2026-10-25T21:50:36.590Z"
-updated_at: "2026-10-26T18:58:46.396Z"
+updated_at: "2026-10-27T09:55:22.761Z"
+closed_at: "2026-10-27T09:55:22.748Z"
+completed_at: "2026-10-26T19:08:56.000Z"
 author: codex-agent
 acceptance_criteria: "A 1000-item fixture uses at most five batch reads per refresh phase; unchanged items cause zero pm mutations; every requested field is accounted for; unavailable rows never become deletions. Typed SDK and CLI, compact output, typed remedies, no-git real tracker validation, seeded property and boundary tests, unchanged release gates."
+resolution: "Delivered by https://github.com/unbraind/pm-ado/pull/48 (merge 2bab5491e908, head 431781aa0515)"
+expected_result: "A 1000-item fixture uses at most five batch reads per refresh phase; unchanged items cause zero pm mutations; every requested field is accounted for; unavailable rows never become deletions. Typed SDK and CLI, compact output, typed remedies, no-git real tracker validation, seeded property and boundary tests, unchanged release gates."
+actual_result: "Merged at 2026-10-26T19:08:56Z; no readable required checks, so every completed head check run had to succeed, be neutral or be skipped; successful checks: CodeQL, CodeRabbit, codeql, release gate (bun), release gate (npm), test (22), test (26)"
 comments[22]{created_at,author,text}:
   "2026-10-25T21:54:35.625Z",codex-agent,"Implemented read-only compileRefreshPlan and observeRefreshPlan plus ado refresh-plan. Uses certified listAllComplete reads, existing Azure batchIds and AdoClient transport, and the existing field map/base reader. Fresh revision probes distinguish exact matches from unavailable rows. Artifacts contain read requests only, no journal, idempotency keys, apply path, status-name inference or shared mutable state. Foreign/unlinked records are skipped with counted reasons. Testing strict schema boundaries, 1000-item costs, SDK readback and real non-git trackers next."
   "2026-10-25T22:00:02.728Z",codex-agent,"Model-based acceptance passed: 500 seeded import/export/sync sequences with SDK-read reference state, CRLF/whitespace variants, all mapped native fields, custom active/blocked/done/canceled/draft statuses, hierarchy and related edges, exact replays and older-input refusals. Found and fixed older-revision rollback in existing sync. Terminal transitions now use SDK registry roles. Additional 500 seeded refresh sequences cover accounting/omissions/extreme revisions. Six competing transitions at every async observation boundary preserve peer writes. Read-only public main tracker copy: 32 items, 69 authoritative files hash-identical; unchanged projection 1 probe/0 hydration, all-changed 1/1 and 288 cells; mixed 17 unchanged, 8 changed, 7 unavailable, 72 cells; complete JSON 1095/1419/1351 bytes. Synthetic Azure evidence only; no live Azure credential validation."
@@ -83,4 +88,5 @@ docs[4]{path,scope}:
   docs/sparse-refresh-validation.md,project
   docs/sparse-refresh.md,project
   test/fixtures/public-api/README.md,project
+close_reason: "{\"pr\":48,\"url\":\"https://github.com/unbraind/pm-ado/pull/48\",\"merge_commit_sha\":\"2bab5491e908aad662173761dbe51b721faae551\",\"head_sha\":\"431781aa0515b70719ad7c368b0b18e2d43849fd\",\"merged_at\":\"2026-10-26T19:08:56Z\",\"checks\":[\"CodeQL\",\"CodeRabbit\",\"codeql\",\"release gate (bun)\",\"release gate (npm)\",\"test (22)\",\"test (26)\"]}"
 body: ""

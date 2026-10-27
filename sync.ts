@@ -1,6 +1,6 @@
 import { normalizeFieldValues, normalizeStatusValue, normalizeAssigneeValue, normalizeItemReference, normalizeScopeValue, normalizeStateMaps, type ValueNormalization } from "./normalization.ts";
 /** Command orchestration and per-field Azure DevOps reconciliation. */
-import { advanceSyncBase, readBaseRevisions } from "./agreement.ts";
+import { advanceSyncBase, readBaseRevisions, knownBase, baseFields } from "./agreement.ts";
 import { loadResolutionSdk, resolutionDigest } from "./resolution.ts";
 import { SyncOutbox, isProtocolTag, type SyncObserver } from "./sync-outbox.ts";
 import type { CommandHandlerContext, FlagDefinition } from "@unbrained/pm-cli/sdk/authoring";
@@ -152,13 +152,14 @@ export function readBase(item: ItemMetadata, sample: Values, normalization?: Val
   try { parsed = JSON.parse(String(item.ado_sync_base)); }
   catch { throw new CommandError(`Invalid ado_sync_base for ${item.id}: expected valid JSON`); }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new CommandError("Invalid ado_sync_base");
-  const base = parsed as Values;
+  const base = parsed as Values, presentFields = new Set(baseFields(parsed as Values));
   for (const [key, value] of Object.entries(sample)) {
-    if (base.ado_base_partial === 1 && !Object.hasOwn(base, key)) continue;
+    if ((base.ado_base_partial === 1 || Object.hasOwn(base, "ado_base_fields")) && !presentFields.has(key)) continue;
     if (Array.isArray(value) ? !Array.isArray(base[key]) || (base[key] as unknown[]).some((entry) => typeof entry !== "string")
       : typeof base[key] !== typeof value) throw new CommandError(`Invalid ado_sync_base field: ${key}`);
   }
-  return normalization === false ? base : normalizeFieldValues(base, normalization);
+  const present = knownBase(base);
+  return normalization === false ? present : normalizeFieldValues(present, normalization);
 }
 
 /** Exact field mapping used by reconciliation and remote-contract discovery. */
@@ -275,7 +276,7 @@ export interface OwnedEffect {
 /** Choose each key from its witnessed base or the latest proof for that exact owned scalar. */
 export function mergeSyncValues(local: Values, remote: Values, base: Values | undefined, effect?: OwnedEffect | readonly OwnedEffect[], normalization?: ValueNormalization): Record<string, "equal" | "local" | "remote" | "conflict"> {
   local = normalizeFieldValues(local, normalization); remote = normalizeFieldValues(remote, normalization);
-  if (base !== undefined) base = normalizeFieldValues(base, normalization);
+  if (base !== undefined) base = normalizeFieldValues(knownBase(base), normalization);
   const witnessed = readBaseRevisions(base);
   const effects: readonly OwnedEffect[] = (effect === undefined ? [] : Array.isArray(effect) ? effect : [effect as OwnedEffect]).map((candidate) => ({ ...candidate,
     original: normalizeFieldValues(candidate.original, normalization), accepted: normalizeFieldValues(candidate.accepted, normalization) }));

@@ -1,0 +1,15 @@
+id: pm-ado-sdk-history-fence
+title: Expose a monotonic history fence for native conditional SDK updates
+description: "The new preview/CAS rule requires an under-lock monotonically growing witness. SDK 2026.10.24 BulkItemUpdateMutation exposes only match: BulkItemUniqueKey (key/value), with no expectedHistoryHead or expectedHistoryLength precondition on native lifecycle updates. A real non-git SDK probe freezes Date to the inspected updated_at, performs title Initial -> Foreign -> Initial, then commits an update matched to the old timestamp: history grows 1 -> 4, timestamp stays equal, conflict is false and stale Planned wins. This is an SDK timestamp-match limitation, not a field-presence regression. Searched public SDK declarations for transaction, match, history and preconditions, and open upstream issue searches history head precondition and ABA match returned zero. Desired API: BulkItemUpdateMutation.expectedHistoryHead or an equivalent monotonic native lifecycle precondition checked under the existing mutation lock; terminal close must carry the same contract. BeforeMutationHook exists, but using a package-defined history/CAS policy would reimplement SDK concurrency behavior and needs a shared upstream design. Orchestrator should report upstream; no upstream issue filed here."
+type: Issue
+status: open
+priority: 2
+tags[1]: sdk-gap
+created_at: "2026-10-27T13:44:23.397Z"
+updated_at: "2026-10-27T13:48:53.307Z"
+author: codex-agent
+parent: pm-ado-sdk-adoption
+files[2]{path,scope}:
+  resolution.ts,project
+  sync.ts,project
+body: ""

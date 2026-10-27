@@ -508,4 +508,5 @@ declare const _default: {
 export default _default;
 export { normalizeStatusValue, normalizeItemReference, normalizeTitleValue, normalizeAssigneeValue, normalizeTagValues, normalizePriorityValue, normalizeLiteralValue, normalizeScopeValue, normalizeFieldValues, normalizeStateMaps } from "./normalization.ts";
 export type { ValueNormalization, StatusReferenceNormalization, ItemReferenceNormalization } from "./normalization.ts";
+export { baseFields, fieldAtRevision } from "./agreement.ts";
 //# sourceMappingURL=index.d.ts.map

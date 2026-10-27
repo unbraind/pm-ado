@@ -12,6 +12,8 @@ export interface RefreshSaved {
     revision: number | null;
     /** Fields present in the saved base; a base is reusable only at its exact revision. */
     base: RefreshField[];
+    /** Optional per-field witnessed revisions; missing entries are never cached. */
+    revisions?: Record<string, number>;
 }
 /** Revision-only observation, obtained anew on every invocation. */
 export interface RefreshRevision {

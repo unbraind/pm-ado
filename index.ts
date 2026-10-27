@@ -1215,3 +1215,5 @@ export default defineExtension({
 
 export { normalizeStatusValue, normalizeItemReference, normalizeTitleValue, normalizeAssigneeValue, normalizeTagValues, normalizePriorityValue, normalizeLiteralValue, normalizeScopeValue, normalizeFieldValues, normalizeStateMaps } from "./normalization.ts";
 export type { ValueNormalization, StatusReferenceNormalization, ItemReferenceNormalization } from "./normalization.ts";
+
+export { baseFields, fieldAtRevision } from "./agreement.ts";

@@ -43,6 +43,12 @@ export interface AgreementResult {
 }
 /** Decode per-key read-back revision witnesses; legacy bases have no per-key coordinates. */
 export declare function readBaseRevisions(base: Values | undefined): Record<string, number>;
+/** Read explicit field membership; complete legacy bases retain their original own-field evidence. */
+export declare function baseFields(base: Values | undefined): string[];
+/** Project only fields whose presence is certified, preserving opaque revision metadata. */
+export declare function knownBase(base: Values): Values;
+/** The same per-field revision predicate is used by hydration planning and persisted read-back evidence. */
+export declare function fieldAtRevision(field: string, fields: readonly string[], savedRevision: number | null, observedRevision: number, revisions?: Readonly<Record<string, number>>): boolean;
 /** Advance each key only from matching post-operation reads; acknowledge a revision only on full agreement. */
 export declare function advanceSyncBase(operations: AgreementOperations): Promise<AgreementResult>;
 //# sourceMappingURL=agreement.d.ts.map

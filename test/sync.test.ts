@@ -2268,7 +2268,7 @@ test("round-3 model: 512 two-sided sequences preserve edits and witness every ba
   /** Every newly published base key must have a real post-operation equality witness. */
   const invariant = async () => {
     const b = await base();
-    for (const [key, value] of Object.entries(b)) if (!["ado_base_partial", "ado_agreed_revisions"].includes(key) && !witnesses.get(key)?.has(JSON.stringify(value))) {
+    for (const [key, value] of Object.entries(b)) if (!["ado_base_partial", "ado_base_fields", "ado_agreed_revisions"].includes(key) && !witnesses.get(key)?.has(JSON.stringify(value))) {
       invariantFailure = new Error(`unwitnessed base ${key}: ${JSON.stringify(value)}`); throw invariantFailure;
     }
   };
@@ -2818,7 +2818,7 @@ test("round-4 all partial-base masks retain unknown coordinates across resolutio
   const maps = { imports: IMPORT_STATE_MAP, exports: STATE_MAP }, template = await resolver(f).plan(item.id);
   for (let mask = 0; mask < 2 ** keys.length; mask++) {
     const known = Object.fromEntries(keys.filter((_key, index) => (mask & 2 ** index) !== 0).map((key) => [key, local[key]]));
-    const projected = resolutionFields({ ...item, ado_sync_base: JSON.stringify({ ...known, ado_base_partial: 1 }) }, remote, maps);
+    const projected = resolutionFields({ ...item, ado_sync_base: JSON.stringify({ ...known, ado_base_partial: 1, ado_base_fields: Object.keys(known) }) }, remote, maps);
     for (const field of projected) {
       assert.equal(field.base, Object.hasOwn(known, field.field) ? resolutionDigest(local[field.field]) : null, `mask ${mask}: ${field.field}`);
       assert.equal(field.conflict, !Object.hasOwn(known, field.field), `mask ${mask}: unknown ancestry remains a conflict`);

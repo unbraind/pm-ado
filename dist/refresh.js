@@ -1,3 +1,4 @@
+import { baseFields, fieldAtRevision, readBaseRevisions } from "./agreement.js";
 import { normalizeScopeValue } from "./normalization.js";
 import { AdoClient, batchIds, readConfig } from "./index.js";
 import { ADO_FIELD_MAP, localValues, readBase, transport } from "./sync.js";
@@ -50,9 +51,13 @@ export function validateRefreshInput(value) {
     requireInput(value.needs.length > 0);
     dense(value.saved, 10000);
     for (const row of value.saved) {
-        record(row, ["id", "revision", "base"]);
+        record(row, ["id", "revision", "base"], ["revisions"]);
         requireInput(int32(row.id) && (row.revision === null || int32(row.revision)));
         subset(row.base);
+        if (row.revisions !== undefined) {
+            record(row.revisions, [], fields);
+            requireInput(Object.values(row.revisions).every(int32));
+        }
     }
     requireInput(new Set(value.saved.map((row) => row.id)).size === value.saved.length);
     if (value.observed !== undefined) {
@@ -89,7 +94,7 @@ export function compileRefreshPlan(input) {
             (same ? unchanged : changed).push(row.id);
             const missing = [];
             for (const count of accounting) {
-                if (same && row.base.includes(count.field))
+                if (fieldAtRevision(count.field, row.base, row.revision, revision, row.revisions))
                     count.cached++;
                 else {
                     count.read++;
@@ -130,8 +135,18 @@ export function refreshSaved(items, config) {
         catch {
             throw new RefreshRefusal("invalid_input");
         }
+        let revisions;
+        if (base?.ado_agreed_revisions !== undefined) {
+            try {
+                revisions = Object.fromEntries(Object.entries(readBaseRevisions(base)).filter(([field]) => baseFields(base).includes(field)));
+            }
+            catch {
+                revisions = {}; /* Unreadable historical witnesses provide no cache evidence. */
+            }
+        }
         saved.push({ id: Number(item.ado_id), revision: item.ado_rev === undefined ? null : Number(item.ado_rev),
-            base: base === undefined ? [] : [...Object.keys(ADO_FIELD_MAP), ...(Array.isArray(base.relations) ? ["relations"] : [])] });
+            base: baseFields(base).filter((field) => [...Object.keys(ADO_FIELD_MAP), "relations"].includes(field)),
+            ...(revisions === undefined ? {} : { revisions }) });
     }
     return saved;
 }

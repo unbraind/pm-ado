@@ -133,6 +133,11 @@ test("packed npm-global, bun-global, npx, bunx, local-bin and copied-extension c
       }
       const rows = JSON.parse(await pm(["list", "--all", "--full"])) as { items: { id: string; status: string; ado_rev: number }[] };
       assert.equal(rows.items.length, 1); assert.equal(rows.items[0]!.status, shape.name === "copied-tracker-extension" ? "open" : "closed"); assert.equal(rows.items[0]!.ado_rev, shape.name === "copied-tracker-extension" ? 1 : 2);
+      await pm(["update", created.id, "--field", "ado_rev=2", "--field", 'ado_sync_base={"ado_base_partial":1,"relations":[]}']);
+      const presence = JSON.parse(await pm(["ado", "refresh-plan", "--fields", "title,relations"])) as { hydrate: unknown[]; accounting: { cached: number; read: number }[] };
+      assert.equal(presence.hydrate.length, 1); assert.ok(presence.accounting.every((row) => row.cached === 0 && row.read === 1));
+      const presenceToon = await command(shape.binary, [...shape.prefix, "--pm-path", join(tracker, ".agents/pm"), "ado", "refresh-plan", "--fields", "title,relations", "--output-format", "toon"], tracker, runtime);
+      assert.match(presenceToon, /title,0,1,0,0/u);
       if (shape.name !== "copied-tracker-extension") {
         const plan = JSON.parse(await pm(["ado", "resolve-plan", "--item", created.id])) as { ok: boolean };
         assert.equal(plan.ok, true, "resolution's lazy module link must also survive this launcher");

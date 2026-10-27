@@ -428,3 +428,22 @@ adds Hound configuration and its unrelated tracker item, preserving the measured
 sync implementation and test assertions. The final evidence commit releases the
 adoption claim without closing items; its exact-head checks are linked from
 the [PR checks](https://github.com/unbraind/pm-ado/pull/46/checks).
+
+
+## Exact field presence
+
+Every new base publication includes `ado_base_fields`, containing exactly the
+keys whose agreed values are stored. Only read-back agreement can add a key;
+a differing key retains its previously certified value and revision. All base
+readers use `baseFields`/`knownBase`; unlisted physical values cannot become
+merge ancestors or resolution choices. A legacy partial base with no explicit
+set has no known fields and remains readable as unknown state. Complete legacy
+bases retain their previous meaning. Refresh uses the same membership decoder
+and checks each requested key against its witnessed revision through
+`fieldAtRevision`; unchanged item revisions alone cannot suppress hydration.
+
+The presence property runs 2,048 cases with seed `0x6a27cafe`, varying nine-field
+presence and request subsets, item/observed/per-field revisions, legacy unknown
+sets and stale witnesses. A real SDK publication property checks 18 successive
+partial agreements against the same preview predicate. Native non-git SDK,
+copied-extension JSON/TOON, and packed npm/Bun shapes cover the reported case.

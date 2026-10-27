@@ -56,12 +56,32 @@ export function readBaseRevisions(base: Values | undefined): Record<string, numb
   return revisions as Record<string, number>;
 }
 
+/** Read explicit field membership; complete legacy bases retain their original own-field evidence. */
+export function baseFields(base: Values | undefined): string[] {
+  if (base === undefined) return [];
+  const keys = Object.keys(base).filter((key) => !["ado_base_partial", "ado_base_fields", "ado_agreed_revisions"].includes(key) && (key !== "relations" || Array.isArray(base[key]) && (base[key] as string[]).every((value) => typeof value === "string")));
+  if (Object.hasOwn(base, "ado_base_fields")) return Array.isArray(base.ado_base_fields)
+    ? [...new Set(base.ado_base_fields.filter((key) => typeof key === "string" && keys.includes(key)))].sort() : [];
+  return base.ado_base_partial === 1 ? [] : keys.sort();
+}
+/** Project only fields whose presence is certified, preserving opaque revision metadata. */
+export function knownBase(base: Values): Values {
+  const fields = new Set(baseFields(base));
+  return Object.fromEntries(Object.entries(base).filter(([key]) => fields.has(key) || ["ado_base_partial", "ado_base_fields", "ado_agreed_revisions"].includes(key)));
+}
+/** The same per-field revision predicate is used by hydration planning and persisted read-back evidence. */
+export function fieldAtRevision(field: string, fields: readonly string[], savedRevision: number | null, observedRevision: number,
+  revisions?: Readonly<Record<string, number>>): boolean {
+  return observedRevision >= (savedRevision ?? 0) && fields.includes(field) && (revisions === undefined ? savedRevision === observedRevision : Object.hasOwn(revisions, field) && revisions[field] === observedRevision);
+}
+
 /** Advance each key only from matching post-operation reads; acknowledge a revision only on full agreement. */
 export async function advanceSyncBase(operations: AgreementOperations): Promise<AgreementResult> {
   const local = await operations.readLocal();
   if (local.version !== operations.expectedVersion) throw new CommandError("Local item changed before read-back agreement; re-read both trackers and retry", EXIT_CODE.conflict);
   const remote = await operations.readRemote(local);
   const previousRevisions = readBaseRevisions(local.base);
+  const previousFields = new Set(baseFields(local.base));
   if (!Number.isSafeInteger(remote.revision) || remote.revision < operations.minimumRemoteRevision ||
       local.acknowledgedRevision !== undefined && remote.revision < local.acknowledgedRevision || remote.revision < Math.max(0, ...Object.values(previousRevisions))) {
     throw new CommandError("Azure read-back revision is older than the completed operation; re-read both trackers", EXIT_CODE.conflict);
@@ -76,7 +96,7 @@ export async function advanceSyncBase(operations: AgreementOperations): Promise<
     }
     else {
       differences.push(key);
-      if (local.base !== undefined && Object.hasOwn(local.base, key)) {
+      if (local.base !== undefined && previousFields.has(key)) {
         base[key] = structuredClone(local.base[key]);
         if (previousRevisions[key] !== undefined) revisions[key] = previousRevisions[key];
       }
@@ -84,6 +104,7 @@ export async function advanceSyncBase(operations: AgreementOperations): Promise<
   }
   // A versioned partial base distinguishes unknown keys from corrupt legacy JSON.
   if (Object.keys(base).length !== keys.length) base.ado_base_partial = 1;
+  base.ado_base_fields = Object.keys(base).filter((key) => key !== "ado_base_partial").sort();
   base.ado_agreed_revisions = JSON.stringify(revisions);
   await operations.publish(base, differences.length === 0 ? remote.revision : undefined, local.version);
   return { base, differences, local, remote };

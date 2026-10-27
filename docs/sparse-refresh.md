@@ -56,7 +56,20 @@ the revision guard. It counts a relation expansion as one cell, not response byt
 `observeRefreshPlan` reads a certified SDK snapshot, probes revisions through the
 existing `AdoClient`, then reads the current SDK snapshot again. Exact-revision
 base fields can be reused; missing bases/fields need hydration even when a
-revision is unchanged. A linked identity set change refuses with `scope` and
+revision is unchanged. New agreement publications persist `ado_base_fields`, the
+exact set of fields actually held, together with per-field
+`ado_agreed_revisions`. `baseFields` is shared by the agreement writer, sync,
+resolution and refresh read-back. `fieldAtRevision` requires membership and a
+matching per-field witness (or the saved revision for complete legacy bases).
+An older observation never reuses a newer saved revision. A legacy partial base
+without an explicit field set provides no cache evidence, even when it contains
+physical values or its item revision matches. Complete legacy bases remain
+readable. Malformed historical per-field witnesses also provide no cache evidence.
+
+Portable `RefreshSaved` inputs may include `revisions`, a map of field names to
+positive int32 revisions; absent entries require hydration. Without this map,
+the explicit `base` list is witnessed only at `revision`. The planner does not
+infer membership from the partial marker, physical values, or revision equality. A linked identity set change refuses with `scope` and
 requires another probe. Unlinked and foreign-scope records are skipped with
 counted reasons. Statuses are opaque field values: selection includes every
 configured lifecycle state, without inferring meaning from its name.

@@ -1,6 +1,6 @@
 import { normalizeFieldValues, normalizeStatusValue, normalizeAssigneeValue, normalizeItemReference, normalizeScopeValue, normalizeStateMaps } from "./normalization.js";
 /** Command orchestration and per-field Azure DevOps reconciliation. */
-import { advanceSyncBase, readBaseRevisions } from "./agreement.js";
+import { advanceSyncBase, readBaseRevisions, knownBase, baseFields } from "./agreement.js";
 import { loadResolutionSdk, resolutionDigest } from "./resolution.js";
 import { SyncOutbox, isProtocolTag } from "./sync-outbox.js";
 import { AdoClient, CommandError, EXIT_CODE, RevisionConflict, RELATION_MAP, STATE_MAP, exportRelations, importRelations, planRelationImport, missingEnv, preflightMessage, readConfig, relationTargetId, } from "./index.js";
@@ -106,15 +106,16 @@ export function readBase(item, sample, normalization) {
     }
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
         throw new CommandError("Invalid ado_sync_base");
-    const base = parsed;
+    const base = parsed, presentFields = new Set(baseFields(parsed));
     for (const [key, value] of Object.entries(sample)) {
-        if (base.ado_base_partial === 1 && !Object.hasOwn(base, key))
+        if ((base.ado_base_partial === 1 || Object.hasOwn(base, "ado_base_fields")) && !presentFields.has(key))
             continue;
         if (Array.isArray(value) ? !Array.isArray(base[key]) || base[key].some((entry) => typeof entry !== "string")
             : typeof base[key] !== typeof value)
             throw new CommandError(`Invalid ado_sync_base field: ${key}`);
     }
-    return normalization === false ? base : normalizeFieldValues(base, normalization);
+    const present = knownBase(base);
+    return normalization === false ? present : normalizeFieldValues(present, normalization);
 }
 /** Exact field mapping used by reconciliation and remote-contract discovery. */
 export const ADO_FIELD_MAP = {
@@ -224,7 +225,7 @@ export function mergeSyncValues(local, remote, base, effect, normalization) {
     local = normalizeFieldValues(local, normalization);
     remote = normalizeFieldValues(remote, normalization);
     if (base !== undefined)
-        base = normalizeFieldValues(base, normalization);
+        base = normalizeFieldValues(knownBase(base), normalization);
     const witnessed = readBaseRevisions(base);
     const effects = (effect === undefined ? [] : Array.isArray(effect) ? effect : [effect]).map((candidate) => ({ ...candidate,
         original: normalizeFieldValues(candidate.original, normalization), accepted: normalizeFieldValues(candidate.accepted, normalization) }));

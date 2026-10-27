@@ -3,7 +3,8 @@
 Tracker: [pm-ado-sdk-adoption](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-sdk-adoption.toon).
 Related certification: [pm-ado-qq1p](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-qq1p.toon).
 Baseline build: `origin/main` at `7f44a1dbd19ef2c9808c96944b34c41e890ebbcd`.
-Pinned SDK stays at `2026.10.23`.
+SDK adoption initially used `2026.10.23`; the toolchain update merged from
+`origin/main` for the presence review pins `2026.10.24`.
 
 | Audit finding (baseline lines) | SDK replacement | Behavioural evidence |
 | --- | --- | --- |
@@ -59,7 +60,8 @@ Intentional differences:
   Local intent preparation and agreement publication have separate guarded
   events; transient intent patches are excluded from the net history patch,
   whose final synced values and author remain identical. The differential also excludes the newly stored
-  internal per-key witnessed revision coordinates from synced base values.
+  internal per-key witnessed revision coordinates and explicit field-presence sets
+  from synced base values.
   SDK journals remain ignored runtime state.
 - New resolution plans carry the optional `pm-ado/fields/1` canonical-coordinate
   marker; the differential asserts and removes only this additional marker.
@@ -216,3 +218,37 @@ and [CodeQL](https://github.com/unbraind/pm-ado/actions/runs/40501684938)
 were queued when this receipt was written. The PR checks track the final
 evidence commit too. Queued/skipped checks are not approval; no merge or release
 was performed.
+
+
+## Field-presence review
+
+The refresh planner previously treated every scalar as present whenever a base
+existed. New base writes persist an explicit `ado_base_fields` set; agreement,
+merge, resolution and refresh readers share its decoder. Legacy partial bases
+without this set hydrate all requested fields; complete legacy bases keep their
+previous behavior. Per-key witnesses prevent a retained field from being reused
+at another revision. These additional internal coordinates and conservative
+hydration of unknown partial fields are intentional differences from the audit
+baseline. See [sparse refresh](sparse-refresh.md) for the protocol and the package
+item for exact-head test, revert and gate receipts.
+
+
+The audit baseline predates `refresh-plan`, so its 14 comparisons retain the
+original command surface. Refresh behavior is compared separately against the
+pre-review `refreshSaved` build: at revision 3 with a legacy partial base holding
+only a physical `relations` value, it schedules no hydration; the candidate
+schedules `System.Title` and relation expansion, with both fields counted as
+reads. This conservative hydration is intentional. The function-only revert
+also fails the seeded and copied JSON/TOON cases (3/3); ordinary complete legacy
+bases remain covered by the existing refresh suite.
+
+
+[pm-ado-sdk-history-fence](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-sdk-history-fence.toon)
+records the separate native SDK timestamp-match limitation discovered while
+checking the new monotonic CAS rule. Under a fixed millisecond, two foreign
+updates grow native history while preserving `updated_at`; the old match still
+accepts a stale update. SDK `BulkItemUpdateMutation` currently exposes only
+`match: BulkItemUniqueKey`, with no monotonic history-head precondition for its
+native lifecycle operation. Public declaration and open-issue searches are
+recorded in that follow-up for upstream ownership. No package-defined replacement
+for SDK concurrency is introduced here.

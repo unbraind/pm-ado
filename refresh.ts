@@ -1,3 +1,4 @@
+import { baseFields, fieldAtRevision, readBaseRevisions } from "./agreement.ts";
 import { normalizeScopeValue } from "./normalization.ts";
 /** Read-only Azure refresh compiler; artifacts describe reads and never authorize writes. */
 import type { CommandHandlerContext } from "@unbrained/pm-cli/sdk/authoring";
@@ -15,6 +16,8 @@ export interface RefreshSaved {
   revision: number | null;
   /** Fields present in the saved base; a base is reusable only at its exact revision. */
   base: RefreshField[];
+  /** Optional per-field witnessed revisions; missing entries are never cached. */
+  revisions?: Record<string, number>;
 }
 /** Revision-only observation, obtained anew on every invocation. */
 export interface RefreshRevision {
@@ -116,7 +119,11 @@ export function validateRefreshInput(value: unknown): asserts value is RefreshIn
   subset(value.needs); requireInput((value.needs as unknown[]).length > 0);
   dense(value.saved, 10000);
   for (const row of value.saved) {
-    record(row, ["id", "revision", "base"]); requireInput(int32(row.id) && (row.revision === null || int32(row.revision))); subset(row.base);
+    record(row, ["id", "revision", "base"], ["revisions"]); requireInput(int32(row.id) && (row.revision === null || int32(row.revision))); subset(row.base);
+    if (row.revisions !== undefined) {
+      record(row.revisions, [], fields);
+      requireInput(Object.values(row.revisions).every(int32));
+    }
   }
   requireInput(new Set(value.saved.map((row) => (row as RefreshSaved).id)).size === value.saved.length);
   if (value.observed !== undefined) {
@@ -143,7 +150,7 @@ export function compileRefreshPlan(input: RefreshInput): RefreshPlan {
     (same ? unchanged : changed).push(row.id);
     const missing: RefreshField[] = [];
     for (const count of accounting) {
-      if (same && row.base.includes(count.field)) count.cached++;
+      if (fieldAtRevision(count.field, row.base, row.revision, revision, row.revisions)) count.cached++;
       else { count.read++; missing.push(count.field); }
     }
     if (missing.length) pending.set(row.id, missing);
@@ -172,8 +179,14 @@ export function refreshSaved(items: readonly ItemMetadata[], config: AdoConfig):
     let base;
     // Sparse coverage coordinates need shape only; no semantic value comparison or native write occurs here.
     try { base = readBase(item, localValues(item, false), false); } catch { throw new RefreshRefusal("invalid_input"); }
+    let revisions: Record<string, number> | undefined;
+    if (base?.ado_agreed_revisions !== undefined) {
+      try { revisions = Object.fromEntries(Object.entries(readBaseRevisions(base)).filter(([field]) => baseFields(base).includes(field))); }
+      catch { revisions = {}; /* Unreadable historical witnesses provide no cache evidence. */ }
+    }
     saved.push({ id: Number(item.ado_id), revision: item.ado_rev === undefined ? null : Number(item.ado_rev),
-      base: base === undefined ? [] : [...Object.keys(ADO_FIELD_MAP), ...(Array.isArray(base.relations) ? ["relations"] : [])] as RefreshField[] });
+      base: baseFields(base).filter((field) => [...Object.keys(ADO_FIELD_MAP), "relations"].includes(field)) as RefreshField[],
+      ...(revisions === undefined ? {} : { revisions }) });
   }
   return saved;
 }

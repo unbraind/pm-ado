@@ -80,7 +80,7 @@ async function worker(build: string, workspace: string, org: string): Promise<vo
   // Per-key witnessed revisions are new internal recovery coordinates, not synced values.
   if (typeof final.ado_sync_base === "string") {
     const canonical = JSON.parse(final.ado_sync_base) as Record<string, unknown>;
-    delete canonical.ado_agreed_revisions; final.ado_sync_base = JSON.stringify(canonical);
+    delete canonical.ado_base_fields; delete canonical.ado_agreed_revisions; final.ado_sync_base = JSON.stringify(canonical);
   }
   outputs.push(final);
   const history = await readHistoryEntries(join(applyRoot, "history", `${linked.id}.jsonl`), linked.id);
@@ -94,7 +94,7 @@ async function worker(build: string, workspace: string, org: string): Promise<vo
     patch: [...net.values()].map((entry) => {
       if (entry.path === "/metadata/ado_sync_base" && "value" in entry) {
         const value = JSON.parse(String(entry.value)) as Record<string, unknown>;
-        delete value.ado_agreed_revisions; return { ...entry, value: JSON.stringify(value) };
+        delete value.ado_base_fields; delete value.ado_agreed_revisions; return { ...entry, value: JSON.stringify(value) };
       }
       return entry;
     }).sort((a, b) => a.path.localeCompare(b.path)) });
@@ -169,7 +169,7 @@ async function compare(baseline: string, trackers: string[]): Promise<void> {
       total += items.length;
       console.log(`Public corpus ${index + 1}: ${items.length} items; import/export/sync dry-run and resolution plan identical after removing the documented canonical-coordinate marker; authoritative files unchanged; writable-copy import receipts/values/net history patches identical; candidate prepares its local intent and publishes agreement in separate guarded events.`);
     }
-    console.log(`PASS: ${trackers.length} public corpora, ${total} real items, ${trackers.length * 7} differential comparisons; intentional history differences: SDK transaction markers, path ordering, three guarded events instead of one, and internal per-key revision coordinates; synced base values and net patch identical; mutation timestamps normalized.`);
+    console.log(`PASS: ${trackers.length} public corpora, ${total} real items, ${trackers.length * 7} differential comparisons; intentional history differences: SDK transaction markers, path ordering, three guarded events instead of one, and internal per-key revision/presence coordinates; synced base values and net patch identical; mutation timestamps normalized.`);
   } finally {
     await new Promise<void>((done) => server.close(() => done()));
     // Undo read-only fixture permissions before portable cleanup.

@@ -14,14 +14,14 @@ test("agreement advances only actual equal keys and acknowledges revisions only 
     readLocal: async () => local, readRemote: async () => remote,
     publish: async (...args) => { publications.push(args); } };
   const partial = await advanceSyncBase(operations);
-  assert.deepEqual(partial.base, { title: "same", description: "", relations: [], ado_agreed_revisions: JSON.stringify({ title: 2 }) });
+  assert.deepEqual(partial.base, { title: "same", description: "", relations: [], ado_base_fields: ["description", "relations", "title"], ado_agreed_revisions: JSON.stringify({ title: 2 }) });
   assert.deepEqual(partial.differences, ["description", "relations"]);
   assert.deepEqual(publications[0], [partial.base, undefined, "v1"]);
   local = { ...local, base: undefined };
-  assert.deepEqual((await advanceSyncBase(operations)).base, { title: "same", ado_base_partial: 1, ado_agreed_revisions: JSON.stringify({ title: 2 }) });
+  assert.deepEqual((await advanceSyncBase(operations)).base, { title: "same", ado_base_partial: 1, ado_base_fields: ["title"], ado_agreed_revisions: JSON.stringify({ title: 2 }) });
   remote = { values: structuredClone(local.values) as typeof remote.values, revision: 3 };
   const full = await advanceSyncBase(operations);
-  assert.deepEqual(full.base, { ...local.values, ado_agreed_revisions: JSON.stringify({ title: 3, description: 3, relations: 3 }) });
+  assert.deepEqual(full.base, { ...local.values, ado_base_fields: ["description", "relations", "title"], ado_agreed_revisions: JSON.stringify({ title: 3, description: 3, relations: 3 }) });
   assert.deepEqual(publications.at(-1), [full.base, 3, "v1"]);
   local = { ...local, version: "peer edit" };
   await assert.rejects(advanceSyncBase(operations), /Local item changed/u);
@@ -37,9 +37,9 @@ test("agreement advances only actual equal keys and acknowledges revisions only 
 });
 
 test("partial agreement decoding retains unknown keys without accepting malformed present values", () => {
-  const item = { id: "synthetic", ado_sync_base: JSON.stringify({ title: "agreed", ado_base_partial: 1 }) } as unknown as ItemMetadata;
-  assert.deepEqual(readBase(item, { title: "", relations: [], priority: 2 }), { title: "agreed", ado_base_partial: 1 });
-  assert.throws(() => readBase({ ...item, ado_sync_base: JSON.stringify({ title: 7, ado_base_partial: 1 }) }, { title: "" }), /title/u);
+  const item = { id: "synthetic", ado_sync_base: JSON.stringify({ title: "agreed", ado_base_partial: 1, ado_base_fields: ["title"] }) } as unknown as ItemMetadata;
+  assert.deepEqual(readBase(item, { title: "", relations: [], priority: 2 }), { title: "agreed", ado_base_partial: 1, ado_base_fields: ["title"] });
+  assert.throws(() => readBase({ ...item, ado_sync_base: JSON.stringify({ title: 7, ado_base_partial: 1, ado_base_fields: ["title"] }) }, { title: "" }), /title/u);
 });
 
 test("owned scalar effect proof never becomes a base for unrelated fields or relations", () => {

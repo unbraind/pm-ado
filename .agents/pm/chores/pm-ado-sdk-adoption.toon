@@ -6,12 +6,12 @@ status: in_progress
 priority: 2
 tags[2]: refactor,sdk-adoption
 created_at: "2026-10-25T16:11:56.608Z"
-updated_at: "2026-10-27T11:09:30.086Z"
+updated_at: "2026-10-27T11:28:52.003Z"
 assignee: codex-agent
 claim_principal: codex-agent
 author: codex-agent
 parent: pm-ado-g4v1
-comments[71]{created_at,author,text}:
+comments[72]{created_at,author,text}:
   "2026-10-25T15:50:43.902Z",codex-agent,"Orientation found no existing SDK-adoption item. Related SDK certification: pm-ado-qq1p; source features: pm-ado-4x3u and pm-ado-nc7z. Both audited SDK APIs exist in the pinned 2026.10.23 dependency. Plan: preserve authoritative raw documents, replace unguarded sync persistence with inspected-snapshot match preconditions, run non-git regression/differential/revert proofs and unchanged npm/Bun release gates."
   "2026-10-25T15:57:29.077Z",codex-agent,"Both replacements implemented. Resolution passes readSettings item_format and resolveItemTypeRegistry type_to_folder into locateItem and retains readLocatedItem whole-document hashing. Sync now uses commitItemMutations update match on inspected updated_at for link, relation and base writes. Expected revisions advance from our own immutable SDK transaction history, never from a refreshed current item. Three new real non-git regressions pass: custom nested folder/raw-document guard, local edit after Azure PATCH, and local edit before import relation/base persistence. The last two preserve the concurrent item/history bytes and return ADO_CONFLICT; remote success can remain partial."
   "2026-10-25T16:01:16.414Z",codex-agent,"Compatibility check found SDK gap tracked by pm-ado-sdk-match-close-1025: match on updated_at also runs inside update's internal terminal close after its first write has advanced the timestamp. Workaround uses one SDK transaction with a guarded scalar update then explicit close. SDK history messages necessarily become bulk-item-transaction markers instead of adapter prose; this intentional diagnostic difference is documented and differential-tested. Initial read-only differential passed over public pm-ado and pm-jira origin snapshots: 140 items, 8 exact output comparisons, unchanged authoritative bytes. Extending proof to writable copies for persistence receipts, values and history patches."
@@ -83,6 +83,7 @@ comments[71]{created_at,author,text}:
   "2026-10-27T10:47:15.134Z",codex-agent,"Final round-5 focused checkpoint passed 7/7 after restoring all revert mutations and preserving prior base-shape validation. The entire new normalization module measures 100% lines, branches and functions. This includes isolated SDK injection, canonical new scope fingerprints with literal released fingerprints, no-link host contract/move aliases, native scalar oracle and unchanged published API consumer under Node/Bun. Local full release:check runs follow sequentially with at most two test workers and isolated HOME/git identity. No lint script exists; typecheck, docstring and whitespace checks are the package static gates."
   "2026-10-27T10:57:13.709Z",codex-agent,"Before the long full gate, added explicit refusal cases for unknown/null/numeric normalization markers and missing/null/non-object/partial/substituted remote_values witnesses. Existing tests were strengthened, not weakened: all malformed-plan applies now prove unchanged tracker bytes and zero REST calls, while preserving existing typed refusal codes including invalid_choices. Focused malformed-plan corpus passed 1/1; linked pending-intent recovery corpus passed 1/1. Actual released prepared/settled fixtures provide the corresponding must-allow corpus. The initial full run was stopped early to add these cases; full validation restarts from the strengthened test commit."
   "2026-10-27T11:09:30.086Z",codex-agent,"Compatibility completion: added a fresh markerless version-2 coordinate test on a real non-git SDK tracker, including a deliberate interruption after durable prepare, resume, native closed/title normalization and no-op replay with zero PATCH. This complements the actual published prepared/settled fixtures; it does not synthesize or rewrite their histories. Added preferred-status absent/non-string projection cases. Linked focused run passed 2/2. Production source remains f0e9230; subsequent commits only strengthen tests and append pm evidence before the full gates."
+  "2026-10-27T11:28:52.002Z",codex-agent,"Full-gate correction: the existing copied no-git move CLI exposed an unnecessary SDK module load inside remote-only contract discovery. General rule: normalize local fields through the native SDK when local fields exist; pure Azure metadata discovery retains its prior dependency contract and compares literal Azure metadata. Only discoverProjectContract changed in production. The pre-fix function body failed the unchanged installed no-git CLI regression 1/1 (exit 3); the corrected function passes both complete contract/move files, 29/29, plus linked copied-CLI/alias checks 2/2. Direct native aliases and empty tracker/status arrays are covered. No assertions were weakened, and the failed full run was stopped before restarting on this corrected source."
 files[19]{path,scope}:
   agreement.ts,project
   contracts.ts,project
@@ -103,7 +104,7 @@ files[19]{path,scope}:
   test/packed-install-shapes.test.ts,project
   test/public-api.test.ts,project
   test/sync.test.ts,project
-tests[13]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
+tests[14]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
   npm run typecheck,project,codex-agent,"2026-10-25T16:11:56.608Z",local_mutation,refactor/sdk-adoption-1025
   "node --test --test-name-pattern=\"SDK lookup|SDK sync match|terminal states import\" test/sync.test.ts",project,codex-agent,"2026-10-25T16:11:56.608Z",local_mutation,refactor/sdk-adoption-1025
   "node --test --test-name-pattern=\"blocking review|conditional outbox PATCH replay|pending export owners|sync reconnects|new imports guard|unobserved creation\" test/sync.test.ts",project,codex-agent,"2026-10-25T20:42:24.197Z",local_mutation,refactor/sdk-adoption-1025
@@ -117,6 +118,7 @@ tests[13]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
   "node --test --test-concurrency=2 --test-name-pattern=\"^round-5\" test/sync.test.ts test/normalization.test.ts test/moves.test.ts test/contracts.test.ts",project,codex-agent,"2026-10-27T10:24:40.746Z",local_mutation,refactor/sdk-adoption-1025
   "node --test --test-concurrency=2 --test-name-pattern=\"resolution recovery refuses changed\" test/sync.test.ts",project,codex-agent,"2026-10-27T10:53:43.718Z",local_mutation,refactor/sdk-adoption-1025
   "node --test --test-concurrency=2 --test-name-pattern=\"round-5 unprepared|round-5 field normalizers\" test/sync.test.ts test/normalization.test.ts",project,codex-agent,"2026-10-27T11:05:59.786Z",local_mutation,refactor/sdk-adoption-1025
+  "node --test --test-concurrency=2 --test-name-pattern=\"installed no-git CLI and SDK command|round-5 read-only contract\" test/moves.test.ts test/contracts.test.ts",project,codex-agent,"2026-10-27T11:26:42.363Z",local_mutation,refactor/sdk-adoption-1025
 docs[4]{path,scope}:
   docs/conflict-resolution.md,project
   docs/sdk-adoption.md,project

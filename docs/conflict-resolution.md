@@ -147,7 +147,10 @@ separately on disposable real SDK trackers by `test/sync.test.ts`.
 
 ## Canonical field coordinates and released artifacts
 
-Standalone SDK callers supply the native SDK/schema context for custom aliases.
+Standalone SDK callers comparing tracker fields supply the native SDK/schema
+context for custom aliases, or resolve the declared SDK peer. Metadata-only
+Azure discovery needs no SDK module link because it compares literal Azure
+metadata without local tracker fields.
 New scope fingerprints trim project/organization configuration and remove
 organization trailing slashes; released markerless fingerprints stay literal.
 Explicitly injected SDK namespaces also own ID read-back normalization, without

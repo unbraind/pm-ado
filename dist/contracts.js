@@ -163,7 +163,10 @@ export async function discoverProjectContract(config, request, options = {}) {
         else
             issues.push({ code, target, count: 1, remedy });
     };
-    const { imports: importStates, exports: exportStates } = normalizeStateMaps({ imports: options.importStates ?? IMPORT_STATE_MAP, exports: options.exportStates ?? STATE_MAP }, options.normalization);
+    const maps = { imports: options.importStates ?? IMPORT_STATE_MAP, exports: options.exportStates ?? STATE_MAP };
+    // Remote-only discovery compares literal Azure states and has no PM registry dependency.
+    const hasLocalValues = (options.items?.length ?? 0) + (options.localStatuses?.length ?? 0) > 0;
+    const { imports: importStates, exports: exportStates } = hasLocalValues ? normalizeStateMaps(maps, options.normalization) : maps;
     const localStatuses = options.localStatuses?.map((status) => normalizeStatusValue(status, options.normalization));
     for (const type of types) {
         if (type.disabled)

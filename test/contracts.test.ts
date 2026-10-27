@@ -357,6 +357,9 @@ test("refusal normalization preserves typed failures and classifies other errors
 
 test("round-5 read-only contract comparisons use native aliases in host SDK JSON and TOON without module links", async (t) => {
   const canonical = await discoverProjectContract(config, fixture().request);
+  const nativeAliases = await discoverProjectContract(config, fixture().request, { localStatuses: [" OPEN ", "IN-PROGRESS", " CLOSED "], importStates: { New: " OPEN ", Active: "IN-PROGRESS", Closed: " CLOSED " } });
+  assert.deepEqual(nativeAliases, canonical);
+  assert.equal((await discoverProjectContract(config, fixture().request, { items: [], localStatuses: [] })).compatible, false);
   const padded = await discoverProjectContract({ ...config, orgUrl: ` ${config.orgUrl}/// `, project: ` ${config.project} ` }, fixture().request);
   assert.deepEqual(padded, canonical);
   const f = await hostFixture(t);

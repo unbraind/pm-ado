@@ -816,13 +816,17 @@ test("remote field choices and same-value plans commit once; malformed coordinat
   assert.equal((await service.apply(plan)).ok, true);
   assert.equal((await row(f.pm)).title, "Remote");
   assert.equal(f.requests.filter((req) => req.method === "PATCH").length, 0);
+  const refusalBefore = snapshot(f.pmRoot), refusalRequests = f.requests.length;
+  for (const normalization of ["pm-ado/fields/future", null, 1]) await assert.rejects(service.apply({ ...plan, normalization }), { code: "invalid_plan" });
   for (const invalid of [null, [], {}, { ...plan, schema: "future" }, { ...plan, fields: [] },
     { ...plan, remote: { ...plan.remote, id: 0 } }, { ...plan, local: { id: item.id, revision: "wrong" } },
     { ...plan, fields: plan.fields.map((field) => ({ ...field, base: "wrong" })) },
     { ...plan, fields: [null, ...plan.fields.slice(1)] }, { ...plan, fields: plan.fields.map(() => plan.fields[0]) },
     { ...plan, mapping: 5 }, { ...plan, choices: [null] }, { ...plan, scope: { ...plan.scope, org: "legacy" } }]) {
     assert.throws(() => validateResolutionPlan(invalid), ResolutionRefusal);
+    await assert.rejects(service.apply(invalid), ResolutionRefusal);
   }
+  assert.deepEqual(snapshot(f.pmRoot), refusalBefore); assert.equal(f.requests.length, refusalRequests);
 });
 
 test("portable choices reject scope changes, edited digests, missing links and REST races", async (t) => {
@@ -1131,6 +1135,7 @@ test("resolution recovery refuses changed local context and substituted intents"
   different.choices = different.choices.map((choice) => ({ ...choice, take: "remote" }));
   await assert.rejects(service.apply(different), { code: "ado_partial_apply" });
   for (const invalid of ["{", "null", JSON.stringify({ ...intent, values: {} }),
+    ...[undefined, null, 1, [], {}, { ...intent.remote_values as Record<string, unknown>, title: "unreviewed" }].map((remote_values) => JSON.stringify({ ...intent, remote_values })),
     JSON.stringify({ ...intent, patch: [] }), JSON.stringify({ ...intent, expected_remote_revision: 0 }), JSON.stringify({ ...intent, plan_id: "invalid" })]) {
     await f.setFields(item.id, { ado_resolution_intent: invalid });
     await assert.rejects(service.apply(plan), { code: "ado_partial_apply" });

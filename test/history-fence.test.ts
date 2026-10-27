@@ -28,6 +28,87 @@ test("native history witnesses accept empty and hashed heads and reject malforme
   assert.equal(isNativeHead({ length: 1, hash: "a".repeat(64) }), true);
 });
 
+test("native equivalent updates get an owned witness and refuse peer audits on either side of the call", async (t) => {
+  for (const peer of ["none", "before", "after"]) await t.test(peer, async (sub) => {
+    const f = await fixture(sub);
+    const prior = (await f.pm.get(f.item.id)).item;
+    sub.mock.timers.enable({ apis: ["Date"], now: new Date(f.item.updated_at) });
+    const settings = await sdk.readSettings(f.pmRoot);
+    /** Keep the real settings and lease path in the competing SDK audit. */
+    const peerAudit = () => sdk.mutateItemWithHistoryContext({ pmRoot: f.pmRoot, settings, id: f.item.id, author: "history-agent",
+      op: "update", historyContext: { peer_audit: true }, mutate: () => ({ changedFields: [] }) });
+    const fence = new NativeWriteFence(sdk, f.pmRoot, "history-agent", async (id, options) => {
+      if (peer === "before") await peerAudit();
+      const result = await f.pm.update(id, options);
+      if (peer === "after") await peerAudit();
+      return result;
+    });
+    try {
+      await fence.capture(f.item.id);
+      if (peer === "none") {
+        await fence.update(f.item.id, { title: "Initial" }, "native-noop");
+        const history = (await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, f.item.id), f.item.id)).entries;
+        assert.ok(history.some((entry) => entry.context?.ado_native_noop === true));
+      } else await assert.rejects(fence.update(f.item.id, { title: "Initial" }, "native-noop"), NativeHistoryConflict);
+      assert.deepEqual((await f.pm.get(f.item.id)).item, prior);
+    } finally { sub.mock.timers.reset(); }
+  });
+});
+
+test("native SDK refusals preserve their cause unless a peer advanced history", async (t) => {
+  for (const peer of [false, true]) await t.test(String(peer), async (sub) => {
+    const f = await fixture(sub);
+    const fence = new NativeWriteFence(sdk, f.pmRoot, "history-agent", async (id, options) => {
+      if (peer) await f.pm.update(id, { title: "Peer before SDK refusal" });
+      return f.pm.update(id, options);
+    });
+    await fence.capture(f.item.id);
+    const attempted = fence.update(f.item.id, { priority: 99 }, "native-invalid-priority");
+    if (peer) await assert.rejects(attempted, NativeHistoryConflict);
+    else await assert.rejects(attempted, /priority/iu);
+    assert.equal((await f.pm.get(f.item.id)).item.title, peer ? "Peer before SDK refusal" : "Initial");
+  });
+});
+
+test("native errors after a real write compensate owned fields and preserve before/after peers", async (t) => {
+  for (const peer of ["none", "before", "after"]) await t.test(peer, async (sub) => {
+    const f = await fixture(sub);
+    const fence = new NativeWriteFence(sdk, f.pmRoot, "history-agent", async (id, options) => {
+      if (peer === "before") await f.pm.update(id, { title: "Peer before" });
+      await f.pm.update(id, options);
+      if (peer === "after") await f.pm.update(id, { title: "Peer after" });
+      throw new Error("Synthetic post-write hook failure");
+    });
+    await fence.capture(f.item.id);
+    const attempted = fence.update(f.item.id, { title: "Stale own title" }, "native-post-write-failure");
+    if (peer === "none") await assert.rejects(attempted, /Synthetic post-write hook failure/u);
+    else await assert.rejects(attempted, NativeHistoryConflict);
+    assert.equal((await f.pm.get(f.item.id)).item.title, peer === "none" ? "Initial" : peer === "before" ? "Peer before" : "Peer after");
+  });
+});
+
+test("native verification waits for a live peer lease instead of forcing it away", async (t) => {
+  const f = await fixture(t), settings = await sdk.readSettings(f.pmRoot);
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>((done) => { enter = done; });
+  const held = new Promise<void>((done) => { release = done; });
+  t.after(() => release());
+  let peer: Promise<{ ok: boolean }> | undefined;
+  const fence = new NativeWriteFence(sdk, f.pmRoot, "history-agent", async (id, options) => {
+    const result = await f.pm.update(id, options);
+    peer = sdk.mutateItemWithHistoryContext({ pmRoot: f.pmRoot, settings, id, author: "peer-agent", op: "update",
+      mutate: async (document) => { enter(); await held; document.metadata.title = "Peer under its lease"; return { changedFields: ["title"] }; } })
+      .then(() => ({ ok: true }), () => ({ ok: false }));
+    await entered;
+    setTimeout(release, 150);
+    return result;
+  });
+  await fence.capture(f.item.id);
+  await assert.rejects(fence.update(f.item.id, { title: "Owned write" }, "native-live-lease"), NativeHistoryConflict);
+  assert.deepEqual(await peer, { ok: true });
+  assert.equal((await f.pm.get(f.item.id)).item.title, "Peer under its lease");
+});
+
 test("native history fence normal update and committed replay retain their exact immutable witness", async (t) => {
   const f = await fixture(t);
   await f.fence.update(f.item.id, { title: "After" }, "native-normal");

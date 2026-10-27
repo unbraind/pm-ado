@@ -370,3 +370,20 @@ standalone relation writes, and portable/legacy plan refusal. Temporary
 visibility of the write before verification is inherent in this approved
 fallback; a successful command never treats an intervening native entry as
 its own. Upstream #1576 would allow refusing before the lifecycle write.
+
+### Equivalent native updates and SDK errors
+
+The SDK omits a history event when an update is semantically unchanged. The
+close pipeline can legitimately reach that case for its scalar step. After a
+successful native call with no own event, the package records a zero-value
+SDK audit witness under the item lock, checking the captured length/hash in
+that same callback. A peer audit on either side of the no-op still refuses.
+The ordinary verifier then validates this own witness exactly like a changed
+native update. This adds audit evidence without reimplementing field writes.
+
+If native execution throws, the package first looks for the exact own marker.
+An owned partial effect is verified and selectively compensated; a refusal
+without an own effect is classified as a conflict when a peer advanced the
+head. A stable-head SDK refusal preserves its original cause. Verification
+and compensation wait for live peer leases; they do not force those leases
+away. Forward lifecycle actions retain their normal SDK permission checks.

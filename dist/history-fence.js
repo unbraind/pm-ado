@@ -108,7 +108,7 @@ export class NativeWriteFence {
                 return true;
             }
             const context = { ado_native_write: own.record_hash, ado_native_conflict: false };
-            await sdk.mutateItemWithHistoryContext({ pmRoot, settings, id, author, op: "update", force: true, bypassAssigneeConflict: true,
+            await sdk.mutateItemWithHistoryContext({ pmRoot, settings, id, author, op: "update", bypassAssigneeConflict: true,
                 message: "Verify native Azure mutation", historyContext: context,
                 mutate: async (document) => {
                     const history = (await sdk.readHistorySnapshot(sdk.getHistoryPath(pmRoot, id), id)).entries;
@@ -169,8 +169,37 @@ export class NativeWriteFence {
                     },
                     apply: async () => {
                         const history = (await sdk.readHistorySnapshot(sdk.getHistoryPath(pmRoot, id), id)).entries;
-                        if (!history.some((entry) => entry.message === message && entry.author === author))
-                            await this.write(id, { ...options, author, message });
+                        if (!history.some((entry) => entry.message === message && entry.author === author)) {
+                            try {
+                                await this.write(id, { ...options, author, message });
+                            }
+                            catch (error) {
+                                const failed = (await sdk.readHistorySnapshot(sdk.getHistoryPath(pmRoot, id), id)).entries;
+                                if (failed.some((entry) => entry.message === message && entry.author === author)) {
+                                    await verify();
+                                    if (conflict)
+                                        return { conflict };
+                                }
+                                else {
+                                    const current = await nativeHead(sdk, pmRoot, id);
+                                    if (current.length !== expected.length || current.hash !== expected.hash)
+                                        throw new NativeHistoryConflict();
+                                }
+                                throw error;
+                            }
+                            const after = (await sdk.readHistorySnapshot(sdk.getHistoryPath(pmRoot, id), id)).entries;
+                            if (!after.some((entry) => entry.message === message && entry.author === author)) {
+                                // Native update deliberately omits history for an equivalent value. Give that successful no-op a locked witness.
+                                await sdk.mutateItemWithHistoryContext({ pmRoot, settings: await sdk.readSettings(pmRoot), id, author, op: "update",
+                                    message, bypassAssigneeConflict: true, skipNoop: false, historyContext: { ado_native_noop: true },
+                                    mutate: async () => {
+                                        const current = await nativeHead(sdk, pmRoot, id);
+                                        if (current.length !== expected.length || current.hash !== expected.hash)
+                                            throw new NativeHistoryConflict();
+                                        return { changedFields: [] };
+                                    } });
+                            }
+                        }
                         await verify();
                         return { conflict };
                     },

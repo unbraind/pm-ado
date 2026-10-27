@@ -38,7 +38,7 @@ export declare class NativeWriteFence {
     assertCurrent(id: string): Promise<void>;
     /** Commit a native SDK update, then verify or selectively compensate inside its workspace transaction. */
     update(id: string, options: Sdk.PmUpdateActionOptions, transactionId: string): Promise<string>;
-    /** Bind SDK journal identity to the immutable inspected head, independent of timestamps. */
+    /** Bind SDK journal identity to the immutable inspected head and payload, independent of timestamps. */
     private journalId;
     /** Replay the exact native marker after a crash; the SDK owns transaction journaling and lifecycle writes. */
     private commit;

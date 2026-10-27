@@ -1,0 +1,20 @@
+id: pm-ado-sdk-preview-runtime
+title: Support SDK semantic preview with managed project runtime links
+description: "Installed SDK 2026.10.23 declares previewItemMutations(options: Pick<CommitItemMutationsOptions, pmRoot | transactionId | author | mutations>) at sdk/item-transaction.d.ts:207; it exposes no authoritative-only or managed-runtime exclusion option. Real packed host 2026.10.25 project installation creates a managed SDK symlink under the tracker; semantic preview rejects it with transaction_preview_non_regular_file before preparing a resolution. Global runtime outside the selected tracker is being verified. Do not remove managed links, bypass regular-file guards, or reimplement SDK workspace cloning. Missing capability: SDK-owned semantic preview scoped to authoritative tracker data while preserving managed extension runtime links. Installed public transaction/snapshot/runtime declarations and open upstream issues were searched; no matching open issue found for previewItemMutations symlink, transaction_preview_non_regular_file, or preview extension symlink. The orchestrator verifies and files this upstream."
+type: Issue
+status: open
+priority: 2
+tags[1]: sdk-gap
+created_at: "2026-10-27T06:26:10.332Z"
+updated_at: "2026-10-27T06:52:46.620Z"
+author: codex-agent
+parent: pm-ado-sdk-adoption
+comments[1]{created_at,author,text}:
+  "2026-10-27T06:50:44.980Z",codex-agent,"Confirmed using actual packed npm-global, bun-global, npx, bunx and local-bin hosts: project installation planning supports partial bases, while apply refuses managed SDK symlinks with transaction_preview_non_regular_file before any intent or Azure write. All five launchers support full apply when pm-ado is globally installed with runtime outside the selected tracker. This is a core preview API limitation, not a reason to unlink runtime, clone workspace storage locally, or bypass regular-file guards. The adapter provides a typed configuration remedy. Orchestrator should file the missing managed-runtime exclusion capability upstream."
+files[3]{path,scope}:
+  resolution.ts,project
+  test/packed-install-shapes.test.ts,project
+  test/sync.test.ts,project
+docs[1]{path,scope}:
+  docs/conflict-resolution.md,project
+body: ""

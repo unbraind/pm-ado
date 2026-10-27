@@ -10,7 +10,12 @@ locally configured token; the token and HMAC input are never stored in a Plan.
 Keep local configuration stable until settlement; token rotation invalidates
 unsettled artifacts. Version 1 artifacts are refused and must be regenerated.
 Field contents and credentials are absent. JSON and the default compact TOON
-are rendered by the host. Requires pm CLI **2026.10.23+** for expired mutation
+are rendered by the host. A field's `base: null` means that field has no witnessed
+common value, including after an interrupted first import. Known fields keep
+their digests even when other fields are unknown. Unknown is distinct from an
+agreed empty value; every differing field still needs an explicit choice.
+Partial bases support preview, saved Plans, portable artifacts, apply and replay
+in the same way as complete bases. Requires pm CLI **2026.10.23+** for expired mutation
 lease fencing; works in a plain, non-git tracker.
 
 Authoritative document lookup follows the tracker's configured item format and
@@ -58,12 +63,20 @@ const explicit = new AdoResolutionService(pmRoot, author, pm, azure, config, sdk
 ```
 
 When the SDK argument is omitted, the service imports its installed public SDK
-package. Explicit injection remains supported. No SDK is discovered from the launcher. Resolution commands are the
-only command paths needing low-level history/mutation primitives beyond the
-injected `ctx.sdk.client`. They load those lazily through the SDK link maintained
+package. Explicit injection remains supported. No SDK is discovered from the launcher. Guarded sync and resolution need low-level history/mutation primitives beyond
+the injected `ctx.sdk.client`. They load those lazily through the SDK link maintained
 by `pm install`, using a canonical module file and standard Node resolution.
 A missing link produces a typed `configuration` refusal with an installation
-remedy. Invalid command selections do not acquire this runtime. The service
+remedy. Semantic apply also requires the SDK's regular-file preview contract.
+The pinned SDK and tested host reject managed SDK symlinks inside a selected
+tracker, including those from project installation. Planning still works;
+apply returns `configuration` before an intent or Azure write. Keep those links
+intact. Install pm-ado globally (`pm install <source> --global`) to keep its
+runtime outside the project tracker, or use a future SDK with managed runtime
+exclusions. The missing preview capability is tracked by
+[pm-ado-sdk-preview-runtime](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-sdk-preview-runtime.toon).
+An unchanged lifecycle state is not sent as another close during preview, so
+reviewed scalar changes to an already-closed item preserve its close evidence. Invalid command selections do not acquire this runtime. The service
 uses certified complete SDK reads, authoritative item reads, core mutation
 preview, and the audited mutation pipeline; there are no git subprocesses.
 
@@ -107,8 +120,9 @@ history event, including older applied decisions found in immutable history.
 The artifact is cloned before asynchronous work.
 
 This is scalar field resolution. Graph relations retain their dedicated sync
-adapter. Existing relation base values are preserved; a missing legacy base
-stays absent until sync can establish complete agreement. No revisions-feed
+adapter. Each key advances only after actual local and Azure reads agree;
+unknown keys stay unknown and divergent keys retain their previous witnessed
+ancestor. Scalar resolution does not acknowledge unimported relations. No revisions-feed
 reconciliation is added. Fixture acceptance does not establish live Azure
 permissions or custom organization process rules.
 

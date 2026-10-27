@@ -28,7 +28,7 @@ export interface ResolutionChoice {
 export interface ResolutionField {
     /** Canonical field name. */
     field: string;
-    /** Digest of the last shared value, or null for a legacy missing base. */
+    /** Digest of the last shared value, or null when this key has no witnessed base. */
     base: string | null;
     /** Digest of the observed pm value. */
     local: string;
@@ -101,7 +101,7 @@ export interface ResolutionIntent {
     patch: JsonPatchOperation[];
     /** Reviewed canonical outcome, retained only on the target item. */
     values: Values;
-    /** Existing complete sync base; null preserves legacy absence. */
+    /** Existing per-key sync base; null preserves legacy absence. */
     base: Values | null;
 }
 /** Bind organization and project without storing either value or a dictionary-testable plain hash. */
@@ -152,6 +152,8 @@ export declare class AdoResolutionService {
     private patch;
     /** Reject corrupted or substituted recovery data before using its stored PATCH. */
     private intent;
+    /** Delegate lifecycle identity to the SDK without changing portable field or mapping digests. */
+    private nativeStatus;
     /** Audit intent before the remote side effect; ordinary stale plans still make no item writes. */
     private prepare;
     /** Prove a prepared PATCH was applied, including its unique marker and complete mapped result. */

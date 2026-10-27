@@ -345,3 +345,62 @@ constraint above remain explicit. The adoption item is left in progress and
 its claim released for orchestrator verification. The final tracker/docs-only
 commit is checked again through [PR checks](https://github.com/unbraind/pm-ado/pull/46/checks).
 No merge or release is performed.
+
+
+## Endpoint closure and unknown ancestry (auto round 1)
+
+Selection limits and WIQL filters choose remote sources, not permission to
+replace another local item's graph. `planRelationImport` is the shared read-only
+planner used by import execution and sync preflight. It enumerates every native
+parent/dependency update, including an inverse child outside the selection.
+Prospective source identities allow preflight before native item creation;
+mutation always replans after real SDK identities exist.
+
+Ordinary sync checks every affected endpoint's durable recovery history and its
+own agreed relation base. A foreign relation edit, or a local graph different
+from that endpoint's witnessed ancestor, returns `ADO_CONFLICT` before effects.
+An unknown endpoint base requires an explicit direction rather than an inferred
+winner. Owned partial integration writes retain their SDK history proof. The
+same guard runs at every native graph update and compensation; revision matches
+continue to refuse edits arriving after the snapshot. Explicit import/export
+retain their documented direction choice. Dry-run uses the same endpoint check.
+
+Resolution treats unknown ancestry per key: `ResolutionField.base` is `null` for
+an absent key in either a partial or legacy base. It never hashes `undefined`
+and never substitutes an empty value. JSON, TOON, saved core Plans, portable
+artifacts, prepare validation, apply and replay share `resolutionFields`.
+
+Acceptance includes clear/retarget/dependency edits in both hierarchy directions,
+unselected fully agreed endpoints without an intent, prospective new sources,
+a positive control excluding prospective IDs from native persistence, and all
+512 known/unknown masks across scalars and relations. The first-import remote
+title race produces a valid partial base, JSON/TOON choices, a saved Plan and a
+successful reviewed apply/replay. Real packed npm/Bun launcher shapes exercise
+partial resolution and unselected endpoint conflicts in non-git trackers.
+
+Function-only reverts reproduce both classes: removing the endpoint guard fails
+9/12 graph cases and reinstates cleared/retargeted parents; restoring the old
+partial-base digest rule fails 2/2 resolution cases. Restored focused cases and
+full gate results are recorded on the adoption item. No existing tests were
+removed or weakened.
+
+
+Packed acceptance additionally distinguishes project and global runtime scopes.
+Project-installed managed SDK links remain intact; the SDK's non-regular-storage
+preview refusal is reported as actionable `configuration` before preparation or
+Azure writes. The public `previewItemMutations` signature has no runtime exclusion
+option. No adapter clone or regular-file bypass replaces that SDK guard.
+[pm-ado-sdk-preview-runtime](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-sdk-preview-runtime.toon)
+records the declaration search, empty upstream issue searches and missing
+SDK capability for the orchestrator. Global runtime outside the selected tracker
+passes complete partial-base apply and endpoint-conflict acceptance through all
+five linked launcher shapes. Already-closed unassigned items can apply reviewed
+scalar choices without repeating closure or replacing existing close evidence.
+
+Status mappings and recovered intent status coordinates pass through the SDK's
+`resolveRuntimeStatusRegistry` and `normalizeStatusForRegistry` before native
+lifecycle dispatch. Case aliases therefore use the same close behavior and
+preserve the same terminal evidence as canonical names, including after resume.
+Resolution normalizes only native lifecycle values; portable plan digests retain
+their original coordinates. An already closed item is previewed without another
+close request, preserving its original close reason and timestamps.

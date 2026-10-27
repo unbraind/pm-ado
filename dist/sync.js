@@ -2,7 +2,7 @@
 import { advanceSyncBase, readBaseRevisions } from "./agreement.js";
 import { loadResolutionSdk, resolutionDigest } from "./resolution.js";
 import { SyncOutbox, isProtocolTag } from "./sync-outbox.js";
-import { AdoClient, CommandError, EXIT_CODE, RevisionConflict, RELATION_MAP, STATE_MAP, exportRelations, importRelations, missingEnv, preflightMessage, readConfig, relationTargetId, } from "./index.js";
+import { AdoClient, CommandError, EXIT_CODE, RevisionConflict, RELATION_MAP, STATE_MAP, exportRelations, importRelations, planRelationImport, missingEnv, preflightMessage, readConfig, relationTargetId, } from "./index.js";
 /** Default Azure state names mapped to local lifecycle states. */
 export const IMPORT_STATE_MAP = {
     New: "open", Proposed: "open", "To Do": "open", Active: "in_progress",
@@ -239,7 +239,7 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
         const limit = Number(ctx.options.limit ?? 100);
         if (!Number.isSafeInteger(limit) || limit < 1)
             throw new CommandError("--limit must be a positive safe integer");
-        const states = stateMap(process.env.ADO_STATUS_MAP, IMPORT_STATE_MAP);
+        const requestedStates = stateMap(process.env.ADO_STATUS_MAP, IMPORT_STATE_MAP);
         const exportStates = stateMap(process.env.ADO_EXPORT_STATE_MAP, STATE_MAP);
         if (mode === "export" && ["wiql", "area-path", "iteration-path"].some((name) => option(ctx.options, name) !== undefined)) {
             throw new CommandError("WIQL, area and iteration filters apply to import/sync only");
@@ -267,6 +267,8 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
             throw new CommandError("Install pm-ado with pm install so the host links its SDK; guarded sync requires the SDK module");
         }
         const settings = await sdk.readSettings(ctx.pm_root);
+        const statusRegistry = sdk.resolveRuntimeStatusRegistry(settings.schema);
+        const states = Object.fromEntries(Object.entries(requestedStates).map(([remote, status]) => [remote, sdk.normalizeStatusForRegistry(status, statusRegistry)]));
         const author = sdk.selectImportAuthor(ctx.global.author, settings.author_default);
         const outbox = new SyncOutbox(ctx.pm_root, author, config, client, observer, sdk);
         let snapshot = await pm.listAllComplete();
@@ -320,8 +322,23 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
             const transactionId = `ado-sync-${pending?.plan ?? "agreement"}-${suffix ?? sdk.deriveMutationTransactionId(JSON.stringify([id, versions.get(id), options]))}`;
             await commitLocal(id, options, operation, transactionId);
         };
+        /** Recovery ownership applies to every actual graph endpoint, independent of query selection. */
+        const guardRelationUpdate = async (id, options) => {
+            const relationWrite = options.parent !== undefined || options.dep !== undefined ||
+                options.unset?.some((key) => key === "parent" || key === "dependencies");
+            if (mode !== "sync" || !relationWrite)
+                return;
+            let changed = foreignKeys.get(id)?.has("relations") === true;
+            if (!changed && !ownedKeys.get(id)?.has("relations") && items.some((item) => item.id === id)) {
+                const local = await readLocalAgreement(snapshotReader, id, config);
+                changed = !equal(local.values.relations, local.base?.relations);
+            }
+            if (changed)
+                throw new CommandError(`Local relations changed at affected endpoint ${id}; re-read both trackers and resolve that endpoint before retrying`, EXIT_CODE.conflict);
+        };
         /** Keep native close and mapped assignment replayable without treating native clearing as a local edit. */
         const update = async (id, options) => {
+            await guardRelationUpdate(id, options);
             if (options.status !== sdk.resolveRuntimeStatusRegistry(settings.schema).close_status)
                 return persist(id, options);
             const { status, closeReason, completedAt, ...scalars } = options;
@@ -358,6 +375,10 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
             if (prepared < 0 || history.slice(prepared + 1).some((entry) => entry.patch.some((patch) => patch.path === "/metadata/ado_sync_intent") &&
                 !entry.message?.startsWith(`bulk-item-transaction ado-sync-${pending.plan}-`)))
                 throw new CommandError("Local sync intent lacks its SDK history proof", EXIT_CODE.conflict);
+            // Older intents may retain a configured alias; normalize only its native lifecycle coordinate.
+            for (const values of [pending.wanted, pending.seen])
+                if (typeof values.status === "string")
+                    values.status = sdk.normalizeStatusForRegistry(values.status, statusRegistry);
             const latest = new Map();
             for (const entry of history.slice(prepared + 1))
                 for (const patch of entry.patch) {
@@ -527,6 +548,14 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
             }
             // Validate export mappings even in dry-run, before any write on either side.
             azureFields(values, plan.export_fields, exportStates);
+        }
+        if (mode === "sync" && conflicts.length === 0) {
+            const pulled = entries.filter((entry) => entry.pullRelations && entry.remote !== undefined).map((entry) => entry.remote);
+            if (pulled.length) {
+                const footprint = await planRelationImport(pulled, config.orgUrl, identities, snapshotReader, {}, true);
+                for (const { id, options } of footprint.updates)
+                    await guardRelationUpdate(id, options);
+            }
         }
         if (conflicts.length)
             return { ok: false, code: "ADO_CONFLICT", exit_code: EXIT_CODE.conflict, dry_run: dryRun, plans, conflicts, diagnostics };

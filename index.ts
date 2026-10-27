@@ -220,35 +220,39 @@ function assertRelationIdentities(identities: RelationIdentities, items: readonl
   }
 }
 
+/** One native graph update and its complete SDK before-image. */
+export interface RelationImportUpdate {
+  /** Local endpoint whose parent or dependencies will change. */
+  id: string;
+  /** Native SDK options; no persistence occurs while building the plan. */
+  options: PmUpdateActionOptions;
+  /** Original item retained for conditional parent compensation. */
+  previous: ItemMetadata;
+}
+/** Complete local write footprint of an additive remote relation import. */
+export interface RelationImportPlan {
+  /** Complete SDK snapshot used to validate and order the proposed hierarchy. */
+  items: readonly ItemMetadata[];
+  /** Every affected endpoint, in safe parent-before-descendant order. */
+  updates: RelationImportUpdate[];
+  /** Remote edges with no mapped local representation. */
+  unmapped: RelationDiagnostic[];
+}
+
 /**
- * Merge a remote relation batch into real pm hierarchy and dependencies.
- *
- * Read the complete tracker before writing; validate the entire proposed hierarchy,
- * including existing hierarchy dependencies, so remote cycles and competing parents
- * leave every item untouched. Apply parents before descendants in the validated
- * final tree, avoiding transient cycles without detaching existing parents. If a
- * write fails, restore completed parent changes in reverse order; failed recovery
- * reports the exact detached IDs from a fresh tracker read. Dependency source_kind retains exact ADO reference names,
- * including custom types and both Duplicate directions (stored as related because the
- * SDK mutation parser does not accept a duplicate kind). This is an additive import:
- * absent remote links do not erase independently maintained local links.
- *
- * @param remote - Relation snapshots read through the batch client.
- * @param orgUrl - Organization scope used to validate every relation target.
- * @param identities - One-to-one remote-to-local identity table.
- * @param pm - Caller-owned SDK client bound to the target tracker.
- * @param custom - Explicit custom reference-name mappings.
- * @returns Changed local IDs and original edges that could not be imported.
+ * Plan every graph endpoint before effects, including unselected inverse endpoints.
+ * With allowUnlinkedSources, prospective parent IDs are planning-only; importRelations
+ * always replans with real SDK identities before it can mutate an item.
  */
-export async function importRelations(
-  remote: readonly AdoWorkItem[],
-  orgUrl: string,
-  identities: RelationIdentities,
-  pm: Pick<PmClient, "listAllComplete"> & { update: (id: string, options: PmUpdateActionOptions) => Promise<unknown> },
-  custom: CustomRelationMap = {},
-): Promise<{ updated: string[]; unmapped: RelationDiagnostic[] }> {
+export async function planRelationImport(
+  remote: readonly AdoWorkItem[], orgUrl: string, identities: RelationIdentities,
+  pm: Pick<PmClient, "listAllComplete">, custom: CustomRelationMap = {}, allowUnlinkedSources = false,
+): Promise<RelationImportPlan> {
   const { items } = await pm.listAllComplete();
   assertRelationIdentities(identities, items);
+  const resolvedIdentities = new Map(identities);
+  // Prospective IDs belong only to this read-only plan; mutation replans after SDK creation.
+  if (allowUnlinkedSources) for (const item of remote) if (!resolvedIdentities.has(item.id)) resolvedIdentities.set(item.id, `ado-unlinked:${item.id}`);
   const parents = new Map(items.map((item) => [item.id, item.parent]));
   const proposed = new Map<string, string>();
   const additions = new Map<string, string[]>();
@@ -261,12 +265,12 @@ export async function importRelations(
   ));
   const unmapped: RelationDiagnostic[] = [];
   for (const item of remote) {
-    const source = identities.get(item.id);
+    const source = resolvedIdentities.get(item.id);
     if (source === undefined) throw new CommandError(`missing pm identity for work item ${item.id}`);
     for (const relation of item.relations ?? []) {
       const mapped = relationKind(relation.rel, custom);
       const targetId = relationTargetId(relation.url, orgUrl);
-      const target = targetId === undefined ? undefined : identities.get(targetId);
+      const target = targetId === undefined ? undefined : resolvedIdentities.get(targetId);
       if (mapped === undefined || target === undefined) {
         unmapped.push({ itemId: item.id, relation });
         continue;
@@ -332,21 +336,54 @@ export async function importRelations(
   const changedParents = new Set(items.filter((item) => proposed.has(item.id) && item.parent !== proposed.get(item.id))
     .map((item) => item.id));
   const byId = new Map(items.map((item) => [item.id, item]));
+  const updates: RelationImportUpdate[] = [];
+  for (const id of queue) {
+    const item = byId.get(id);
+    if (item === undefined) continue;
+    const parentChanged = changedParents.has(id), dep = additions.get(id) ?? [];
+    if (parentChanged || dep.length > 0) updates.push({ id, previous: item,
+      options: { ...(parentChanged ? { parent: proposed.get(id)! } : {}), dep } });
+  }
+  return { items, updates, unmapped };
+}
+
+/**
+ * Merge a remote relation batch into real pm hierarchy and dependencies.
+ *
+ * Read the complete tracker before writing; validate the entire proposed hierarchy,
+ * including existing hierarchy dependencies, so remote cycles and competing parents
+ * leave every item untouched. Apply parents before descendants in the validated
+ * final tree, avoiding transient cycles without detaching existing parents. If a
+ * write fails, restore completed parent changes in reverse order; failed recovery
+ * reports the exact detached IDs from a fresh tracker read. Dependency source_kind retains exact ADO reference names,
+ * including custom types and both Duplicate directions (stored as related because the
+ * SDK mutation parser does not accept a duplicate kind). This is an additive import:
+ * absent remote links do not erase independently maintained local links.
+ *
+ * @param remote - Relation snapshots read through the batch client.
+ * @param orgUrl - Organization scope used to validate every relation target.
+ * @param identities - One-to-one remote-to-local identity table.
+ * @param pm - Caller-owned SDK client bound to the target tracker.
+ * @param custom - Explicit custom reference-name mappings.
+ * @returns Changed local IDs and original edges that could not be imported.
+ */
+export async function importRelations(
+  remote: readonly AdoWorkItem[],
+  orgUrl: string,
+  identities: RelationIdentities,
+  pm: Pick<PmClient, "listAllComplete"> & { update: (id: string, options: PmUpdateActionOptions) => Promise<unknown> },
+  custom: CustomRelationMap = {},
+): Promise<{ updated: string[]; unmapped: RelationDiagnostic[] }> {
+  const { items, updates, unmapped } = await planRelationImport(remote, orgUrl, identities, pm, custom);
   const completed: ItemMetadata[] = [];
   const updated = new Set<string>();
   try {
     // Final-tree order gives the minimal detach set: empty. Every changed
     // ancestor has its final parent before a descendant can point back to it.
-    for (const id of queue) {
-      const item = byId.get(id);
-      if (item === undefined) continue;
-      const parentChanged = changedParents.has(id);
-      const dep = additions.get(id) ?? [];
-      if (parentChanged || dep.length > 0) {
-        await pm.update(id, { ...(parentChanged ? { parent: proposed.get(id)! } : {}), dep });
-        if (parentChanged) completed.push(item);
-        updated.add(id);
-      }
+    for (const { id, options, previous } of updates) {
+      await pm.update(id, options);
+      if (options.parent !== undefined) completed.push(previous);
+      updated.add(id);
     }
   } catch (error) {
     const failed: string[] = [];

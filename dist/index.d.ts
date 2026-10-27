@@ -7,7 +7,7 @@ export { AdoResolutionService, ResolutionRefusal, resolutionDigest, resolutionSc
 export type { ResolutionPlan, ResolutionObserver, ResolutionIntent, ResolutionField, ResolutionChoice, ResolutionReceipt, ResolutionRefusalCode, ResolutionMaps } from "./resolution.ts";
 export { discoverProjectContract, ContractRefusal } from "./contracts.ts";
 export type { ProjectContract, ContractOptions, ContractType, ContractField, ContractRelation, ContractIssue, ContractRefusalCode } from "./contracts.ts";
-import type { Dependency, PmClient, PmUpdateActionOptions } from "@unbrained/pm-cli/sdk";
+import type { Dependency, ItemMetadata, PmClient, PmUpdateActionOptions } from "@unbrained/pm-cli/sdk";
 /**
  * Semantic exit codes pm's command runtime propagates to the shell.
  *
@@ -127,6 +127,30 @@ export interface RelationDiagnostic {
     /** Original edge, including its reference name and URL. */
     relation: AdoRelation;
 }
+/** One native graph update and its complete SDK before-image. */
+export interface RelationImportUpdate {
+    /** Local endpoint whose parent or dependencies will change. */
+    id: string;
+    /** Native SDK options; no persistence occurs while building the plan. */
+    options: PmUpdateActionOptions;
+    /** Original item retained for conditional parent compensation. */
+    previous: ItemMetadata;
+}
+/** Complete local write footprint of an additive remote relation import. */
+export interface RelationImportPlan {
+    /** Complete SDK snapshot used to validate and order the proposed hierarchy. */
+    items: readonly ItemMetadata[];
+    /** Every affected endpoint, in safe parent-before-descendant order. */
+    updates: RelationImportUpdate[];
+    /** Remote edges with no mapped local representation. */
+    unmapped: RelationDiagnostic[];
+}
+/**
+ * Plan every graph endpoint before effects, including unselected inverse endpoints.
+ * With allowUnlinkedSources, prospective parent IDs are planning-only; importRelations
+ * always replans with real SDK identities before it can mutate an item.
+ */
+export declare function planRelationImport(remote: readonly AdoWorkItem[], orgUrl: string, identities: RelationIdentities, pm: Pick<PmClient, "listAllComplete">, custom?: CustomRelationMap, allowUnlinkedSources?: boolean): Promise<RelationImportPlan>;
 /**
  * Merge a remote relation batch into real pm hierarchy and dependencies.
  *

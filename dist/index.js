@@ -136,28 +136,19 @@ function assertRelationIdentities(identities, items) {
     }
 }
 /**
- * Merge a remote relation batch into real pm hierarchy and dependencies.
- *
- * Read the complete tracker before writing; validate the entire proposed hierarchy,
- * including existing hierarchy dependencies, so remote cycles and competing parents
- * leave every item untouched. Apply parents before descendants in the validated
- * final tree, avoiding transient cycles without detaching existing parents. If a
- * write fails, restore completed parent changes in reverse order; failed recovery
- * reports the exact detached IDs from a fresh tracker read. Dependency source_kind retains exact ADO reference names,
- * including custom types and both Duplicate directions (stored as related because the
- * SDK mutation parser does not accept a duplicate kind). This is an additive import:
- * absent remote links do not erase independently maintained local links.
- *
- * @param remote - Relation snapshots read through the batch client.
- * @param orgUrl - Organization scope used to validate every relation target.
- * @param identities - One-to-one remote-to-local identity table.
- * @param pm - Caller-owned SDK client bound to the target tracker.
- * @param custom - Explicit custom reference-name mappings.
- * @returns Changed local IDs and original edges that could not be imported.
+ * Plan every graph endpoint before effects, including unselected inverse endpoints.
+ * With allowUnlinkedSources, prospective parent IDs are planning-only; importRelations
+ * always replans with real SDK identities before it can mutate an item.
  */
-export async function importRelations(remote, orgUrl, identities, pm, custom = {}) {
+export async function planRelationImport(remote, orgUrl, identities, pm, custom = {}, allowUnlinkedSources = false) {
     const { items } = await pm.listAllComplete();
     assertRelationIdentities(identities, items);
+    const resolvedIdentities = new Map(identities);
+    // Prospective IDs belong only to this read-only plan; mutation replans after SDK creation.
+    if (allowUnlinkedSources)
+        for (const item of remote)
+            if (!resolvedIdentities.has(item.id))
+                resolvedIdentities.set(item.id, `ado-unlinked:${item.id}`);
     const parents = new Map(items.map((item) => [item.id, item.parent]));
     const proposed = new Map();
     const additions = new Map();
@@ -167,13 +158,13 @@ export async function importRelations(remote, orgUrl, identities, pm, custom = {
         .map((dep) => JSON.stringify([item.id, dep.id, storedRelationKind(dep.kind)]))));
     const unmapped = [];
     for (const item of remote) {
-        const source = identities.get(item.id);
+        const source = resolvedIdentities.get(item.id);
         if (source === undefined)
             throw new CommandError(`missing pm identity for work item ${item.id}`);
         for (const relation of item.relations ?? []) {
             const mapped = relationKind(relation.rel, custom);
             const targetId = relationTargetId(relation.url, orgUrl);
-            const target = targetId === undefined ? undefined : identities.get(targetId);
+            const target = targetId === undefined ? undefined : resolvedIdentities.get(targetId);
             if (mapped === undefined || target === undefined) {
                 unmapped.push({ itemId: item.id, relation });
                 continue;
@@ -245,23 +236,50 @@ export async function importRelations(remote, orgUrl, identities, pm, custom = {
     const changedParents = new Set(items.filter((item) => proposed.has(item.id) && item.parent !== proposed.get(item.id))
         .map((item) => item.id));
     const byId = new Map(items.map((item) => [item.id, item]));
+    const updates = [];
+    for (const id of queue) {
+        const item = byId.get(id);
+        if (item === undefined)
+            continue;
+        const parentChanged = changedParents.has(id), dep = additions.get(id) ?? [];
+        if (parentChanged || dep.length > 0)
+            updates.push({ id, previous: item,
+                options: { ...(parentChanged ? { parent: proposed.get(id) } : {}), dep } });
+    }
+    return { items, updates, unmapped };
+}
+/**
+ * Merge a remote relation batch into real pm hierarchy and dependencies.
+ *
+ * Read the complete tracker before writing; validate the entire proposed hierarchy,
+ * including existing hierarchy dependencies, so remote cycles and competing parents
+ * leave every item untouched. Apply parents before descendants in the validated
+ * final tree, avoiding transient cycles without detaching existing parents. If a
+ * write fails, restore completed parent changes in reverse order; failed recovery
+ * reports the exact detached IDs from a fresh tracker read. Dependency source_kind retains exact ADO reference names,
+ * including custom types and both Duplicate directions (stored as related because the
+ * SDK mutation parser does not accept a duplicate kind). This is an additive import:
+ * absent remote links do not erase independently maintained local links.
+ *
+ * @param remote - Relation snapshots read through the batch client.
+ * @param orgUrl - Organization scope used to validate every relation target.
+ * @param identities - One-to-one remote-to-local identity table.
+ * @param pm - Caller-owned SDK client bound to the target tracker.
+ * @param custom - Explicit custom reference-name mappings.
+ * @returns Changed local IDs and original edges that could not be imported.
+ */
+export async function importRelations(remote, orgUrl, identities, pm, custom = {}) {
+    const { items, updates, unmapped } = await planRelationImport(remote, orgUrl, identities, pm, custom);
     const completed = [];
     const updated = new Set();
     try {
         // Final-tree order gives the minimal detach set: empty. Every changed
         // ancestor has its final parent before a descendant can point back to it.
-        for (const id of queue) {
-            const item = byId.get(id);
-            if (item === undefined)
-                continue;
-            const parentChanged = changedParents.has(id);
-            const dep = additions.get(id) ?? [];
-            if (parentChanged || dep.length > 0) {
-                await pm.update(id, { ...(parentChanged ? { parent: proposed.get(id) } : {}), dep });
-                if (parentChanged)
-                    completed.push(item);
-                updated.add(id);
-            }
+        for (const { id, options, previous } of updates) {
+            await pm.update(id, options);
+            if (options.parent !== undefined)
+                completed.push(previous);
+            updated.add(id);
         }
     }
     catch (error) {

@@ -32,6 +32,10 @@ export class ResolutionRefusal extends Error {
     if (error instanceof ResolutionRefusal) return error;
     if (error instanceof CommandError && error.exitCode === 2) return new ResolutionRefusal("configuration", "Check configured state maps and field values before generating a new plan.");
     if (typeof error === "object" && error !== null && "code" in error &&
+        ["transaction_preview_non_regular_file", "transaction_preview_external_schema"].includes(String(error.code))) {
+      return new ResolutionRefusal("configuration", "SDK semantic preview refuses non-regular tracker storage or external schema. Keep SDK links intact; use global pm-ado installation with its runtime outside this tracker, or an SDK supporting managed runtime exclusions.");
+    }
+    if (typeof error === "object" && error !== null && "code" in error &&
         ["MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND"].includes(String(error.code))) {
       return new ResolutionRefusal("configuration", "Install pm-ado with pm install so the host links its SDK; standalone callers must inject their SDK into AdoResolutionService.");
     }
@@ -50,7 +54,7 @@ export interface ResolutionChoice {
 export interface ResolutionField {
   /** Canonical field name. */
   field: string;
-  /** Digest of the last shared value, or null for a legacy missing base. */
+  /** Digest of the last shared value, or null when this key has no witnessed base. */
   base: string | null;
   /** Digest of the observed pm value. */
   local: string;
@@ -116,7 +120,7 @@ export interface ResolutionIntent {
   patch: JsonPatchOperation[];
   /** Reviewed canonical outcome, retained only on the target item. */
   values: Values;
-  /** Existing complete sync base; null preserves legacy absence. */
+  /** Existing per-key sync base; null preserves legacy absence. */
   base: Values | null;
 }
 
@@ -177,7 +181,7 @@ export function resolutionFields(item: Sdk.ItemMetadata, remote: AdoWorkItem, ma
   const incoming = remoteValues(remote, maps.imports);
   const base = readBase(item, { ...incoming, relations: [] });
   if (base !== undefined && Object.hasOwn(base, "status") && Object.hasOwn(maps.exports, String(base.status)) && maps.exports[String(base.status)] === remote.fields["System.State"]) incoming.status = base.status;
-  return Object.keys(ADO_FIELD_MAP).map((field) => ({ field, base: base === undefined ? null : resolutionDigest(base[field]),
+  return Object.keys(ADO_FIELD_MAP).map((field) => ({ field, base: base === undefined || !Object.hasOwn(base, field) ? null : resolutionDigest(base[field]),
     local: resolutionDigest(local[field]), remote: resolutionDigest(incoming[field]),
     conflict: threeWayFieldConflict(local[field], incoming[field], base?.[field]) }));
 }
@@ -301,6 +305,11 @@ export class AdoResolutionService {
     } catch { throw this.partial(recoveryId, expected); }
   }
 
+  /** Delegate lifecycle identity to the SDK without changing portable field or mapping digests. */
+  private nativeStatus(values: Values, settings: Sdk.PmSettings): string {
+    return this.sdk.normalizeStatusForRegistry(String(values.status), this.sdk.resolveRuntimeStatusRegistry(settings.schema));
+  }
+
   /** Audit intent before the remote side effect; ordinary stale plans still make no item writes. */
   private async prepare(plan: ResolutionPlan, decision: string, maps: ResolutionMaps, settings: Sdk.PmSettings): Promise<ResolutionIntent | null> {
     let prepared: ResolutionIntent | null = null;
@@ -327,10 +336,12 @@ export class AdoResolutionService {
         const base = readBase(item, { ...values, relations: [] });
         if (base !== undefined && Object.hasOwn(base, "status") && Object.hasOwn(maps.exports, String(base.status)) && maps.exports[String(base.status)] === remote.fields["System.State"]) values.status = base.status;
         for (const choice of plan.choices) if (choice.take === "local") values[choice.field] = local[choice.field];
+        const nativeStatus = this.nativeStatus(values, settings);
         await this.sdk.previewItemMutations({ pmRoot: this.pmRoot, transactionId: `ado-${decision}`, author: this.author,
           mutations: [{ op: "update", id: item.id, options: { title: String(values.title), description: String(values.description),
-            status: String(values.status), priority: Number(values.priority), tags: JSON.stringify(values.tags),
-            ...(values.assignee === "" ? { unset: ["assignee"] } : { assignee: String(values.assignee) }), closeReason: "Azure conflict resolution" } }] });
+            ...(nativeStatus === item.status ? {} : { status: nativeStatus, closeReason: "Azure conflict resolution" }),
+            priority: Number(values.priority), tags: JSON.stringify(values.tags),
+            ...(values.assignee === "" ? { unset: ["assignee"] } : { assignee: String(values.assignee) }) } }] });
         const patch = this.patch(plan, values, maps, decision);
         prepared = { plan_id: decision, local_revision: plan.local.revision, guard: this.guard(document),
           remote_id: remote.id, remote_revision: remote.rev, remote_digest: plan.remote.digest,
@@ -373,6 +384,7 @@ export class AdoResolutionService {
         const previousStatus = item.status;
         const values = intent.values;
         for (const key of Object.keys(ADO_FIELD_MAP)) item[key] = values[key];
+        item.status = this.nativeStatus(values, settings);
         if (values.assignee === "") delete item.assignee;
         const statuses = this.sdk.resolveRuntimeStatusRegistry(settings.schema);
         const lifecycleFields: string[] = [];

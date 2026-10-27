@@ -252,3 +252,23 @@ accepts a stale update. SDK `BulkItemUpdateMutation` currently exposes only
 native lifecycle operation. Public declaration and open-issue searches are
 recorded in that follow-up for upstream ownership. No package-defined replacement
 for SDK concurrency is introduced here.
+
+
+### Presence-review verification receipt
+
+Implementation head `f959f65` passes 20/20 refresh/agreement tests (both modules
+at 100% lines/branches/functions), 22/22 earlier-review cases, 4/4 unchanged
+consumer/normalization checks, and 14/14 public-tracker differential comparisons.
+The 2,048-case presence property and 18 native SDK publications pass; four
+function-only reverts fail 3/3, 2/2, 2/2 and 1/1 selected cases respectively.
+
+Both isolated-home full release attempts hit the unchanged 900-second packed
+fixture timeout. The npm attempt reports 907.8 seconds for that fixture, after
+three launcher shapes passed; the Bun attempt reports 905.8 seconds, after all
+six launcher shapes passed. Remaining global-runtime cases were interrupted or
+could not start. The already-failed V8 runs were stopped before completing the
+long crash matrix. Partial reporter counts are npm: 314 tests, 304 passed,
+7 failed, 3 canceled; Bun: 360 tests, 353 passed, 4 failed, 3 canceled. These are
+not complete suite counts, and package-wide coverage is not certified for this
+head. All four 100% thresholds, test assertions and timeouts remain unchanged.
+Current CI and handoff receipts are linked from the adoption item and PR.

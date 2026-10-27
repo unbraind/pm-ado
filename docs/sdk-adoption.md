@@ -163,3 +163,56 @@ published consumer under Node and Bun; the complete new normalizer module
 measures 100% lines, branches and functions. The linked spelling suite separately
 passes 10/10 tests and all 120 choose/apply/replay cases. Full package coverage
 retains its independent statement gate and unchanged 100% thresholds.
+
+
+## Latest validation and remaining CI evidence
+
+Implementation source: `524d6cb2f55e4f1d96f5a7a83e969814c331039a`.
+Main was merged through `676eb69e1be19692e0588c0246163783259255a6`.
+Both audit findings are replaced: seven original replacement lines removed;
+the complete production TypeScript diff deletes 163 lines against that main.
+
+Separate, overlapping focused checkpoints passed: 50/50 resolution/graph cases;
+10/10 linked normalization cases including 120 native SDK/map spelling
+choose/apply/replay cases; 7/7 final normalization/API cases with 100% new-module
+line/branch/function coverage; 29/29 complete contract/move tests; 2/2 fresh
+markerless-plan/native-oracle cases; and the malformed-plan and pending-witness
+corpora, one test each. Actual published prepared/settled fixtures remain
+unchanged. The unchanged published consumer runs under Node and Bun.
+
+The complete contract/move run caught and fixed one additional dependency-rule
+instance: remote-only metadata discovery must not load a PM registry when it has
+no local values to compare. Its pre-fix function failed the unchanged copied
+no-git CLI regression 1/1; changing only that projection restores 29/29 complete
+file tests and 2/2 linked copied-CLI/alias checks.
+
+On the implementation source, the public differential again passes 14/14
+comparisons over 140 real items, with authoritative bytes unchanged. Typecheck,
+build/test compilation, 114 documented declarations, production audit (zero
+vulnerabilities), package dry run, changelog, publish-attestation/date checks,
+strict tracker health, whitespace and public-path/privacy checks pass. The
+health check has one advisory for pending telemetry; no telemetry setting was
+changed. This package has no separate lint script.
+
+Both local full release-gate attempts reported packed installer setup failures
+before any of the eleven installation-shape scenarios ran, and were stopped
+after the known failure. An isolated Node reproduction failed while installing
+the public pm CLI tarball under the unchanged 180-second command limit (203.8
+seconds total). These are incomplete full-gate results, not package coverage
+approval. Test timeouts, assertions, and all four 100% package thresholds remain
+unchanged. The packed test keeps its own empty cache; external cache priming was
+stopped because it cannot change that hermetic setup.
+
+The retained reference model has 512 sequences (seed `0x37a9c521`), 278
+interruptions, 408 converged retries and 104 typed conflicts; the eight recording
+server matrices cover 344 edit/crash cells over 172 boundaries. The native
+normalization/replay model has 500 sequences (seed `0x5a17c0de`); create/PATCH
+outcome seeds are `0x10262026` and `0x52621026`. Their last complete baseline
+results are recorded in the earlier evidence above; latest complete-head
+results await CI.
+
+Implementation-source [CI](https://github.com/unbraind/pm-ado/actions/runs/40501684903)
+and [CodeQL](https://github.com/unbraind/pm-ado/actions/runs/40501684938)
+were queued when this receipt was written. The PR checks track the final
+evidence commit too. Queued/skipped checks are not approval; no merge or release
+was performed.

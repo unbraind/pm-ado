@@ -71,6 +71,7 @@ export declare function readLocalAgreement(pm: Pick<PmClient, "listAllComplete">
     };
     version: string;
     base: Values | undefined;
+    acknowledgedRevision: number | undefined;
 }>;
 /** Project an actual Azure read, preserving only an equivalent configured local status alias. */
 export declare function remoteAgreement(remote: AdoWorkItem, local: Values, config: AdoConfig, identities: ReadonlyMap<number, string>, imports: Readonly<Record<string, string>>, exports: Readonly<Record<string, string>>): Values;

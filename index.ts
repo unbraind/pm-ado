@@ -20,6 +20,9 @@ import type {
   PreflightOverrideContext,
 } from "@unbrained/pm-cli/sdk/authoring";
 import { runSyncCommand, SYNC_FLAGS } from "./sync.ts";
+import { runRefreshCommand } from "./refresh.ts";
+export { compileRefreshPlan, validateRefreshInput, refreshSaved, observeRefreshPlan, RefreshRefusal } from "./refresh.ts";
+export type { RefreshInput, RefreshSaved, RefreshRevision, RefreshField, RefreshBatch, RefreshPlan, RefreshRefusalCode } from "./refresh.ts";
 import { runMoveCommand } from "./moves.ts";
 export { simulateMove, MoveRefusal, MOVE_LIMITS } from "./moves.ts";
 export type { MoveOptions, MoveScope, MoveRow, MoveRelation, MovePreview, MoveRefusalCode } from "./moves.ts";
@@ -819,18 +822,20 @@ export class AdoClient {
    * whole sync or silently dropping items.
    *
    * @param ids - The work item ids to fetch.
+   * @param projection - Optional sparse field references and explicit relation expansion; omitted preserves full reads.
    * @returns The found items and the ids the service omitted.
    */
-  async getWorkItemsReport(ids: readonly number[]): Promise<BatchReadResult> {
+  async getWorkItemsReport(ids: readonly number[], projection: { fields: readonly string[]; relations?: boolean } | undefined = undefined): Promise<BatchReadResult> {
     const items: AdoWorkItem[] = [];
     const missing: number[] = [];
     for (const batch of batchIds(ids)) {
       const payload = await this.request("POST", "/_apis/wit/workitemsbatch?api-version=7.1", {
         ids: batch,
-        $expand: "relations",
+        ...(projection === undefined ? { $expand: "relations" } : { fields: projection.fields, ...(projection.relations ? { $expand: "relations" } : {}) }),
         errorPolicy: "omit",
       });
       const value = (payload as { value?: readonly AdoWorkItem[] }).value;
+      if (projection !== undefined && !Array.isArray(value)) throw new CommandError("Invalid projected batch response", EXIT_CODE.remote);
       const found = value !== undefined ? [...value] : [];
       items.push(...found);
       const foundIds = new Set(found.map((item) => item.id));
@@ -1050,7 +1055,7 @@ const defineExtension = <TModule extends ExtensionModule>(module: TModule): TMod
 
 export default defineExtension({
   name: "pm-ado",
-  version: "2026.9.2",
+  version: "2026.10.26",
 
   activate(api: ExtensionApi) {
     // schema — Azure DevOps provenance, including the revision every write asserts.
@@ -1090,6 +1095,16 @@ export default defineExtension({
         handler: (ctx: CommandHandlerContext) => runSyncCommand(ctx, mode),
       });
     }
+
+    api.registerCommand({
+      name: "ado refresh-plan",
+      description: "Probe linked Azure revisions and compile costed sparse read batches without writes",
+      flags: [
+        { long: "--fields", value_type: "string", description: "Required comma-separated native pm field needs" },
+        { long: "--max-output-bytes", value_type: "number", description: "Complete JSON receipt budget, 1024..1048576 (default 65536)" },
+      ],
+      handler: runRefreshCommand,
+    });
 
     api.registerCommand({
       name: "ado resolve-plan",

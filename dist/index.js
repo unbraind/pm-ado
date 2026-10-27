@@ -13,6 +13,8 @@
 // remote write here asserts a revision — there is no unchecked write path to
 // fall back to, by construction rather than by convention.
 import { runSyncCommand, SYNC_FLAGS } from "./sync.js";
+import { runRefreshCommand } from "./refresh.js";
+export { compileRefreshPlan, validateRefreshInput, refreshSaved, observeRefreshPlan, RefreshRefusal } from "./refresh.js";
 import { runMoveCommand } from "./moves.js";
 export { simulateMove, MoveRefusal, MOVE_LIMITS } from "./moves.js";
 import { runContractCommand } from "./contracts.js";
@@ -679,18 +681,21 @@ export class AdoClient {
      * whole sync or silently dropping items.
      *
      * @param ids - The work item ids to fetch.
+     * @param projection - Optional sparse field references and explicit relation expansion; omitted preserves full reads.
      * @returns The found items and the ids the service omitted.
      */
-    async getWorkItemsReport(ids) {
+    async getWorkItemsReport(ids, projection = undefined) {
         const items = [];
         const missing = [];
         for (const batch of batchIds(ids)) {
             const payload = await this.request("POST", "/_apis/wit/workitemsbatch?api-version=7.1", {
                 ids: batch,
-                $expand: "relations",
+                ...(projection === undefined ? { $expand: "relations" } : { fields: projection.fields, ...(projection.relations ? { $expand: "relations" } : {}) }),
                 errorPolicy: "omit",
             });
             const value = payload.value;
+            if (projection !== undefined && !Array.isArray(value))
+                throw new CommandError("Invalid projected batch response", EXIT_CODE.remote);
             const found = value !== undefined ? [...value] : [];
             items.push(...found);
             const foundIds = new Set(found.map((item) => item.id));
@@ -883,7 +888,7 @@ export function runCredentialPreflight(ctx, env, write, exit) {
 const defineExtension = (module) => module;
 export default defineExtension({
     name: "pm-ado",
-    version: "2026.9.2",
+    version: "2026.10.26",
     activate(api) {
         // schema — Azure DevOps provenance, including the revision every write asserts.
         api.registerItemFields([
@@ -914,6 +919,15 @@ export default defineExtension({
                 handler: (ctx) => runSyncCommand(ctx, mode),
             });
         }
+        api.registerCommand({
+            name: "ado refresh-plan",
+            description: "Probe linked Azure revisions and compile costed sparse read batches without writes",
+            flags: [
+                { long: "--fields", value_type: "string", description: "Required comma-separated native pm field needs" },
+                { long: "--max-output-bytes", value_type: "number", description: "Complete JSON receipt budget, 1024..1048576 (default 65536)" },
+            ],
+            handler: runRefreshCommand,
+        });
         api.registerCommand({
             name: "ado resolve-plan",
             description: "Preview revision-bound field decisions; optionally save a core Plan item",

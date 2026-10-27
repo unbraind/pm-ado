@@ -6,6 +6,10 @@ export async function advanceSyncBase(operations) {
     if (local.version !== operations.expectedVersion)
         throw new CommandError("Local item changed before read-back agreement; re-read both trackers and retry", EXIT_CODE.conflict);
     const remote = await operations.readRemote(local);
+    if (!Number.isSafeInteger(remote.revision) || remote.revision < operations.minimumRemoteRevision ||
+        local.acknowledgedRevision !== undefined && remote.revision < local.acknowledgedRevision) {
+        throw new CommandError("Azure read-back revision is older than the completed operation; re-read both trackers", EXIT_CODE.conflict);
+    }
     const keys = [...new Set([...Object.keys(local.values), ...Object.keys(remote.values)])];
     const base = {};
     const differences = [];

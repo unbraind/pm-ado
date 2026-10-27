@@ -10,6 +10,8 @@ export interface LocalAgreementRead {
   version: string;
   /** Previously acknowledged values; absent keys remain unknown. */
   base?: Values;
+  /** Last acknowledged Azure revision; a stale read cannot move it backward. */
+  acknowledgedRevision?: number;
 }
 /** Azure state read after the command's effects, never a request or cached response. */
 export interface RemoteAgreementRead {
@@ -26,6 +28,8 @@ export interface AgreementOperations {
   readRemote(local: LocalAgreementRead): Promise<RemoteAgreementRead>;
   /** Refuse a peer edit rather than adopting its newer revision as our own. */
   expectedVersion: string;
+  /** Earliest Azure revision that can include this command's completed effects. */
+  minimumRemoteRevision: number;
   /** Publish only these witnessed values, matched to the local read version. */
   publish(base: Values, revision: number | undefined, version: string): Promise<void>;
 }
@@ -46,6 +50,10 @@ export async function advanceSyncBase(operations: AgreementOperations): Promise<
   const local = await operations.readLocal();
   if (local.version !== operations.expectedVersion) throw new CommandError("Local item changed before read-back agreement; re-read both trackers and retry", EXIT_CODE.conflict);
   const remote = await operations.readRemote(local);
+  if (!Number.isSafeInteger(remote.revision) || remote.revision < operations.minimumRemoteRevision ||
+      local.acknowledgedRevision !== undefined && remote.revision < local.acknowledgedRevision) {
+    throw new CommandError("Azure read-back revision is older than the completed operation; re-read both trackers", EXIT_CODE.conflict);
+  }
   const keys = [...new Set([...Object.keys(local.values), ...Object.keys(remote.values)])];
   const base: Values = {};
   const differences: string[] = [];

@@ -1,6 +1,6 @@
 {
   "name": "pm-ado",
-  "version": "2026.9.2",
+  "version": "2026.10.26",
   "description": "Azure DevOps work-item sync for pm-cli, with revision-checked writes so concurrent agents cannot clobber each other",
   "repository": {
     "type": "git",
@@ -23,12 +23,13 @@
     "docs/field-contracts.md",
     "docs/conflict-resolution.md",
     "docs/move-simulator.md",
-    "docs/sync-recovery.md"
+    "docs/sync-recovery.md",
+    "docs/sparse-refresh.md"
   ],
   "scripts": {
     "build": "tsc",
     "build:test": "tsc -p tsconfig.test.json",
-    "test": "npm run build && npm run build:test && node --test test/*.test.ts",
+    "test": "npm run build && npm run build:test && node --test --test-concurrency=2 test/*.test.ts",
     "prepack": "npm run build",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck",
@@ -57,8 +58,8 @@
     "@unbrained/pm-cli": "2026.10.23",
     "istanbul-lib-coverage": "3.2.2",
     "istanbul-lib-instrument": "6.0.3",
-    "pm-changelog": "2026.10.21",
-    "pm-ops": "2026.10.20",
+    "pm-changelog": "2026.10.23",
+    "pm-ops": "2026.10.23",
     "typescript": "7.0.2"
   },
   "keywords": [
@@ -114,7 +115,8 @@
       "docs/field-contracts.md",
       "docs/conflict-resolution.md",
       "docs/move-simulator.md",
-      "docs/sync-recovery.md"
+      "docs/sync-recovery.md",
+      "docs/sparse-refresh.md"
     ],
     "examples": [
       "README.md"

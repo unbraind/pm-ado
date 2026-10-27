@@ -175,7 +175,7 @@ export async function readLocalAgreement(pm, id, config) {
     const empty = { id: Number(item.ado_id), rev: 0, fields: {}, relations: [] };
     const graph = await exportRelations(empty, config.orgUrl, identities, { listAllComplete: async () => snapshot });
     const values = { ...localValues(item), relations: relationValues(applyRelations(empty, graph.operations), config, identities) };
-    return { item, identities, values, version: item.updated_at, base: readBase(item, values) };
+    return { item, identities, values, version: item.updated_at, base: readBase(item, values), acknowledgedRevision: typeof item.ado_rev === "number" ? item.ado_rev : undefined };
 }
 /** Project an actual Azure read, preserving only an equivalent configured local status alias. */
 export function remoteAgreement(remote, local, config, identities, imports, exports) {
@@ -297,6 +297,9 @@ export async function runSyncCommand(ctx, mode, observer) {
                 pairs.push({ local, remote: undefined });
         const entries = [];
         for (const { local, remote } of pairs) {
+            if (local !== undefined && remote !== undefined && Number.isSafeInteger(local.ado_rev) && Number(local.ado_rev) > remote.rev) {
+                throw new CommandError("Azure returned an older revision; re-read the current work item before importing or exporting", EXIT_CODE.conflict);
+            }
             const plan = { pm_id: local?.id ?? null, ado_id: remote?.id ?? null, action: "none", import_fields: [], export_fields: [] };
             plans.push(plan);
             const remoteFields = remote === undefined ? undefined : remoteValues(remote, states);
@@ -517,12 +520,15 @@ export async function runSyncCommand(ctx, mode, observer) {
                 const fields = pmFields(values, remote, config);
                 if (values.status === local.status)
                     delete fields.status;
-                if (fields.status === sdk.resolveRuntimeStatusRegistry(settings.schema).close_status)
-                    fields.closeReason = "Azure DevOps state synchronized";
+                if (fields.status !== undefined) {
+                    const { status } = await pm.schemaShowStatus(fields.status);
+                    if (status.roles.some((role) => ["terminal", "terminal_done", "terminal_canceled"].includes(role)))
+                        fields.closeReason = "Azure DevOps state synchronized";
+                }
                 if (!equal(localValues(local), Object.fromEntries(Object.entries(values).filter(([key]) => key !== "relations"))))
                     await update(local.id, fields);
                 let readback;
-                const agreement = await advanceSyncBase({ expectedVersion: versions.get(local.id),
+                const agreement = await advanceSyncBase({ expectedVersion: versions.get(local.id), minimumRemoteRevision: remote.rev,
                     readLocal: async () => { readback = await readLocalAgreement(pm, local.id, config); return readback; },
                     readRemote: async (current) => {
                         const [actual] = await client.getWorkItems([remote.id]);

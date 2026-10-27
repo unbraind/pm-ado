@@ -449,14 +449,25 @@ partial agreements against the same preview predicate. Native non-git SDK,
 copied-extension JSON/TOON, and packed npm/Bun shapes cover the reported case.
 
 
-## Native monotonic-precondition limitation
+## Native monotonic history verification
 
-The base/order/outbox invariants above do not make timestamp equality a native
-item version. The pinned bulk lifecycle API still compares `updated_at`; a
-fixed-clock or ABA peer edit can advance history without changing that value.
-The current blocking acceptance probe is
-`node scripts/sdk-native-precondition-probe.ts`; it fails 18 boundary cases and
-must pass before claiming this native concurrency class is closed. The audited
-write families and missing public contract are documented in
-[SDK adoption evidence](sdk-adoption.md#r7-monotonic-precondition-audit) and
-[pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576).
+Native writes use `NativeWriteFence` for all sync/recovery/close and agreement
+steps. The witness is native history length plus last record hash, captured
+before inspection. A workspace transaction dispatches the SDK lifecycle
+operation, then reads history under the item lock. Exactly one own native
+entry must follow the witness; timestamps and content equality do not fence
+writes. A peer entry, including ABA, produces a typed conflict and selective
+append-only compensation before the transaction returns.
+
+Compensation reconstructs the actual state before the own write through SDK
+history replay and restores only its patch's fields. Later peer scalar values remain
+intact; native tag/dependency set deltas are reapplied to the pre-write state so
+peer additions on either side of the write survive. Verification records its result in immutable history. If the process
+stops after native dispatch, the next capture recognizes the unverified
+marker and resumes verification without dispatching again. Old successful
+audit records remain intact. The SDK's project runtime, hooks and policies
+remain active throughout. See
+[SDK adoption evidence](sdk-adoption.md#r8-native-history-verification-and-compensation)
+and [pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576) for the reason
+this detect-after-write fallback is necessary. Run
+`npm run test:native-precondition` for the fixed-clock boundary contract.

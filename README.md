@@ -178,14 +178,15 @@ field digests. Review and add explicit `local`/`remote` choices, then use
 `pm ado resolve-apply --artifact decision.json` or `--plan <core-plan-id>`.
 Changed local document hashes or Azure revisions refuse; successful replay adds no writes.
 
-The pinned SDK's native lifecycle updates still use timestamp-only matches.
-Same-millisecond edits and ABA edits can therefore escape their local guard.
-This is a blocking limitation tracked in
-[pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576), which requests a
-native expected-history/hash precondition. Run
-`node scripts/sdk-native-precondition-probe.ts` from a source checkout for the
-fixed-clock acceptance probe; it currently exits nonzero. Passing ordinary
-release tests does not establish that this concurrency contract is satisfied.
+Native sync writes capture history length and the last record hash before
+inspection. After each SDK lifecycle write, the same workspace transaction
+checks the actual native record under the item lock. A same-millisecond or ABA
+peer edit returns `ADO_CONFLICT`; an append-only compensation restores this
+write's fields while preserving later peer values. Interrupted verification
+resumes before planning. This fallback is needed until
+[pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576) supplies a native
+pre-write history/hash precondition. Run
+`npm run test:native-precondition` for the fixed-clock boundary matrix.
 Prepared intents resume settlement after a post-PATCH lease or write failure.
 Saved plans retain an opaque scope reference instead of organization/project
 configuration.

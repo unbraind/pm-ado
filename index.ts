@@ -28,7 +28,9 @@ import { runMoveCommand } from "./moves.ts";
 export { simulateMove, MoveRefusal, MOVE_LIMITS } from "./moves.ts";
 export type { MoveOptions, MoveScope, MoveRow, MoveRelation, MovePreview, MoveRefusalCode } from "./moves.ts";
 import { runContractCommand } from "./contracts.ts";
-import { runResolutionCommand } from "./resolution.ts";
+import { runResolutionCommand, loadResolutionSdk } from "./resolution.ts";
+import { NativeWriteFence } from "./history-fence.ts";
+import { dirname } from "node:path";
 export { AdoResolutionService, ResolutionRefusal, resolutionDigest, resolutionScopeReference, resolutionFields, validateResolutionPlan } from "./resolution.ts";
 export type { ResolutionPlan, ResolutionObserver, ResolutionIntent, ResolutionField, ResolutionChoice, ResolutionReceipt, ResolutionRefusalCode, ResolutionMaps } from "./resolution.ts";
 export { discoverProjectContract, ContractRefusal } from "./contracts.ts";
@@ -375,14 +377,26 @@ export async function importRelations(
   pm: Pick<PmClient, "listAllComplete"> & { update: (id: string, options: PmUpdateActionOptions) => Promise<unknown> },
   custom: CustomRelationMap = {},
 ): Promise<{ updated: string[]; unmapped: RelationDiagnostic[] }> {
+  let nativeWrites: NativeWriteFence | undefined;
+  const native = pm as typeof pm & Partial<Pick<PmClient, "config">>;
+  if (native.config !== undefined) {
+    const sdk = loadResolutionSdk();
+    const pmRoot = dirname((await native.config("project", "list")).settings_path);
+    const settings = await sdk.readSettings(pmRoot);
+    nativeWrites = new NativeWriteFence(sdk, pmRoot, sdk.selectImportAuthor(undefined, settings.author_default), (id, options) => pm.update(id, options));
+    for (const item of (await pm.listAllComplete()).items) await nativeWrites.capture(item.id);
+  }
   const { items, updates, unmapped } = await planRelationImport(remote, orgUrl, identities, pm, custom);
+  /** Keep opaque host adapters on their caller-owned write path; native clients carry SDK history witnesses. */
+  const update = async (id: string, options: PmUpdateActionOptions) => nativeWrites === undefined ? pm.update(id, options)
+    : nativeWrites.update(id, options, `ado-relations-${loadResolutionSdk().deriveMutationTransactionId(JSON.stringify([id, nativeWrites.head(id), options]))}`);
   const completed: ItemMetadata[] = [];
   const updated = new Set<string>();
   try {
     // Final-tree order gives the minimal detach set: empty. Every changed
     // ancestor has its final parent before a descendant can point back to it.
     for (const { id, options, previous } of updates) {
-      await pm.update(id, options);
+      await update(id, options);
       if (options.parent !== undefined) completed.push(previous);
       updated.add(id);
     }
@@ -390,7 +404,7 @@ export async function importRelations(
     const failed: string[] = [];
     for (const item of completed.reverse()) {
       try {
-        await pm.update(item.id, item.parent === undefined ? { unset: ["parent"] } : { parent: item.parent });
+        await update(item.id, item.parent === undefined ? { unset: ["parent"] } : { parent: item.parent });
       } catch {
         failed.push(item.id);
       }

@@ -22,6 +22,35 @@ const run = promisify(execFile);
 const repo = resolve(import.meta.dirname, "..");
 const cli = join(repo, "node_modules/@unbrained/pm-cli/dist/cli.js");
 
+test("round-8 resolution portable and legacy plans reject fixed-clock edits including ABA", async (t) => {
+  for (const legacy of [false, true]) for (const edit of ["ordinary", "aba", "noop"]) await t.test(`${legacy}:${edit}`, async (sub) => {
+    const f = await fixture(sub);
+    assert.equal((await f.command("import")).ok, true);
+    const item = await row(f.pm);
+    sub.mock.timers.enable({ apis: ["Date"], now: new Date(item.updated_at) });
+    try {
+      f.items.get(1)!.fields["System.Title"] = "Remote decision"; f.items.get(1)!.rev++;
+      const service = resolver(f), plan = choices(await service.plan(item.id), "remote");
+      const inspectedLength = plan.local.head!.length;
+      if (!legacy && edit === "ordinary") {
+        for (const head of [null, {}, { length: -1, hash: "empty" }]) await assert.rejects(service.apply({ ...plan, local: { ...plan.local, head } }), { code: "invalid_plan" });
+        await assert.rejects(service.apply({ ...plan, local: { ...plan.local, head: { length: 0, hash: "empty" } } }), { code: "stale_local" });
+      }
+      if (legacy) delete plan.local.head;
+      if (edit === "noop") await runtimeSdk.mutateItemWithHistoryContext({ pmRoot: f.pmRoot, settings: await runtimeSdk.readSettings(f.pmRoot),
+        id: item.id, author: "fixture-agent", op: "update", force: true, bypassAssigneeConflict: true,
+        historyContext: { native_audit_witness: "fixed-clock" }, mutate: () => ({ changedFields: [] }) });
+      else await f.pm.update(item.id, { title: "Concurrent title" });
+      if (edit === "aba") await f.pm.update(item.id, { title: item.title });
+      assert.ok((await runtimeSdk.readHistorySnapshot(runtimeSdk.getHistoryPath(f.pmRoot, item.id), item.id)).entries.length > inspectedLength);
+      const peer = (await f.pm.get(item.id)).item;
+      await assert.rejects(service.apply(plan), { code: "stale_local" });
+      assert.deepEqual((await f.pm.get(item.id)).item, peer);
+      assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 0);
+    } finally { sub.mock.timers.reset(); }
+  });
+});
+
 /** Build a full work item with optional field/revision overrides. */
 function workItem(id = 1, fields: Record<string, unknown> = {}, rev = 1): AdoWorkItem {
   return { id, rev, relations: [], fields: { "System.Title": `Remote ${id}`, "System.Description": "Details", "System.State": "New",

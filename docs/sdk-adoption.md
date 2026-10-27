@@ -1,12 +1,13 @@
 # SDK adoption evidence (2026-10-25)
 
-**Current blocking status (R7):** SDK calls have replaced the two audited local
-implementations, but the native concurrency acceptance criterion remains unmet.
-The pinned lifecycle/bulk API cannot require a monotonic history head or item
-hash under its item lease; timestamp matches admit fixed-clock and ABA edits.
-See [pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576) and the executable
-probe below. Earlier successful distinct-timestamp tests do not certify this
-stronger contract.
+**Current implementation (R8):** native writes use SDK lifecycle operations
+inside `commitWorkspaceTransaction`, with history-head verification and
+selective compensation under `mutateItemWithHistoryContext`. Fixed-clock and
+ABA edits now refuse with typed conflicts and retain peer state. This is the
+owner-authorized detect-after-write fallback for
+[pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576); it does not claim
+the SDK has gained a pre-write conditional lifecycle API. R7's failing probe
+and limitation report below are historical and superseded by this fallback.
 
 Tracker: [pm-ado-sdk-adoption](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-sdk-adoption.toon).
 Related certification: [pm-ado-qq1p](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-qq1p.toon).
@@ -17,7 +18,7 @@ SDK adoption initially used `2026.10.23`; the toolchain update merged from
 | Audit finding (baseline lines) | SDK replacement | Behavioural evidence |
 | --- | --- | --- |
 | `resolution.ts:196-199`: prefix-only authoritative lookup | `readSettings` item format and `resolveItemTypeRegistry` folders passed to `locateItem`; retain `readLocatedItem` | Custom nested-folder lookup works without git; raw whole-document digest matches; later body edit refuses apply. Reverting only `document` and rebuilding fails the lookup regression (1 failed test). |
-| `sync.ts:382`: unguarded update after snapshot comparison | `commitItemMutations` update `match` on inspected `updated_at`; link/relation/base writes all use it | Local edits after PATCH or during the batch read survive byte-for-byte and return exit 4. Replacing only the local update helper with ordinary `pm.update` and rebuilding fails both race regressions (2 failed tests). |
+| `sync.ts:382`: unguarded update after snapshot comparison | SDK lifecycle `update` inside `commitWorkspaceTransaction`, verified/compensated with `mutateItemWithHistoryContext` and SDK history replay. `commitItemMutations.match` cannot express the required native head (#1576), so its timestamp-only form was replaced by the approved R8 fallback. | Fixed-clock ordinary/ABA cases refuse at all nine selected write boundaries. Reverting the shared history predicates in a disposable copy fails all 18 cases (19 failures including parent); restoring them passes 19/19. Original distinct-timestamp and lookup revert proofs remain below. |
 
 Restoring the replacements and rebuilding passes all four targeted tests
 (the three regressions plus terminal-state compatibility).
@@ -328,3 +329,44 @@ between selected and duplicate records; an impossible empty result from splittin
 an already validated nonempty string and an unreachable uncertified-ID fallback
 were removed without changing supported tracker behavior. Current gate receipts
 are recorded on the adoption item and PR.
+
+## R8 native history verification and compensation
+
+`history-fence.ts` is the one native write verifier. `capture` records the
+native length/hash before item inspection; `update` carries only its own
+verified history head between writes. A native SDK write has an immutable
+message binding its operation id to that witness. The SDK workspace journal
+key also includes the witness, so fixed-clock retries cannot accidentally
+adopt an older committed journal. Verification checks the actual author,
+native lifecycle operation and record's immutable patch against that chain.
+It requires exactly the one own entry after the captured head.
+
+If a peer intervened, `mutateItemWithHistoryContext` reads history and restores
+only fields in this write's patch from SDK replay immediately before the own
+write. Later scalar values are preserved. For tags and dependencies, later peer set additions/removals are applied to the state before the stale write, removing owned stale entries while retaining peer changes on both sides of the write. Both the write and the
+verification/compensation stay in native history; no event is removed or
+rewritten. The conflict result is durable in the verification event. Native
+writes and verification run before the workspace step commits. Recovery
+recognizes an unverified native marker, skips redispatch and completes the
+same SDK journal before any fresh inspection. A crash before dispatch has no
+native effect. A crash after verification reuses the immutable receipt.
+
+Call sites: sync prepare/replan, scalar/provenance/link/graph writes, close,
+assignment/recovery and agreement publication; resolution agreement
+publication; standalone native-client relation import and compensation.
+Opaque adapters retain their caller-owned `update` path (sync supplies the
+same fenced writer). Native clients obtain their bound tracker from the
+SDK's project `config(...).settings_path`, never ancestor or git discovery.
+Resolution prepare/settlement already run under native item locks; new plans
+include a length/hash head. Legacy version-2 plans still parse and use SDK
+history replay to reject any native entry after the matching inspected
+state, including no-op and ABA writes. Ambiguous legacy witnesses require a fresh plan. Refresh, contract and move previews are read-only.
+
+The fixed-clock acceptance matrix uses real non-git trackers and a fake Azure
+server: nine import/export write sites, each with ordinary and ABA edits.
+Native unit/integration tests also cover dispatch interruption, recovery,
+later peer title/body preservation, omitted field restoration, source/built
+standalone relation writes, and portable/legacy plan refusal. Temporary
+visibility of the write before verification is inherent in this approved
+fallback; a successful command never treats an intervening native entry as
+its own. Upstream #1576 would allow refusing before the lifecycle write.

@@ -1,4 +1,4 @@
-/** Blocking fixed-clock acceptance probe for the native SDK precondition missing in pm-cli#1576. */
+/** Fixed-clock acceptance of native history verification and compensation pending pm-cli#1576. */
 import { spawnSync } from "node:child_process";
 import { appendFileSync, cpSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -72,6 +72,6 @@ test("round-7 native history precondition acceptance", async (t) => {
     const receipt = line.match(/ℹ (\{.*\}|(?:tests|pass|fail|cancelled|skipped|todo) \d+)$/u);
     if (receipt) process.stdout.write(receipt[0] + "\n");
   }
-  if (result.status !== 0) process.stderr.write("Native monotonic-precondition acceptance is BLOCKED; see unbraind/pm-cli#1576.\n");
+  if (result.status !== 0) process.stderr.write("Native monotonic-precondition acceptance failed; see unbraind/pm-cli#1576.\n");
   process.exitCode = result.status ?? 1;
 } finally { rmSync(scratch, { recursive: true, force: true }); }

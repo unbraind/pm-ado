@@ -1,4 +1,5 @@
 import { type ValueNormalization } from "./normalization.ts";
+import { type NativeHead } from "./history-fence.ts";
 import type * as Sdk from "@unbrained/pm-cli/sdk";
 import type { CommandHandlerContext } from "@unbrained/pm-cli/sdk/authoring";
 import { AdoClient, type AdoConfig, type AdoWorkItem, type JsonPatchOperation } from "./index.ts";
@@ -52,6 +53,7 @@ export interface ResolutionPlan {
     local: {
         id: string;
         revision: string;
+        head?: NativeHead;
     };
     /** Azure identity, revision and full REST snapshot digest. */
     remote: {

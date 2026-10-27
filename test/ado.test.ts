@@ -811,6 +811,26 @@ for (const implementation of [
     assert.equal(afterImport.filter((dep) => dep.id === ids[5] && dep.kind === "blocks").length, 1);
   });
 
+  test(`${implementation.name}: round-8 standalone relation writes compensate fixed-clock peer edits`, async (t) => {
+    const { pm, identities, ids } = await relationTracker(t, 2);
+    const item = (await pm.get(ids[1]!)).item;
+    t.mock.timers.enable({ apis: ["Date"], now: new Date(item.updated_at!) });
+    const write = pm.update.bind(pm);
+    let injected = false;
+    pm.update = async (id, options) => {
+      if (!injected) {
+        injected = true;
+        await write(id, { title: "Foreign title" });
+        await write(id, { title: item.title });
+      }
+      return write(id, options);
+    };
+    try {
+      await assert.rejects(implementation.importRelations([{ id: 2, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 1)] }], CONFIG.orgUrl, identities, pm), { code: "ADO_CONFLICT" });
+      assert.deepEqual((await pm.get(item.id)).item, item);
+    } finally { t.mock.timers.reset(); }
+  });
+
   test(`${implementation.name}: parent update failure restores hierarchy without leaving items detached`, async (t) => {
     for (const failAt of [2, 1, 3, 4, 5]) {
       const { pm, identities, ids } = await relationTracker(t);

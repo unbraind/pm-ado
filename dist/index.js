@@ -5,7 +5,9 @@ export { compileRefreshPlan, validateRefreshInput, refreshSaved, observeRefreshP
 import { runMoveCommand } from "./moves.js";
 export { simulateMove, MoveRefusal, MOVE_LIMITS } from "./moves.js";
 import { runContractCommand } from "./contracts.js";
-import { runResolutionCommand } from "./resolution.js";
+import { runResolutionCommand, loadResolutionSdk } from "./resolution.js";
+import { NativeWriteFence } from "./history-fence.js";
+import { dirname } from "node:path";
 export { AdoResolutionService, ResolutionRefusal, resolutionDigest, resolutionScopeReference, resolutionFields, validateResolutionPlan } from "./resolution.js";
 export { discoverProjectContract, ContractRefusal } from "./contracts.js";
 /**
@@ -256,14 +258,27 @@ export async function planRelationImport(remote, orgUrl, identities, pm, custom 
  * @returns Changed local IDs and original edges that could not be imported.
  */
 export async function importRelations(remote, orgUrl, identities, pm, custom = {}) {
+    let nativeWrites;
+    const native = pm;
+    if (native.config !== undefined) {
+        const sdk = loadResolutionSdk();
+        const pmRoot = dirname((await native.config("project", "list")).settings_path);
+        const settings = await sdk.readSettings(pmRoot);
+        nativeWrites = new NativeWriteFence(sdk, pmRoot, sdk.selectImportAuthor(undefined, settings.author_default), (id, options) => pm.update(id, options));
+        for (const item of (await pm.listAllComplete()).items)
+            await nativeWrites.capture(item.id);
+    }
     const { items, updates, unmapped } = await planRelationImport(remote, orgUrl, identities, pm, custom);
+    /** Keep opaque host adapters on their caller-owned write path; native clients carry SDK history witnesses. */
+    const update = async (id, options) => nativeWrites === undefined ? pm.update(id, options)
+        : nativeWrites.update(id, options, `ado-relations-${loadResolutionSdk().deriveMutationTransactionId(JSON.stringify([id, nativeWrites.head(id), options]))}`);
     const completed = [];
     const updated = new Set();
     try {
         // Final-tree order gives the minimal detach set: empty. Every changed
         // ancestor has its final parent before a descendant can point back to it.
         for (const { id, options, previous } of updates) {
-            await pm.update(id, options);
+            await update(id, options);
             if (options.parent !== undefined)
                 completed.push(previous);
             updated.add(id);
@@ -273,7 +288,7 @@ export async function importRelations(remote, orgUrl, identities, pm, custom = {
         const failed = [];
         for (const item of completed.reverse()) {
             try {
-                await pm.update(item.id, item.parent === undefined ? { unset: ["parent"] } : { parent: item.parent });
+                await update(item.id, item.parent === undefined ? { unset: ["parent"] } : { parent: item.parent });
             }
             catch {
                 failed.push(item.id);

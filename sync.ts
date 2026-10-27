@@ -3,6 +3,7 @@ import { normalizeFieldValues, normalizeStatusValue, normalizeAssigneeValue, nor
 import { advanceSyncBase, readBaseRevisions, knownBase, baseFields } from "./agreement.ts";
 import { loadResolutionSdk, resolutionDigest } from "./resolution.ts";
 import { SyncOutbox, isProtocolTag, type SyncObserver } from "./sync-outbox.ts";
+import { NativeWriteFence, NativeHistoryConflict } from "./history-fence.ts";
 import type { CommandHandlerContext, FlagDefinition } from "@unbrained/pm-cli/sdk/authoring";
 import type { ItemMetadata, PmUpdateActionOptions, PmClient } from "@unbrained/pm-cli/sdk";
 import {
@@ -363,6 +364,11 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
     const author = sdk.selectImportAuthor(ctx.global.author, settings.author_default);
     const outbox = new SyncOutbox(ctx.pm_root, author, config, client, observer, sdk);
     let snapshot = await pm.listAllComplete();
+    const nativeWrites = new NativeWriteFence(sdk, ctx.pm_root, author);
+    if (!dryRun) {
+      for (const item of snapshot.items) await nativeWrites.capture(item.id);
+      snapshot = await pm.listAllComplete();
+    }
     let { items } = snapshot;
     let versions = new Map(items.map((item) => [item.id, item.updated_at]));
     const localPlans = new Map<string, PendingSyncWrite>();
@@ -375,19 +381,15 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
     const scope = resolutionDigest([config.orgUrl, config.project]);
     /** Write one SDK mutation, carrying only this command's immutable history revision. */
     const commitLocal = async (id: string, options: PmUpdateActionOptions, operation: string, transactionId: string) => {
-      const expected = versions.get(id)!;
       await observer?.({ boundary: "local", phase: "before", operation, item: id });
       try {
-        await sdk.commitItemMutations({ pmRoot: ctx.pm_root, transactionId, author,
-          mutations: [{ op: "update", id, options, match: { key: "updated_at", value: expected } }] });
+        versions.set(id, await nativeWrites.update(id, options, transactionId));
       } catch (error) {
         if (error instanceof sdk.PmCliError && error.exitCode === EXIT_CODE.conflict) throw new CommandError("Local sync persistence refused; re-read both trackers and retry. Earlier Azure or pm operations may have succeeded.", EXIT_CODE.conflict);
         throw error;
       }
       await observer?.({ boundary: "local", phase: "after", operation, item: id });
-      const history = await sdk.readHistorySnapshot(sdk.getHistoryPath(ctx.pm_root, id), id);
-      const own = history.entries.filter((entry) => entry.message?.startsWith(`bulk-item-transaction ${transactionId} `)).at(-1);
-      versions.set(id, own?.ts ?? expected);
+      await nativeWrites.assertCurrent(id);
     };
     /** Persist the integration plan before its first native effect; agreement clears it atomically. */
     const persist = async (id: string, options: PmUpdateActionOptions, operation = "update", suffix?: string) => {
@@ -651,6 +653,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
           localSeen.set(item.id, remoteAgreement(entry.remote!, values, config, identities, states, exportStates, normalization));
           localRemote.set(item.id, { id: remote.id, revision: remote.rev });
           versions.set(item.id, item.updated_at);
+          await nativeWrites.capture(item.id);
           plan.pm_id = item.id;
           identities.set(remote.id, item.id);
         }
@@ -694,6 +697,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
             return { revision: actual.rev, values: remoteAgreement(actual, current.values, config, readback.identities, states, exportStates, normalization) };
           },
           publish: async (base, revision) => {
+            await nativeWrites.assertCurrent(local!.id);
             const field: string[] = [];
             if (readback.item.ado_sync_base !== JSON.stringify(base)) field.push(`ado_sync_base=${JSON.stringify(base)}`);
             if (revision !== undefined && readback.item.ado_rev !== revision) field.push(`ado_rev=${revision}`);
@@ -709,9 +713,9 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
     if (conflicts.length) return { ok: false, code: "ADO_CONFLICT", exit_code: EXIT_CODE.conflict, dry_run: dryRun, plans, conflicts, diagnostics };
     return { ok: true, dry_run: dryRun, plans, conflicts, diagnostics };
   } catch (error) {
-    const exitCode = error instanceof CommandError ? error.exitCode : EXIT_CODE.remote;
+    const exitCode = error instanceof CommandError || error instanceof NativeHistoryConflict ? error.exitCode : EXIT_CODE.remote;
     return { ok: false, code: exitCode === EXIT_CODE.usage ? "ADO_USAGE" : exitCode === EXIT_CODE.conflict ? "ADO_CONFLICT" : "ADO_REMOTE",
       exit_code: exitCode, dry_run: dryRun, plans, conflicts, diagnostics,
-      error: error instanceof CommandError ? error.message : "Azure DevOps command failed; check configuration, tracker validity and connectivity" };
+      error: error instanceof CommandError || error instanceof NativeHistoryConflict ? error.message : "Azure DevOps command failed; check configuration, tracker validity and connectivity" };
   }
 }

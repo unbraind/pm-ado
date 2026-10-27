@@ -12,25 +12,28 @@ update uses `commitItemMutations` with an update `match` on that revision.
 Expected revisions advance only from this command's immutable history markers.
 Native no-ops retain the prior expected revision.
 
-A terminal import uses **separately conditional** SDK commits:
+Before an item's first local effect, a matched SDK update records its scoped
+`ado_sync_intent`: the inspected revision, plan digest and requested local values.
+All following native SDK commits carry that plan's history marker and the
+preceding returned revision. Requested values are recovery intent, never base.
 
-1. Scalars without lifecycle options, `ado_sync_base` or `ado_rev`, matched to the inspected revision.
-2. A status-only close, matched to the revision returned by the scalar commit.
-3. Restore the requested mapped assignment when native close clears it, matched to the close revision.
-4. Read back both stores and publish only witnessed agreement, matched to the last durable local revision.
+A terminal import prepares its close coordinate in that intent, performs a
+matched status-only native close, then finishes the requested mapped assignment.
+A restart proves the native close from SDK history before restoring assignment;
+it never exports the SDK's temporary unassignment as a new local edit.
 
-The second SDK update routes directly to the native close mutation. The base
-advances last. A crash after scalars leaves the old base, so ordinary `ado sync`
-imports the outstanding close instead of treating the old local status as a new
-reopening decision. A crash after close leaves both statuses equal and the old
-base; sync can finish publication. Non-terminal scalar/status changes also finish before a separate, conditional
-read-back agreement publication. Relation import and compensation finish
-before publication. Initial local creates deliberately omit the base.
+Recovery inspects the latest history writer for each synced key. Foreign edits
+remain edits even if they reverted to the old base value; ordinary sync reports
+a typed conflict when they differ from Azure. Body/comment changes remain intact.
+A native normalization that cannot represent the requested scalar also remains
+a conflict; it is not exported as a user decision. Explicit import/export and
+reviewed resolution choices remain deliberate direction decisions.
 
-Native SDK close clears assignment. The import adapter explicitly completes the
-requested mapped assignment before claiming agreement. Each step is guarded;
-a peer edit prevents the following write. Crash assertions disallow every
-reopening PATCH and compare actual settled values on both sides.
+Only `advanceSyncBase` can publish agreed values. Full agreement clears the local
+intent in the **same conditional commit** as the base/revision. A crash therefore
+cannot discard local ownership proof before acknowledgement is durable. Partial
+agreement retains the intent. Scalar, close and relation work always precede
+read-back publication; initial creates omit the base.
 
 Each close and publication step is guarded. If another agent changes status,
 body, comments or other metadata between commits, the next commit refuses with `ADO_CONFLICT` and
@@ -120,7 +123,8 @@ still matches, or the adapter reads the expected resulting revision and proves
 its operation marker. It returns that proven historical snapshot rather than
 adopting a later writer's current document. Historical reads request expanded
 relations. Before three-way planning, recovery reads each pending PATCH's
-proven historical result in revision order. The latest proven result supplies evidence only for scalar keys actually sent;
+proven historical result in revision order. Every proven result is retained, and the latest proof is selected independently
+for each scalar key actually sent;
 its original local projection distinguishes subsequent local edits. Neither the
 accepted snapshot nor its unimported relations become the common base. This also recovers repeated local conflicts across several PATCHes
 without mistaking the adapter's own earlier effects for competing remote edits. Provider API references: [create](https://learn.microsoft.com/en-us/rest/api/azure/devops/wit/work-items/create?view=azure-devops-rest-7.1)
@@ -258,3 +262,13 @@ Round-2 repair `4c29583`, with current main incorporated at `9fe7628`, passed
 are 1607/1607; statements, lines, branches and functions are all 100% across
 nine required sources. [CodeQL](https://github.com/unbraind/pm-ado/actions/runs/40266894638)
 passed. The final pinned PM linked run passes all 18 focused tests.
+
+## SDK module dependency
+
+Guarded writes use the installed SDK module for conditional mutations, immutable
+history and durable journals. Keep the SDK link supplied by `pm install`.
+Manually removing that link now yields `ADO_USAGE` naming the missing dependency;
+bound read-only refresh remains available. No launcher path is inferred and no
+local mutation substitute is used. The pinned host facade lacks these module
+primitives; [pm-ado-host-sdk-facade](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-host-sdk-facade.toon)
+records the declaration search and upstream follow-up for the orchestrator.

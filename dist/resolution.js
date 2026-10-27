@@ -1,5 +1,5 @@
 /** Portable, revision-bound decisions over the existing Azure sync field map. */
-import { advanceSyncBase } from "./agreement.js";
+import { advanceSyncBase, readBaseRevisions } from "./agreement.js";
 import { createHash, createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
@@ -121,6 +121,9 @@ export class AdoResolutionService {
             !Number.isSafeInteger(remote.rev) || remote.rev < 1) {
             throw new ResolutionRefusal("scope", "Use the original organization, project and linked identities; import first if provenance is missing.");
         }
+        const base = readBase(item, { ...localValues(item), relations: [] });
+        if (remote.rev < Math.max(Number(item.ado_rev ?? 0), 0, ...Object.values(readBaseRevisions(base))))
+            throw new ResolutionRefusal("stale_remote", "Azure returned an older revision than witnessed agreement; re-read the current work item.");
     }
     /** Require one hydrated REST work item rather than accepting an omitted batch row. */
     async remote(id) {
@@ -359,10 +362,11 @@ export class AdoResolutionService {
                         field.push(`ado_sync_base=${JSON.stringify(base)}`);
                     if (revision !== undefined && readback.item.ado_rev !== revision)
                         field.push(`ado_rev=${revision}`);
-                    if (field.length)
+                    const unset = revision !== undefined && readback.item.ado_sync_intent !== undefined ? ["ado_sync_intent"] : undefined;
+                    if (field.length || unset !== undefined)
                         await this.sdk.commitItemMutations({ pmRoot: this.pmRoot, author: this.author,
                             transactionId: `ado-agreement-${this.sdk.deriveMutationTransactionId(JSON.stringify([plan.local.id, version, field]))}`,
-                            mutations: [{ op: "update", id: plan.local.id, options: { field, message: "Azure read-back agreement" }, match: { key: "updated_at", value: version } }] });
+                            mutations: [{ op: "update", id: plan.local.id, options: { field, unset, message: "Azure read-back agreement" }, match: { key: "updated_at", value: version } }] });
                 } });
             if (agreement.differences.length)
                 throw this.partial(decision, agreement.remote.revision);

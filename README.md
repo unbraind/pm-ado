@@ -162,6 +162,9 @@ create-dispatch boundary.
 
 ## Without git
 
+Guarded sync requires the SDK module link created by `pm install`. Manually
+removing it produces an explicit dependency refusal; read-only refresh still works.
+
 `ado validate`, `ado contract`, `ado import`, `ado export`, `ado sync`,
 `ado move-preview`, `ado resolve-plan`, `ado resolve-apply` and `ado refresh-plan` work in
 plain trackers without git. Network operations still need Azure configuration;

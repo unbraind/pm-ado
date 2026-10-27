@@ -896,7 +896,7 @@ export default defineExtension({
             { name: "ado_url", type: "string", optional: true },
             { name: "ado_rev", type: "number", optional: true },
             { name: "ado_project", type: "string", optional: true },
-            ...["ado_org_url", "ado_type", "ado_area_path", "ado_iteration_path", "ado_sync_base", "ado_resolution_receipt", "ado_resolution_intent"].map((name) => ({ name, type: "string", optional: true })),
+            ...["ado_org_url", "ado_type", "ado_area_path", "ado_iteration_path", "ado_sync_base", "ado_resolution_receipt", "ado_resolution_intent", "ado_sync_intent"].map((name) => ({ name, type: "string", optional: true })),
         ]);
         // preflight — abort a network-bound command before any store read or remote
         // call when credentials are absent. Scoped to this package's own command

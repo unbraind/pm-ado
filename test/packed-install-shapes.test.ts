@@ -102,12 +102,16 @@ test("packed npm-global, bun-global, npx, bunx, local-bin and copied-extension c
       remote = { id: 1, rev: 2, relations: [], fields: { "System.Title": "Packed remote", "System.Description": "Details", "System.State": "Closed",
         "System.WorkItemType": "Task", "Microsoft.VSTS.Common.Priority": 2, "System.Tags": "fixture", "System.AreaPath": "Example", "System.IterationPath": "Example" } };
       for (const mode of ["import", "export", "sync", "refresh-plan"]) {
+        if (shape.name === "copied-tracker-extension" && mode !== "refresh-plan") {
+          await assert.rejects(pm(["ado", mode]), /ADO_USAGE[\s\S]*host links its SDK/u);
+          continue;
+        }
         const result = JSON.parse(await pm(["ado", mode, ...(mode === "refresh-plan" ? ["--fields", "title,status,relations"] : [])])) as { ok: boolean; cost?: { pm_mutations: number } };
         assert.equal(result.ok, true, `${shape.name}: ${mode}`);
         if (result.cost) assert.equal(result.cost.pm_mutations, 0);
       }
       const rows = JSON.parse(await pm(["list", "--all", "--full"])) as { items: { id: string; status: string; ado_rev: number }[] };
-      assert.equal(rows.items.length, 1); assert.equal(rows.items[0]!.status, "closed"); assert.equal(rows.items[0]!.ado_rev, 2);
+      assert.equal(rows.items.length, 1); assert.equal(rows.items[0]!.status, shape.name === "copied-tracker-extension" ? "open" : "closed"); assert.equal(rows.items[0]!.ado_rev, shape.name === "copied-tracker-extension" ? 1 : 2);
       if (shape.name !== "copied-tracker-extension") {
         const plan = JSON.parse(await pm(["ado", "resolve-plan", "--item", created.id])) as { ok: boolean };
         assert.equal(plan.ok, true, "resolution's lazy module link must also survive this launcher");
@@ -116,7 +120,7 @@ test("packed npm-global, bun-global, npx, bunx, local-bin and copied-extension c
         await assert.rejects(pm(["ado", "resolve-plan"]), /Supply --item/u);
         await assert.rejects(pm(["ado", "resolve-apply"]), /Supply exactly one/u);
       }
-      t.diagnostic(`${shape.name}: 4/4 commands, SDK state readback and lazy resolution runtime checks passed; no git executable`);
+      t.diagnostic(`${shape.name}: ${shape.name === "copied-tracker-extension" ? "read-only refresh succeeds; guarded writes name the missing SDK link" : "4/4 commands and SDK state readback pass"}; lazy resolution checks pass; no git executable`);
     });
   }
   assert.ok(calls.length >= 24);

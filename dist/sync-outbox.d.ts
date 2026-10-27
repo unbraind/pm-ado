@@ -1,5 +1,6 @@
 import type { ItemMetadata } from "@unbrained/pm-cli/sdk";
 import type { Values } from "./sync.ts";
+import { loadResolutionSdk } from "./resolution.ts";
 import { AdoClient, type AdoConfig, type AdoWorkItem, type JsonPatchOperation } from "./index.ts";
 /** Observable SDK/REST boundaries; observers never provide or replace storage or transport. */
 export interface SyncBoundary {
@@ -44,7 +45,7 @@ export declare class SyncOutbox {
     private readonly client;
     private readonly observer;
     /** Bind the existing real Azure client and tracker to one attributable caller. */
-    constructor(pmRoot: string, author: string, config: AdoConfig, client: AdoClient, observer?: SyncObserver);
+    constructor(pmRoot: string, author: string, config: AdoConfig, client: AdoClient, observer?: SyncObserver, sdk?: ReturnType<typeof loadResolutionSdk>);
     private readonly project;
     /** Derive the stable creation marker without exposing local identity in Azure tags. */
     private marker;
@@ -71,7 +72,7 @@ export declare class SyncOutbox {
         accepted: AdoWorkItem;
         fields: Record<string, unknown>;
         revision: number;
-    }>>;
+    }[]>>;
     /** Find the stamped object before considering creation; never silently choose between duplicate markers. */
     private lookup;
     /** Reuse the first durable create intent and remote marker after crashes or failed local links. */

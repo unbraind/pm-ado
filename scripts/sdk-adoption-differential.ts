@@ -89,7 +89,7 @@ async function worker(build: string, workspace: string, org: string): Promise<vo
   assert.ok(delta.every((entry) => entry.op === last.op && entry.author === last.author));
   // Agreement now has its own guarded, final event. Compare the same net patch,
   // retaining its event count separately as an intentional audit-history difference.
-  const net = new Map(delta.flatMap((entry) => entry.patch).filter((entry) => entry.path !== "/metadata/updated_at").map((entry) => [entry.path, entry]));
+  const net = new Map(delta.flatMap((entry) => entry.patch).filter((entry) => entry.path !== "/metadata/updated_at" && entry.path !== "/metadata/ado_sync_intent").map((entry) => [entry.path, entry]));
   outputs.push({ history_before_length: priorHistory.length, op: last.op, author: last.author,
     patch: [...net.values()].map((entry) => {
       if (entry.path === "/metadata/ado_sync_base" && "value" in entry) {
@@ -158,15 +158,15 @@ async function compare(baseline: string, trackers: string[]): Promise<void> {
       assert.equal(before.history_message, "Azure DevOps revision 1");
       assert.match(String(after.history_message), /^bulk-item-transaction ado-sync-/u);
       assert.equal(before.history_new_events, 1);
-      assert.equal(after.history_new_events, 2);
+      assert.equal(after.history_new_events, 3);
       delete before.history_new_events; delete after.history_new_events;
       delete before.history_message;
       delete after.history_message;
       assert.deepEqual(after, before, `public corpus ${index + 1} differs`);
       total += items.length;
-      console.log(`Public corpus ${index + 1}: ${items.length} items; import/export/sync dry-run and resolution plan identical; authoritative files unchanged; writable-copy import receipts/values/net history patches identical; candidate publishes agreement in a second guarded event.`);
+      console.log(`Public corpus ${index + 1}: ${items.length} items; import/export/sync dry-run and resolution plan identical; authoritative files unchanged; writable-copy import receipts/values/net history patches identical; candidate prepares its local intent and publishes agreement in separate guarded events.`);
     }
-    console.log(`PASS: ${trackers.length} public corpora, ${total} real items, ${trackers.length * 7} differential comparisons; intentional history differences: SDK transaction markers, path ordering, two guarded events instead of one, and internal per-key revision coordinates; synced base values and net patch identical; mutation timestamps normalized.`);
+    console.log(`PASS: ${trackers.length} public corpora, ${total} real items, ${trackers.length * 7} differential comparisons; intentional history differences: SDK transaction markers, path ordering, three guarded events instead of one, and internal per-key revision coordinates; synced base values and net patch identical; mutation timestamps normalized.`);
   } finally {
     await new Promise<void>((done) => server.close(() => done()));
     // Undo read-only fixture permissions before portable cleanup.

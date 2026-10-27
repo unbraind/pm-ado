@@ -42,8 +42,9 @@ receipts and resolution plans match exactly on read-only copies, with identical
 authoritative bytes before and after. Actual import runs on separate writable
 copies; command receipts, final item values and net history operation/author/patch
 projections match after normalizing mutation timestamps and patch path order.
-The candidate records two conditional events (scalar/provenance, then read-back
-agreement) where the baseline records one; the script asserts these counts. No public tracker contents or temporary fixture files are checked
+The candidate records three conditional events (prepare local intent,
+scalar/provenance, then read-back agreement) where the baseline records one;
+the script asserts these counts. No public tracker contents or temporary fixture files are checked
 in.
 
 Intentional differences:
@@ -54,8 +55,9 @@ Intentional differences:
   error. Earlier remote writes can remain.
 - SDK update history messages use mandatory `bulk-item-transaction` markers in
   place of adapter prose; the differential asserts each expected message form.
-  Agreement publishes in a separate guarded final event; the net history patch
-  and author remain identical. The differential also excludes the newly stored
+  Local intent preparation and agreement publication have separate guarded
+  events; transient intent patches are excluded from the net history patch,
+  whose final synced values and author remain identical. The differential also excludes the newly stored
   internal per-key witnessed revision coordinates from synced base values.
   SDK journals remain ignored runtime state.
 - Configured nested type folders now resolve instead of returning a scope

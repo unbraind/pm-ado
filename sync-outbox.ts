@@ -87,14 +87,15 @@ export function isProtocolTag(tag: string): boolean {
 
 /** Serialize shared-tracker effects with SDK leases and atomically persisted private intents. */
 export class SyncOutbox {
-  private readonly sdk = loadResolutionSdk();
+  private readonly sdk: ReturnType<typeof loadResolutionSdk>;
   private readonly scope: string;
   private readonly pmRoot: string;
   private readonly author: string;
   private readonly client: AdoClient;
   private readonly observer: SyncObserver | undefined;
   /** Bind the existing real Azure client and tracker to one attributable caller. */
-  constructor(pmRoot: string, author: string, config: AdoConfig, client: AdoClient, observer?: SyncObserver) {
+  constructor(pmRoot: string, author: string, config: AdoConfig, client: AdoClient, observer?: SyncObserver, sdk: ReturnType<typeof loadResolutionSdk> = loadResolutionSdk()) {
+    this.sdk = sdk;
     this.pmRoot = pmRoot; this.author = author; this.client = client; this.observer = observer;
     this.scope = resolutionDigest([config.orgUrl, config.project]);
     this.project = config.project;
@@ -208,9 +209,9 @@ export class SyncOutbox {
   }
 
   /** Reconcile a proven prior PATCH before treating its own effect as a competing writer. */
-  async recoverEffects(remotes: readonly AdoWorkItem[], locals: readonly ItemMetadata[]): Promise<Map<string, { original: Values; accepted: AdoWorkItem; fields: Record<string, unknown>; revision: number }>> {
+  async recoverEffects(remotes: readonly AdoWorkItem[], locals: readonly ItemMetadata[]): Promise<Map<string, { original: Values; accepted: AdoWorkItem; fields: Record<string, unknown>; revision: number }[]>> {
     const directory = join(this.pmRoot, "transactions/pm-ado-sync");
-    const recovered = new Map<string, { original: Values; accepted: AdoWorkItem; fields: Record<string, unknown>; revision: number }>();
+    const recovered = new Map<string, { original: Values; accepted: AdoWorkItem; fields: Record<string, unknown>; revision: number }[]>();
     let names: string[];
     try { names = await readdir(directory); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return recovered; throw error; }
@@ -221,7 +222,7 @@ export class SyncOutbox {
       const intent = JSON.parse(await readFile(join(directory, name), "utf8")) as Intent;
       if (intent.operation === "patch" && intent.scope === this.scope) records.push(intent);
     }
-    // The last proven operation wins, even if several attempts failed to publish locally.
+    // Retain every proven request; the planner selects the latest evidence separately for each key.
     for (const intent of records.sort((left, right) => left.revision - right.revision)) {
       const local = localById.get(intent.item);
       const current = remoteById.get(intent.remote);
@@ -230,7 +231,7 @@ export class SyncOutbox {
       this.validate(intent, local.id, "patch");
       const accepted = await this.client.request("GET", `/_apis/wit/workitems/${intent.remote}/revisions/${intent.revision + 1}?api-version=7.1&$expand=relations`) as AdoWorkItem;
       if (accepted.fields["System.History"] !== `pm-ado operation ${intent.key}`) continue;
-      recovered.set(local.id, { original: intent.base, accepted, fields: intent.fields, revision: intent.revision });
+      recovered.set(local.id, [...(recovered.get(local.id) ?? []), { original: intent.base, accepted, fields: intent.fields, revision: intent.revision }]);
     }
     return recovered;
   }

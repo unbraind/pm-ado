@@ -21,14 +21,15 @@ export function isProtocolTag(tag) {
 }
 /** Serialize shared-tracker effects with SDK leases and atomically persisted private intents. */
 export class SyncOutbox {
-    sdk = loadResolutionSdk();
+    sdk;
     scope;
     pmRoot;
     author;
     client;
     observer;
     /** Bind the existing real Azure client and tracker to one attributable caller. */
-    constructor(pmRoot, author, config, client, observer) {
+    constructor(pmRoot, author, config, client, observer, sdk = loadResolutionSdk()) {
+        this.sdk = sdk;
         this.pmRoot = pmRoot;
         this.author = author;
         this.client = client;
@@ -169,7 +170,7 @@ export class SyncOutbox {
             if (intent.operation === "patch" && intent.scope === this.scope)
                 records.push(intent);
         }
-        // The last proven operation wins, even if several attempts failed to publish locally.
+        // Retain every proven request; the planner selects the latest evidence separately for each key.
         for (const intent of records.sort((left, right) => left.revision - right.revision)) {
             const local = localById.get(intent.item);
             const current = remoteById.get(intent.remote);
@@ -180,7 +181,7 @@ export class SyncOutbox {
             const accepted = await this.client.request("GET", `/_apis/wit/workitems/${intent.remote}/revisions/${intent.revision + 1}?api-version=7.1&$expand=relations`);
             if (accepted.fields["System.History"] !== `pm-ado operation ${intent.key}`)
                 continue;
-            recovered.set(local.id, { original: intent.base, accepted, fields: intent.fields, revision: intent.revision });
+            recovered.set(local.id, [...(recovered.get(local.id) ?? []), { original: intent.base, accepted, fields: intent.fields, revision: intent.revision }]);
         }
         return recovered;
     }

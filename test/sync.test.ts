@@ -177,12 +177,12 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
     finally { process.chdir(cwd); }
   };
   /** Exercise the command with native SDK activation and a boundary observer. */
-  const observed = async (mode: "import" | "export" | "sync", observer: SyncObserver, options: Record<string, unknown> = {}) => {
+  const observed = async (mode: "import" | "export" | "sync", observer: SyncObserver, options: Record<string, unknown> = {}, anchors?: readonly string[]) => {
     const before = { ...process.env }; const cwd = process.cwd();
     process.chdir(root); process.env = { ...env };
     try {
       return await runWithActiveExtensions({ cwd: root, path: pmRoot }, () => runSyncCommand({ command: `ado ${mode}`, args: [], options,
-        global: {}, pm_root: pmRoot, sdk: createExtensionCommandSdk(pmRoot, pm) }, mode, observer));
+        global: {}, pm_root: pmRoot, sdk: createExtensionCommandSdk(pmRoot, pm) }, mode, observer, anchors));
     } finally { process.env = before; process.chdir(cwd); }
   };
   return { pm, pmRoot, root, org, items, requests, command, observed, host, env, setFields,
@@ -1796,7 +1796,7 @@ test("pending PATCH bases ignore unrelated or unapplied records and prove only t
   writeFileSync(join(directory, "foreign.json"), JSON.stringify({ operation: "patch", scope: "another scope" }));
   writeFileSync(join(directory, "other.json"), JSON.stringify({ operation: "another operation" }));
   const recovered = await outbox(f).recoverEffects([latest], [inspected]);
-  assert.equal(recovered.get(local.id)!.accepted.fields["System.Title"], "Known effect");
+  assert.equal(recovered.get(local.id)!.at(-1)!.accepted.fields["System.Title"], "Known effect");
 });
 
 test("two real export processes share one creation intent and never issue another create POST", async (t) => {
@@ -2203,6 +2203,7 @@ test("older remote revision snapshots refuse import, export and sync before any 
   for (const mode of ["import", "export", "sync"]) {
     assert.equal((await f.command(mode)).code, "ADO_CONFLICT"); assert.deepEqual(snapshot(f.pmRoot), before);
   }
+  await assert.rejects(resolver(f).plan((await row(f.pm)).id), { code: "stale_remote" });
 });
 
 /** Independent projections for the two-sided, interruptible three-way reference model. */
@@ -2219,7 +2220,7 @@ test("round-3 model: 512 two-sided sequences preserve edits and witness every ba
   const located = (await runtimeSdk.locateItem(f.pmRoot, root.id, modelSettings.id_prefix, modelSettings.item_format, runtimeSdk.resolveItemTypeRegistry(modelSettings).type_to_folder))!;
   /** Read the real authoritative document using the SDK parser without command presentation overhead. */
   const readModelItem = async () => (await runtimeSdk.readLocatedItem(located, { schema: modelSettings.schema,
-    extensionFieldNames: ["ado_id", "ado_rev", "ado_project", "ado_org_url", "ado_sync_base", "ado_area_path", "ado_iteration_path", "ado_url", "ado_type"] })).document.metadata;
+    extensionFieldNames: ["ado_id", "ado_rev", "ado_project", "ado_org_url", "ado_sync_base", "ado_area_path", "ado_iteration_path", "ado_url", "ado_type", "ado_sync_intent"] })).document.metadata;
   type State = Record<string, string | number | string[]>;
   /** Reference local projection reads native storage, independently of the production graph adapter. */
   const local = async (): Promise<State> => {
@@ -2270,7 +2271,7 @@ test("round-3 model: 512 two-sided sequences preserve edits and witness every ba
   const resolve = async () => {
     const l = await local(), item = f.items.get(remoteId)!;
     const saved = await readModelItem();
-    if (same(l, remote()) && Object.keys(l).every((key) => same(l[key], (JSON.parse(String(saved.ado_sync_base)) as State)[key])) && saved.ado_rev === item.rev) { await witness(); await invariant(); return; }
+    if (same(l, remote()) && Object.keys(l).every((key) => same(l[key], (JSON.parse(String(saved.ado_sync_base)) as State)[key])) && saved.ado_rev === item.rev && saved.ado_sync_intent === undefined) { await witness(); await invariant(); return; }
     for (const [key, wire] of Object.entries(wireNames)) item.fields[wire] = key === "status" ? ({ open: "New", in_progress: "Active", closed: "Closed", blocked: "Blocked" } as Record<string, string>)[String(l[key])] : key === "tags" ? (l.tags as string[]).join("; ") : l[key];
     item.relations = (l.relations as string[]).map((edge) => { const [rel, id] = JSON.parse(edge) as [string, number]; return { rel, url: `${f.org}/_apis/wit/workItems/${id}` }; });
     item.rev++;
@@ -2449,14 +2450,19 @@ test("round-3 read-back fences refuse missing and older Azure state without adva
   await assert.rejects(readLocalAgreement(f.pm, root.id, config, root.updated_at), { exitCode: 4 });
 });
 
-test("round-3 SDK validation refusal preserves the item and its agreed base", async (t) => {
+test("round-3 SDK validation refusal preserves synced data and its agreed base", async (t) => {
   const f = await fixture(t);
   assert.equal((await f.command("import")).ok, true);
-  const before = snapshot(f.pmRoot);
+  const before = (await row(f.pm));
+  const history = readFileSync(join(f.pmRoot, "history", `${before.id}.jsonl`), "utf8");
   f.items.get(1)!.fields["System.Title"] = ""; f.items.get(1)!.rev++;
   const result = await f.command("import");
   assert.equal(result.code, "ADO_REMOTE", JSON.stringify(result));
-  assert.deepEqual(snapshot(f.pmRoot), before);
+  const after = await row(f.pm);
+  assert.ok(after.ado_sync_intent, "failed apply keeps its durable integration intent");
+  const unchanged = (value: typeof before) => Object.fromEntries(Object.entries(value).filter(([key]) => !["updated_at", "ado_sync_intent"].includes(key)));
+  assert.deepEqual(unchanged(after), unchanged(before));
+  assert.ok(readFileSync(join(f.pmRoot, "history", `${before.id}.jsonl`), "utf8").startsWith(history));
 });
 
 test("round-3 scalar resolution acknowledges only agreed keys and leaves remote links for sync", async (t) => {
@@ -2478,4 +2484,160 @@ test("round-3 scalar resolution acknowledges only agreed keys and leaves remote 
   assert.ok((await f.pm.get(root.id)).item.dependencies!.some((edge) => edge.id === peer.id));
   assert.equal((await service.apply(plan)).replayed, true);
   assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 1);
+});
+
+test("round-3 local scalar reversion during partial import remains a conflict after restart", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm), original = item.title;
+  f.items.get(1)!.fields["System.Title"] = "New remote scalar"; f.items.get(1)!.rev++;
+  let hit = false;
+  const interrupted = await f.observed("import", async (event) => {
+    if (!hit && event.boundary === "local" && event.phase === "after" && event.operation === "update") {
+      hit = true; await f.pm.update(item.id, { title: original });
+    }
+  });
+  assert.equal(hit, true); assert.equal(interrupted.code, "ADO_CONFLICT");
+  const resumed = await f.command("sync");
+  assert.equal(resumed.code, "ADO_CONFLICT");
+  assert.ok(resumed.conflicts[0]!.fields.title);
+  assert.equal((await f.pm.get(item.id)).item.title, original);
+  assert.equal(f.items.get(1)!.fields["System.Title"], "New remote scalar");
+  const service = resolver(f), plan = choices(await service.plan(item.id));
+  assert.equal((await service.apply(plan)).ok, true);
+  assert.equal((await f.pm.get(item.id)).item.ado_sync_intent, undefined);
+  assert.equal((await f.command("sync")).ok, true);
+});
+
+test("guarded SDK commands name a removed module link while bound read-only refresh works", async (t) => {
+  const f = await fixture(t);
+  const { item } = await f.pm.create({ title: "Read-only linked seed", type: "Task" });
+  await f.setFields(item.id, { ado_id: 1, ado_rev: 1, ado_project: "Project", ado_org_url: f.org });
+  rmSync(join(f.root, "node_modules/@unbrained/pm-cli"));
+  const before = snapshot(f.pmRoot);
+  const sourceRefusal = await f.observed("import", () => {}, {}, [join(f.root, "package.json")]);
+  assert.equal(sourceRefusal.code, "ADO_USAGE");
+  assert.match(sourceRefusal.error!, /host links its SDK/u);
+  for (const mode of ["import", "export", "sync"]) {
+    const result = await f.host(["ado", mode, "--json"], { GIT_CEILING_DIRECTORIES: tmpdir(), PATH: f.pmRoot });
+    assert.equal(result.code, 2, result.stdout + result.stderr);
+    assert.match(result.stdout, /ADO_USAGE[\s\S]*host links its SDK/u);
+  }
+  assert.deepEqual(snapshot(f.pmRoot), before);
+  const refresh = await f.host(["ado", "refresh-plan", "--fields", "title,status,relations", "--json"], { GIT_CEILING_DIRECTORIES: tmpdir(), PATH: f.pmRoot });
+  assert.equal(refresh.code, 0, refresh.stdout + refresh.stderr);
+  assert.deepEqual(snapshot(f.pmRoot), before);
+});
+
+test("local sync recovery rejects malformed or foreign-edited intents without overwriting tracker data", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm);
+  f.items.get(1)!.fields["System.Title"] = "Awaiting local apply"; f.items.get(1)!.rev++;
+  let hit = false;
+  await f.observed("import", (event) => {
+    if (event.boundary === "local" && event.phase === "after" && event.operation === "local-prepared") { hit = true; throw new Error("Stop after durable plan"); }
+  });
+  assert.equal(hit, true);
+  const original = String((await f.pm.get(item.id)).item.ado_sync_intent);
+  const plan = JSON.parse(original) as Record<string, unknown>;
+  const missingProof: Record<string, unknown> = { ...plan, version: "different-inspected-revision" };
+  missingProof.plan = resolutionDigest([plan.scope, item.id, missingProof.version]);
+  const invalid = ["{", "null", "[]", ...[{ ...plan, schema: "invalid" }, { ...plan, scope: "wrong" }, { ...plan, version: 7 }, { ...plan, plan: "wrong" },
+    { ...plan, wanted: null }, { ...plan, wanted: 7 }, { ...plan, wanted: [] }, { ...plan, seen: null }, { ...plan, seen: 7 }, { ...plan, seen: [] },
+    { ...plan, remote: null }, { ...plan, remote: 7 }, { ...plan, remote: { id: 0, revision: 1 } }, { ...plan, remote: { id: 1.5, revision: 1 } }, { ...plan, remote: { id: 99, revision: 1 } }, { ...plan, remote: { id: 1, revision: 0 } }, { ...plan, remote: { id: 1, revision: 1.5 } }, { ...plan, close: null }, { ...plan, close: 7 },
+    { ...plan, close: { status: 7, assignee: "", transaction: "invalid" } }, { ...plan, close: { status: "closed", assignee: 7, transaction: "invalid" } },
+    { ...plan, close: { status: "closed", assignee: "", transaction: "invalid" } }, missingProof].map((value) => JSON.stringify(value)), original];
+  for (const value of invalid) {
+    await f.setFields(item.id, { ado_sync_intent: value });
+    const before = snapshot(f.pmRoot);
+    const result = await f.command("sync");
+    assert.equal(result.code, "ADO_CONFLICT", JSON.stringify(result));
+    assert.deepEqual(snapshot(f.pmRoot), before);
+  }
+});
+
+test("native close recovery finishes assignment before any export can reverse it", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm), intended = f.items.get(1)!.fields["System.AssignedTo"];
+  f.items.get(1)!.fields["System.State"] = "Closed"; f.items.get(1)!.rev++;
+  let hit = false;
+  await f.observed("import", (event) => {
+    if (event.boundary === "local" && event.phase === "after" && event.operation === "close") { hit = true; throw new Error("Native close durable, assignment not finished"); }
+  });
+  assert.equal(hit, true);
+  assert.equal((await f.pm.get(item.id)).item.assignee, undefined);
+  const dry = await f.command("sync", { dryRun: true });
+  assert.equal(dry.code, "ADO_CONFLICT");
+  const result = await f.command("sync");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal((await f.pm.get(item.id)).item.assignee, "fixture@example.invalid");
+  assert.deepEqual(f.items.get(1)!.fields["System.AssignedTo"], intended);
+  assert.equal((await f.pm.get(item.id)).item.ado_sync_intent, undefined);
+  assert.ok(f.requests.every((request) => request.method !== "PATCH"));
+});
+
+test("inverse local relation writes retain an intent until that item's own read-back agrees", async (t) => {
+  const f = await fixture(t, [workItem(1), workItem(2)]);
+  assert.equal((await f.command("import")).ok, true);
+  const rows = (await f.pm.listAllComplete()).items;
+  const root = rows.find((item) => item.ado_id === 1)!, child = rows.find((item) => item.ado_id === 2)!;
+  await f.setFields(child.id, {}, ["ado_rev"]);
+  f.items.get(1)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Forward", url: `${f.org}/_apis/wit/workItems/2` }]; f.items.get(1)!.rev++;
+  const imported = await f.command("import", { limit: 1 });
+  assert.equal(imported.ok, true, JSON.stringify(imported));
+  const pending = (await f.pm.get(child.id)).item;
+  assert.equal(pending.parent, root.id);
+  assert.ok(pending.ado_sync_intent);
+  assert.equal(pending.ado_rev, undefined);
+  assert.deepEqual(JSON.parse(String(pending.ado_sync_base)).relations, []);
+  // Observe Azure's inverse endpoint before acknowledging that endpoint's state.
+  f.items.get(2)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Reverse", url: `${f.org}/_apis/wit/workItems/1` }]; f.items.get(2)!.rev++;
+  assert.equal((await f.command("sync")).ok, true);
+  assert.equal((await f.pm.get(child.id)).item.ado_sync_intent, undefined);
+});
+
+test("remote reversions after a partial local import propagate or conflict without an Azure reversal", async (t) => {
+  for (const key of ["title", "relations"] as const) await t.test(key, async (sub) => {
+    const f = await fixture(sub, [workItem(1), workItem(2)]);
+    assert.equal((await f.command("import")).ok, true);
+    const item = (await f.pm.listAllComplete()).items.find((row) => row.ado_id === 1)!;
+    if (key === "title") f.items.get(1)!.fields["System.Title"] = "Remote transient title";
+    else f.items.get(1)!.relations = [{ rel: "System.LinkTypes.Related", url: `${f.org}/_apis/wit/workItems/2` }];
+    f.items.get(1)!.rev++;
+    let hit = false;
+    const partial = await f.observed("import", (event) => {
+      if (!hit && event.boundary === "local" && event.phase === "after" && event.operation === "update") {
+        hit = true;
+        if (key === "title") f.items.get(1)!.fields["System.Title"] = item.title;
+        else f.items.get(1)!.relations = [];
+        f.items.get(1)!.rev++;
+      }
+    }, { limit: 1 });
+    assert.equal(hit, true); assert.equal(partial.code, "ADO_CONFLICT");
+    const resumed = await f.command("sync", { limit: 1 });
+    if (key === "title") {
+      assert.equal(resumed.ok, true, JSON.stringify(resumed));
+      assert.equal((await f.pm.get(item.id)).item.title, item.title);
+    } else assert.equal(resumed.code, "ADO_CONFLICT");
+    assert.equal(f.items.get(1)!.fields["System.Title"], item.title);
+    assert.deepEqual(f.items.get(1)!.relations, []);
+    assert.ok(f.requests.every((request) => request.method !== "PATCH"));
+  });
+});
+
+test("durable local intent refuses an older Azure replay after interruption", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm), older = structuredClone(f.items.get(1)!);
+  f.items.get(1)!.fields["System.Title"] = "Newer observed state"; f.items.get(1)!.rev++;
+  await f.observed("import", (event) => {
+    if (event.boundary === "local" && event.phase === "after" && event.operation === "update") throw new Error("After local import before agreement");
+  });
+  assert.equal((await f.pm.get(item.id)).item.title, "Newer observed state");
+  f.items.set(1, older);
+  const before = snapshot(f.pmRoot);
+  assert.equal((await f.command("sync")).code, "ADO_CONFLICT");
+  assert.deepEqual(snapshot(f.pmRoot), before);
 });

@@ -88,15 +88,15 @@ export interface OwnedEffect {
     /** Revision asserted by the owned request; a later witnessed key retires this proof. */
     revision: number;
 }
-/** Choose each key using only its witnessed base or proof of that exact owned scalar effect. */
-export declare function mergeSyncValues(local: Values, remote: Values, base: Values | undefined, effect?: OwnedEffect): Record<string, "equal" | "local" | "remote" | "conflict">;
+/** Choose each key from its witnessed base or the latest proof for that exact owned scalar. */
+export declare function mergeSyncValues(local: Values, remote: Values, base: Values | undefined, effect?: OwnedEffect | readonly OwnedEffect[]): Record<string, "equal" | "local" | "remote" | "conflict">;
 /** Execute the real REST transport; failures are converted to stable command receipts. */
 export declare function transport(method: string, url: string, body: string | undefined, headers: Readonly<Record<string, string>>): Promise<{
     status: number;
     body: string;
 }>;
 /** Build and apply one command plan using only the host-bound SDK client. */
-export declare function runSyncCommand(ctx: CommandHandlerContext, mode: "import" | "export" | "sync", observer?: SyncObserver): Promise<{
+export declare function runSyncCommand(ctx: CommandHandlerContext, mode: "import" | "export" | "sync", observer?: SyncObserver, sdkAnchors?: readonly string[]): Promise<{
     ok: boolean;
     code: string;
     exit_code: 4;

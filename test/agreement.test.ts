@@ -67,3 +67,16 @@ test("per-key revision witnesses retire old proof even when another key still pr
   assert.deepEqual(readBaseRevisions(undefined), {});
   for (const raw of ["{", "null", "[]", "7", '{"title":0}', '{"title":1.5}']) assert.throws(() => readBaseRevisions({ ado_agreed_revisions: raw }), /agreement revisions/u);
 });
+
+test("owned proof is selected per scalar so a later PATCH does not erase creation-default evidence", () => {
+  const creation = { original: { title: "Original", ado_area_path: "" }, accepted: { title: "Original", ado_area_path: "Project" }, keys: ["title", "ado_area_path"], revision: 0 };
+  const patch = { original: { title: "Edited", ado_area_path: "" }, accepted: { title: "Edited", ado_area_path: "Project" }, keys: ["title"], revision: 1 };
+  assert.deepEqual(mergeSyncValues({ title: "Edited", ado_area_path: "" }, { title: "Edited", ado_area_path: "Project" }, undefined, [creation, patch]), { title: "equal", ado_area_path: "remote" });
+  assert.deepEqual(mergeSyncValues({ ado_area_path: "" }, { ado_area_path: "Project" }, { ado_area_path: "Project", ado_agreed_revisions: '{"ado_area_path":1}' }, [creation, patch]), { ado_area_path: "local" });
+});
+
+test("read-back cannot regress an independently acknowledged key revision", async () => {
+  await assert.rejects(advanceSyncBase({ expectedVersion: "v", minimumRemoteRevision: 1,
+    readLocal: async () => ({ version: "v", acknowledgedRevision: 1, base: { title: "same", ado_agreed_revisions: '{"title":4}' }, values: { title: "same" } }),
+    readRemote: async () => ({ revision: 3, values: { title: "same" } }), publish: async () => assert.fail("stale read must never publish") }), /older/u);
+});

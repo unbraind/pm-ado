@@ -179,11 +179,16 @@ export function azureFields(values: Values, keys: readonly string[], states: Rec
   }));
 }
 
+/** Map an empty remote assignment to the SDK's explicit unset operation. */
+function assignmentFields(value: string): Pick<PmUpdateActionOptions, "assignee" | "unset"> {
+  return value === "" ? { unset: ["assignee"] } : { assignee: value };
+}
+
 /** Convert canonical fields and provenance to one SDK mutation with a history record. */
 export function pmFields(values: Values, remote: AdoWorkItem, config: AdoConfig): PmUpdateActionOptions & { field: string[] } {
   return { title: String(values.title), description: String(values.description), status: String(values.status),
     priority: Number(values.priority), tags: JSON.stringify(values.tags),
-    ...(values.assignee === "" ? { unset: ["assignee"] } : { assignee: String(values.assignee) }),
+    ...assignmentFields(String(values.assignee)),
     field: [`ado_id=${remote.id}`, `ado_project=${config.project}`, `ado_org_url=${config.orgUrl}`,
       `ado_url=${config.orgUrl}/_apis/wit/workItems/${remote.id}`, `ado_type=${String(remote.fields["System.WorkItemType"] ?? "Task")}`,
       `ado_area_path=${values.ado_area_path}`, `ado_iteration_path=${values.ado_iteration_path}`],
@@ -422,7 +427,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
       if (closing !== undefined && !foreign.has("status") && !foreign.has("assignee") && item.status === closing.status &&
           (item.assignee ?? "") !== closing.assignee && history.some((entry) => entry.message?.startsWith(`bulk-item-transaction ado-sync-${pending.plan}-${closing.transaction} `))) {
         if (dryRun) throw new CommandError("Pending native close requires SDK recovery; run sync before planning again", EXIT_CODE.conflict);
-        await persist(item.id, closing.assignee === "" ? { unset: ["assignee"] } : { assignee: closing.assignee }, "assignment-recovery");
+        await persist(item.id, assignmentFields(closing.assignee), "assignment-recovery");
         recoveredLocal = true;
       }
     }

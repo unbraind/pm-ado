@@ -2641,3 +2641,45 @@ test("durable local intent refuses an older Azure replay after interruption", as
   assert.equal((await f.command("sync")).code, "ADO_CONFLICT");
   assert.deepEqual(snapshot(f.pmRoot), before);
 });
+
+
+test("resolution refuses stale per-key agreement without an acknowledged item revision", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm);
+  f.items.get(1)!.rev = 2;
+  f.items.get(1)!.fields["System.Title"] = "Witnessed newer title";
+  assert.equal((await f.command("import")).ok, true);
+  await f.setFields(item.id, {}, ["ado_rev"]);
+  assert.equal((await resolver(f).plan(item.id)).remote.revision, 2);
+  f.items.get(1)!.rev = 1;
+  const before = snapshot(f.pmRoot);
+  await assert.rejects(resolver(f).plan(item.id), { code: "stale_remote" });
+  assert.deepEqual(snapshot(f.pmRoot), before);
+  assert.ok(f.requests.every((request) => request.method !== "PATCH"));
+});
+
+
+test("unassigned terminal imports resume an interrupted close without inventing an assignment", async (t) => {
+  const f = await fixture(t, [workItem(1, { "System.AssignedTo": "" })]);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm);
+  f.items.get(1)!.fields["System.State"] = "Closed";
+  f.items.get(1)!.rev++;
+  let interrupted = false;
+  await f.observed("import", (event) => {
+    if (event.boundary === "local" && event.operation === "close" && event.phase === "after") {
+      interrupted = true; throw new Error("Close completed before agreement");
+    }
+  });
+  assert.equal(interrupted, true);
+  assert.equal((await f.pm.get(item.id)).item.assignee, undefined);
+  assert.equal(JSON.parse(String((await f.pm.get(item.id)).item.ado_sync_base)).status, "open");
+  assert.equal((await f.command("sync")).ok, true);
+  const settled = (await f.pm.get(item.id)).item;
+  assert.equal(settled.status, "closed");
+  assert.equal(settled.assignee, undefined);
+  assert.equal(settled.ado_sync_intent, undefined);
+  assert.equal(JSON.parse(String(settled.ado_sync_base)).status, "closed");
+  assert.ok(f.requests.every((request) => request.method !== "PATCH"));
+});

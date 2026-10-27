@@ -187,8 +187,9 @@ assert the held state before simulating delayed provider visibility.
 
 ## Fault acceptance
 
-`test/sync.test.ts` exercises six scenarios: terminal import, terminal export, fresh export,
-relation/scalar export, pending-export recovery and mixed sync. A recording REST
+`test/sync.test.ts` exercises eight scenarios: terminal import, terminal export, fresh export,
+relation/scalar export, pending-export recovery, mixed sync, a concurrent remote
+link during scalar sync, and recovery of an interrupted scalar PATCH. A recording REST
 server keeps object revisions and actual call counts. Tests enumerate before and
 after every REST call, SDK local commit and outbox write observed in each path.
 They either edit the real tracker or kill a real SDK worker process with
@@ -272,3 +273,38 @@ bound read-only refresh remains available. No launcher path is inferred and no
 local mutation substitute is used. The pinned host facade lacks these module
 primitives; [pm-ado-host-sdk-facade](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-host-sdk-facade.toon)
 records the declaration search and upstream follow-up for the orchestrator.
+
+
+## Round-3 review repair verification
+
+`advanceSyncBase` is the sole advancement rule, with conditional publication in
+`runSyncCommand` and `AdoResolutionService.apply` (including replay). The final
+source checkpoint `0ac2505` passed 663/663 behavioral tests in Node 26 CI, with
+zero failures or skips. Its coverage gate correctly refused the remaining
+branches; focused acceptance cases and the subsequent complete release gates
+are linked from the PR checks, rather than treating that checkpoint as a pass.
+
+The independent two-sided reference model passed 512 sequences with seed
+`0x37a9c521`: 278 interruptions, 408 converged retries and 104 typed conflicts.
+Both actors add, change and clear scalars; add, remove and retarget relations;
+and close and reopen items. It interrupts import, export, sync and recovery,
+resumes, and applies further edits. Every successful sync leaves the synced
+keys equal; every new base coordinate has an actual equal read-back witness.
+The inherited normalization model additionally runs 500 sequences, 500 exact
+replays and 50 older-revision replay refusals.
+
+The eight deterministic recording-server matrices pass 344 semantic fault
+cells across 172 observed before/after boundaries: 36 terminal-import,
+28 terminal-export, 44 fresh-export, 52 relation-export, 52 pending-export,
+64 mixed-sync, 40 concurrent-link and 28 pending-PATCH cells. Each boundary
+receives a real local edit and a separate process `SIGKILL`. Assertions check
+no duplicate objects, links or generated comments, no lost edits, preserved
+intended states, ordinary-sync recovery, and the documented held-create case.
+
+Five separate function-only reverts each fail their focused acceptance case:
+accepted-snapshot promotion loses the model's remote link; premature proof
+retirement bypasses a conflict; retaining only the last request loses creation
+default evidence; ignoring foreign local reversion overwrites an edit; and
+skipping proven native assignment recovery prevents convergence. Restoring
+all five passes the same five cases. Receipts are recorded on the adoption
+item. The public-tracker differential remains 14/14 over 140 real items.

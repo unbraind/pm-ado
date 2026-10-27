@@ -51,6 +51,56 @@ test("round-8 resolution portable and legacy plans reject fixed-clock edits incl
   });
 });
 
+test("round-8 fresh legacy headless plans apply and replay without extra native edits", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm), service = resolver(f);
+  f.items.get(1)!.fields["System.Title"] = "Reviewed legacy change"; f.items.get(1)!.rev++;
+  const plan = choices(await service.plan(item.id), "remote");
+  delete plan.local.head;
+  assert.equal((await service.apply(plan)).ok, true);
+  const before = snapshot(f.pmRoot);
+  assert.equal((await service.apply(plan)).replayed, true);
+  assert.deepEqual(snapshot(f.pmRoot), before);
+});
+
+test("round-8 resolution agreement refuses a fixed-clock edit after settlement read-back", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm), service = resolver(f);
+  f.items.get(1)!.fields["System.Title"] = "Reviewed remote change"; f.items.get(1)!.rev++;
+  const plan = choices(await service.plan(item.id), "remote");
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(item.updated_at) });
+  let edited = false;
+  f.afterBatch(async () => {
+    if (!edited && (await f.pm.get(item.id)).item.ado_resolution_receipt !== undefined) {
+      edited = true; await f.pm.update(item.id, { title: "Concurrent settled edit" });
+    }
+  });
+  try {
+    await assert.rejects(service.apply(plan), { code: "stale_local" });
+    assert.equal(edited, true);
+    assert.equal((await f.pm.get(item.id)).item.title, "Concurrent settled edit");
+  } finally { t.mock.timers.reset(); }
+});
+
+test("round-8 sync preserves native claim refusals and unavailable SDK diagnostics", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm);
+  await f.pm.claim(item.id, { author: "peer-agent", force: true });
+  const settings = await runtimeSdk.readSettings(f.pmRoot);
+  await runtimeSdk.writeSettings(f.pmRoot, { ...settings, governance: { ...settings.governance, preset: "custom", ownership_enforcement: "strict" } });
+  f.items.get(1)!.fields["System.Title"] = "Refused remote change"; f.items.get(1)!.rev++;
+  const before = snapshot(f.pmRoot), result = await f.command("import");
+  assert.equal(result.code, "ADO_CONFLICT", JSON.stringify(result));
+  assert.match(result.error!, /Local sync persistence refused/u);
+  assert.deepEqual(snapshot(f.pmRoot), before);
+  const missing = await f.observed("import", async () => {}, {}, []);
+  assert.equal(missing.code, "ADO_USAGE");
+  assert.match(missing.error!, /Install pm-ado with pm install/u);
+});
+
 /** Build a full work item with optional field/revision overrides. */
 function workItem(id = 1, fields: Record<string, unknown> = {}, rev = 1): AdoWorkItem {
   return { id, rev, relations: [], fields: { "System.Title": `Remote ${id}`, "System.Description": "Details", "System.State": "New",

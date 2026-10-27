@@ -161,7 +161,7 @@ export function validateResolutionPlan(input: unknown): asserts input is Resolut
   const hash = (value: unknown) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
   if (p.schema !== "pm-ado/resolution/2" || p.normalization !== undefined && p.normalization !== "pm-ado/fields/1" || !hash(p.scope?.ref) || Object.keys(p.scope!).length !== 1 ||
       typeof p.local?.id !== "string" || !hash(p.local.revision) || !Number.isSafeInteger(p.remote?.id) || Number(p.remote?.id) < 1 ||
-      p.local?.head !== undefined && !isNativeHead(p.local.head) ||
+      p.local.head !== undefined && !isNativeHead(p.local.head) ||
       !Number.isSafeInteger(p.remote?.revision) || Number(p.remote?.revision) < 1 || !hash(p.remote?.digest) || !hash(p.mapping) ||
       !Array.isArray(p.fields) || p.fields.length !== Object.keys(ADO_FIELD_MAP).length ||
       p.fields.some((f) => typeof f !== "object" || f === null || !Object.hasOwn(ADO_FIELD_MAP, f.field) || !hash(f.local) || !hash(f.remote) ||

@@ -1,0 +1,26 @@
+id: pm-ado-hound-generated-dist
+title: Stop Hound from linting generated dist/ output
+description: "Disable Hound JSHint using the pm-slack and pm-web precedent: committed dist/ JavaScript targets ES2022, while Hound defaults to ES5 and produces false positives."
+type: Chore
+status: in_progress
+priority: 2
+tags[2]: ci,review-bots
+created_at: "2026-10-27T01:14:53.914Z"
+updated_at: "2026-10-27T01:47:02.346Z"
+author: codex-agent
+acceptance_criteria: Hound no longer lints generated dist/ output; no other lint or gate changes
+comments[5]{created_at,author,text}:
+  "2026-10-27T01:14:59.337Z",codex-agent,"Plan: copy the documented pm-slack .hound.yml configuration, disabling only Hound JSHint. Preserve package lint and release gates. Verify the configuration fails when reverted, run both release gates with isolated Git identity and at most two CPUs, regenerate the changelog, and open an unmerged PR. Item remains open for orchestrator verification."
+  "2026-10-27T01:15:24.686Z",codex-agent,"Configuration revert proof: the focused Node assertion passes with .hound.yml present, fails when the new file is removed, then passes after restoring its exact bytes. No source behavior or package gates change."
+  "2026-10-27T01:15:39.652Z",codex-agent,"Configuration revert proof: the focused Node assertion passes with .hound.yml present, fails when the new file is removed, then passes after restoring its exact bytes. No source behavior or package gates change."
+  "2026-10-27T01:15:59.694Z",codex-agent,"Configuration revert proof: the focused Node assertion passes with .hound.yml present, fails when the new file is removed, then passes after restoring its exact bytes. No source behavior or package gates change."
+  "2026-10-27T01:47:01.302Z",codex-agent,"Validation: focused Hound assertion passed with a failing configuration revert proof. Full Bun release:check passed 252/252 tests in each coverage run, with unchanged 100% thresholds. The npm attempt stopped at 245/246 because the public registry timed out fetching the pinned CLI (ETIMEDOUT). The unchanged packed-install test subsequently passed 7/7 under Node 26 with .hound.yml removed, confirming the failure is independent of the config. Both full gate attempts used isolated Git identity and limited workers. CI will independently run both unchanged gates; no source or gate changes are warranted. Final changelog regeneration and check follow these tracker writes."
+files[1]{path,scope}:
+  .hound.yml,project
+tests[3]{command,scope,timeout_seconds,pm_context_mode,workspace_context_mode,provenance{author,created_at,source_kind,source_ref}}:
+  "node -e \"require('node:assert/strict').match(require('node:fs').readFileSync('.hound.yml','utf8'), /^jshint:\\n  enabled: false\\s*$/m)\"",project,2400,tracker,source,codex-agent,"2026-10-27T01:16:02.557Z",local_mutation,chore/hound-generated-dist
+  "HOME=\"$(mktemp -d)\" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 taskset -c 0,1 npm run release:check",project,2400,tracker,source,codex-agent,"2026-10-27T01:16:04.551Z",local_mutation,chore/hound-generated-dist
+  "HOME=\"$(mktemp -d)\" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 taskset -c 0,1 bun run release:check",project,2400,tracker,source,codex-agent,"2026-10-27T01:16:06.073Z",local_mutation,chore/hound-generated-dist
+docs[1]{path,scope}:
+  CHANGELOG.md,project
+body: ""

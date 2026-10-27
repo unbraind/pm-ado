@@ -404,3 +404,27 @@ preserve the same terminal evidence as canonical names, including after resume.
 Resolution normalizes only native lifecycle values; portable plan digests retain
 their original coordinates. An already closed item is previewed without another
 close request, preserving its original close reason and timestamps.
+
+## Verified auto-round-1 source
+
+Source `f7f89e9` passes [CI](https://github.com/unbraind/pm-ado/actions/runs/40467343302)
+4/4 jobs: Node 22, Node 26, complete npm release gate and complete Bun release
+gate. Each passes 696/696 tests in both coverage runs, with no failures or skips.
+All eleven required sources have 100% statements, lines, branches and functions;
+statements are 1997/1997. [CodeQL](https://github.com/unbraind/pm-ado/actions/runs/40467343299)
+also passes. The model again reports 512 sequences, 278 interruptions, 408
+converged retries and 104 typed conflicts with seed `0x37a9c521`.
+
+The 24/24 PM-linked regressions and 14/14 public differential comparisons over
+140 items pass locally. Function-only reverts reproduce endpoint overwrite,
+missing-base hashing, alias lifecycle and terminal-preview failures. Local full
+release attempts were incomplete: npm reached the packed parent timeout after
+eight successful launchers; Bun failed in installer setup before its first
+launcher. Neither local attempt is represented as a complete pass. Dedicated
+CI passes real packed acceptance through all twelve parent/child cases.
+
+Current main is `64aca03`, incorporated at `4d590fd`. That merge only
+adds Hound configuration and its unrelated tracker item, preserving the measured
+sync implementation and test assertions. The final evidence commit releases the
+adoption claim without closing items; its exact-head checks are linked from
+the [PR checks](https://github.com/unbraind/pm-ado/pull/46/checks).

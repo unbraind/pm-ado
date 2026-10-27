@@ -2448,3 +2448,34 @@ test("round-3 read-back fences refuse missing and older Azure state without adva
   await f.setFields(root.id, { ado_project: "Other" });
   await assert.rejects(readLocalAgreement(f.pm, root.id, config, root.updated_at), { exitCode: 4 });
 });
+
+test("round-3 SDK validation refusal preserves the item and its agreed base", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const before = snapshot(f.pmRoot);
+  f.items.get(1)!.fields["System.Title"] = ""; f.items.get(1)!.rev++;
+  const result = await f.command("import");
+  assert.equal(result.code, "ADO_REMOTE", JSON.stringify(result));
+  assert.deepEqual(snapshot(f.pmRoot), before);
+});
+
+test("round-3 scalar resolution acknowledges only agreed keys and leaves remote links for sync", async (t) => {
+  const f = await fixture(t, [workItem(1), workItem(2)]);
+  assert.equal((await f.command("import")).ok, true);
+  const rows = (await f.pm.listAllComplete()).items;
+  const root = rows.find((item) => item.ado_id === 1)!, peer = rows.find((item) => item.ado_id === 2)!;
+  await f.pm.update(root.id, { title: "Resolved local scalar" });
+  f.items.get(1)!.relations = [{ rel: "System.LinkTypes.Related", url: `${f.org}/_apis/wit/workItems/2` }];
+  f.items.get(1)!.rev++;
+  const service = resolver(f), plan = choices(await service.plan(root.id));
+  await assert.rejects(service.apply(plan), { code: "ado_partial_apply" });
+  const partial = (await f.pm.get(root.id)).item, base = JSON.parse(String(partial.ado_sync_base));
+  assert.equal(base.title, "Resolved local scalar");
+  assert.deepEqual(base.relations, []);
+  assert.equal(partial.ado_rev, 1);
+  assert.equal(f.items.get(1)!.relations!.length, 1);
+  assert.equal((await f.command("sync", { limit: 1 })).ok, true);
+  assert.ok((await f.pm.get(root.id)).item.dependencies!.some((edge) => edge.id === peer.id));
+  assert.equal((await service.apply(plan)).replayed, true);
+  assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 1);
+});

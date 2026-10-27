@@ -122,6 +122,32 @@ test("native history fence normal update and committed replay retain their exact
   assert.deepEqual(await nativeHead(sdk, f.pmRoot, f.item.id), head);
 });
 
+test("native journal identity cannot adopt another payload at the same inspected head", async (t) => {
+  const f = await fixture(t);
+  t.mock.timers.enable({ apis: ["Date"], now: new Date(f.item.updated_at) });
+  t.after(() => t.mock.timers.reset());
+  let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>((done) => { enter = done; });
+  const held = new Promise<void>((done) => { release = done; });
+  t.after(() => release());
+  const first = new NativeWriteFence(sdk, f.pmRoot, "history-agent", async (id, options) => {
+    enter(); await held; return f.pm.update(id, options);
+  });
+  const second = new NativeWriteFence(sdk, f.pmRoot, "history-agent");
+  await first.capture(f.item.id); await second.capture(f.item.id);
+  const one = first.update(f.item.id, { title: "First payload" }, "shared-operation");
+  await entered;
+  const two = second.update(f.item.id, { title: "Second payload" }, "shared-operation");
+  // Both native prechecks can complete while the first real SDK dispatch holds the workspace lease.
+  await new Promise<void>((done) => setTimeout(done, 200));
+  release();
+  const results = await Promise.allSettled([one, two]);
+  assert.equal(results[1].status, "rejected", "a different payload cannot report the first writer's success");
+  if (results[1].status === "rejected") assert.ok(results[1].reason instanceof NativeHistoryConflict);
+  if (results[0].status === "rejected") assert.ok(results[0].reason instanceof NativeHistoryConflict);
+  assert.equal((await f.pm.get(f.item.id)).item.title, "First payload");
+});
+
 test("native history fence fixed-clock ordinary and ABA writes conflict and restore peer state", async (t) => {
   for (const aba of [false, true]) await t.test(String(aba), async (sub) => {
     const f = await fixture(sub);
@@ -215,7 +241,8 @@ test("native history fence journal failure compensates once and refuses a commit
   await recovered.update(f.item.id, { title: "Recovered" }, "native-journal-failure");
   assert.equal((await f.pm.get(f.item.id)).item.title, "Recovered");
   const head = recovered.head(f.item.id);
-  const transactionId = `native-missing-proof-${sdk.deriveMutationTransactionId(JSON.stringify(head))}`;
+  const payload = sdk.deriveMutationTransactionId(JSON.stringify({ title: "Unproved" }));
+  const transactionId = `native-missing-proof-${sdk.deriveMutationTransactionId(JSON.stringify({ ...head, payload }))}`;
   await sdk.commitWorkspaceTransaction({ pmRoot: f.pmRoot, author: "history-agent", transactionId,
     steps: [{ id: "native-write", inspect: async () => ({ state: "pending" }), apply: async () => undefined, compensate: async () => {} }] });
   await assert.rejects(recovered.update(f.item.id, { title: "Unproved" }, "native-missing-proof"), NativeHistoryConflict);

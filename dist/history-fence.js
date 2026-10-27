@@ -55,14 +55,14 @@ export class NativeWriteFence {
         }
         const history = (await this.sdk.readHistorySnapshot(this.sdk.getHistoryPath(this.pmRoot, id), id)).entries;
         for (const entry of history) {
-            const marker = entry.message?.match(/^bulk-item-transaction (\S+) native-fence:(\d+):([a-zA-Z0-9_-]+) apply$/u);
+            const marker = entry.message?.match(/^bulk-item-transaction (\S+) native-fence:(\d+):([a-zA-Z0-9_-]+)(?: native-payload:([a-zA-Z0-9_-]+))? apply$/u);
             if (marker === undefined || marker === null)
                 continue;
             const expected = { length: Number(marker[2]), hash: marker[3] };
-            const journal = `transactions/sdk/${this.journalId(marker[1], expected)}.json`;
+            const journal = `transactions/sdk/${this.journalId(marker[1], expected, marker[4])}.json`;
             if (this.journals.get(journal) === "committed" && history.some((event) => event.context?.ado_native_write === entry.record_hash))
                 continue;
-            await this.commit(id, {}, marker[1], expected, entry.author);
+            await this.commit(id, {}, marker[1], expected, entry.author, marker[4]);
         }
         this.heads.set(id, await nativeHead(this.sdk, this.pmRoot, id));
     }
@@ -80,16 +80,16 @@ export class NativeWriteFence {
         if (expected === undefined)
             throw new NativeHistoryConflict();
         await this.assertCurrent(id);
-        return this.commit(id, options, transactionId, expected, this.author);
+        return this.commit(id, options, transactionId, expected, this.author, this.sdk.deriveMutationTransactionId(JSON.stringify(options)));
     }
-    /** Bind SDK journal identity to the immutable inspected head, independent of timestamps. */
-    journalId(transactionId, expected) {
-        return `${transactionId}-${this.sdk.deriveMutationTransactionId(JSON.stringify(expected))}`;
+    /** Bind SDK journal identity to the immutable inspected head and payload, independent of timestamps. */
+    journalId(transactionId, expected, payload) {
+        return `${transactionId}-${this.sdk.deriveMutationTransactionId(JSON.stringify(payload === undefined ? expected : { ...expected, payload }))}`;
     }
     /** Replay the exact native marker after a crash; the SDK owns transaction journaling and lifecycle writes. */
-    async commit(id, options, transactionId, expected, author) {
+    async commit(id, options, transactionId, expected, author, payload) {
         const sdk = this.sdk, pmRoot = this.pmRoot;
-        const message = `bulk-item-transaction ${transactionId} native-fence:${expected.length}:${expected.hash} apply`;
+        const message = `bulk-item-transaction ${transactionId} native-fence:${expected.length}:${expected.hash}${payload === undefined ? "" : ` native-payload:${payload}`} apply`;
         let conflict = false;
         let version = "";
         /** Verify the actual native author, operation and immutable patch under the same lease as compensation. */
@@ -153,7 +153,7 @@ export class NativeWriteFence {
             this.heads.set(id, { length: receipt + 1, hash: after[receipt].record_hash });
             return true;
         };
-        const journalId = this.journalId(transactionId, expected);
+        const journalId = this.journalId(transactionId, expected, payload);
         await sdk.commitWorkspaceTransaction({ pmRoot, author, onTransition: this.onTransition,
             transactionId: journalId, steps: [{ id: "native-write",
                     inspect: async () => {

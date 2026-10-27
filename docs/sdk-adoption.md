@@ -336,8 +336,8 @@ are recorded on the adoption item and PR.
 native length/hash before item inspection; `update` carries only its own
 verified history head between writes. A native SDK write has an immutable
 message binding its operation id to that witness. The SDK workspace journal
-key also includes the witness, so fixed-clock retries cannot accidentally
-adopt an older committed journal. Verification checks the actual author,
+key also includes the witness and the SDK-derived digest of the native payload, so fixed-clock retries cannot accidentally
+adopt an older committed journal or a different payload at the same inspected head. Verification checks the actual author,
 native lifecycle operation and record's immutable patch against that chain.
 It requires exactly the one own entry after the captured head.
 

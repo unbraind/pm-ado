@@ -1044,7 +1044,7 @@ const defineExtension = <TModule extends ExtensionModule>(module: TModule): TMod
 
 export default defineExtension({
   name: "pm-ado",
-  version: "2026.10.26",
+  version: "2026.10.27",
 
   activate(api: ExtensionApi) {
     // schema — Azure DevOps provenance, including the revision every write asserts.

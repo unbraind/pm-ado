@@ -101,6 +101,45 @@ test("round-8 sync preserves native claim refusals and unavailable SDK diagnosti
   assert.match(missing.error!, /Install pm-ado with pm install/u);
 });
 
+test("round-8 legacy prepared decisions without remote projections retain raw PATCH compatibility", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm), service = resolver(f);
+  await f.pm.update(item.id, { title: "Legacy local decision" });
+  const current = await row(f.pm), remote = f.items.get(1)!;
+  const plan = await service.plan(item.id), maps = { imports: IMPORT_STATE_MAP, exports: STATE_MAP };
+  delete plan.normalization;
+  plan.fields = resolutionFields(current, remote, maps, false); plan.mapping = resolutionDigest(maps);
+  const reviewed = choices(plan);
+  await assert.rejects(resolver(f, () => { throw new Error("Interrupted legacy prepare"); }).apply(reviewed), { code: "ado_partial_apply" });
+  const pending = JSON.parse(String((await f.pm.get(item.id)).item.ado_resolution_intent)) as Record<string, unknown>;
+  delete pending.remote_values;
+  await runtimeSdk.mutateItemWithHistoryContext({ pmRoot: f.pmRoot, settings: await readSettings(f.pmRoot), id: item.id,
+    author: "fixture-agent", op: "update", historyContext: { ado_resolution_prepare: pending.plan_id },
+    mutate: (document) => { document.metadata.ado_resolution_intent = JSON.stringify(pending); return { changedFields: ["ado_resolution_intent"] }; } });
+  assert.equal((await service.apply(reviewed)).ok, true);
+  assert.equal(f.items.get(1)!.fields["System.Title"], "Legacy local decision");
+  const before = snapshot(f.pmRoot);
+  assert.equal((await service.apply(reviewed)).replayed, true);
+  assert.deepEqual(snapshot(f.pmRoot), before);
+  assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 1);
+});
+
+test("round-8 missing scope coordinates and non-directory outbox storage refuse without writes", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm);
+  await f.setFields(item.id, {}, ["ado_project"]);
+  const before = snapshot(f.pmRoot), result = await f.command("sync");
+  assert.equal(result.code, "ADO_USAGE");
+  assert.match(result.error!, /scope mismatch/u);
+  assert.deepEqual(snapshot(f.pmRoot), before);
+  const empty = await fixture(t, []);
+  mkdirSync(join(empty.pmRoot, "transactions"), { recursive: true });
+  writeFileSync(join(empty.pmRoot, "transactions/pm-ado-sync"), "not a directory");
+  await assert.rejects(outbox(empty).recoverEffects([], []), { code: "ENOTDIR" });
+});
+
 /** Build a full work item with optional field/revision overrides. */
 function workItem(id = 1, fields: Record<string, unknown> = {}, rev = 1): AdoWorkItem {
   return { id, rev, relations: [], fields: { "System.Title": `Remote ${id}`, "System.Description": "Details", "System.State": "New",

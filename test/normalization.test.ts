@@ -8,7 +8,7 @@ import * as sdk from "@unbrained/pm-cli/sdk";
 import { normalizeStatusValue, normalizeItemReference, normalizeTitleValue, normalizeAssigneeValue,
   normalizeTagValues, normalizePriorityValue, normalizeLiteralValue, normalizeScopeValue, normalizeFieldValues, normalizeStateMaps,
   type ValueNormalization } from "../normalization.ts";
-import { localValues, remoteValues, azureFields, IMPORT_STATE_MAP } from "../sync.ts";
+import { localValues, remoteValues, azureFields, remoteScalarValues, IMPORT_STATE_MAP, type Values } from "../sync.ts";
 
 /** Obtain the registry and native write oracle without mocking SDK functions. */
 async function fixture(t: test.TestContext) {
@@ -70,4 +70,8 @@ test("round-5 field normalizers match native writes without erasing literal Unic
   for (const key of ["constructor", "__proto__", "not_a_field"]) assert.throws(() => azureFields({}, [key], {}), /Unknown mapped field/u);
   for (const [key, value] of Object.entries(localValues((await f.pm.listAllComplete()).items.find((row) => row.id === f.item.id)!, f.context))) if (key !== "status") assert.ok(Object.hasOwn(azureFields({ [key]: value }, [key], {}, f.context), key === "title" ? "System.Title" : key === "description" ? "System.Description" : key === "tags" ? "System.Tags" : key === "priority" ? "Microsoft.VSTS.Common.Priority" : key === "assignee" ? "System.AssignedTo" : key === "ado_area_path" ? "System.AreaPath" : "System.IterationPath"));
   assert.throws(() => remoteValues({ id: 1, rev: 1, fields: { "System.State": "constructor" } }, IMPORT_STATE_MAP, f.context), /Unmapped/u);
+  const remote = { id: 1, rev: 1, fields: { "System.State": "Done" } }, imports = { Done: " CLOSED " };
+  const preferredCases: (Values | undefined)[] = [undefined, {}, { status: 1 }, { status: " CLOSED " }];
+  for (const preferred of preferredCases) assert.equal(remoteScalarValues(remote, preferred, imports, { closed: "Closed" }, f.context).status, "closed");
+  assert.equal(remoteScalarValues(remote, undefined, imports, {}, false).status, " CLOSED ");
 });

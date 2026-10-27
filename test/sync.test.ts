@@ -3141,3 +3141,31 @@ test("round-5 injected SDK normalization and canonical scope work without a pack
     assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 0);
   } finally { if (old === undefined) delete process.env.ADO_STATUS_MAP; else process.env.ADO_STATUS_MAP = old; }
 });
+
+
+test("round-5 unprepared version-2 coordinates normalize on first apply interrupted prepare and replay", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm), remote = f.items.get(1)!;
+  const previousImports = process.env.ADO_STATUS_MAP, previousExports = process.env.ADO_EXPORT_STATE_MAP;
+  const maps = { imports: { ...IMPORT_STATE_MAP, Done: " CLOSED " }, exports: STATE_MAP };
+  process.env.ADO_STATUS_MAP = JSON.stringify(maps.imports); process.env.ADO_EXPORT_STATE_MAP = JSON.stringify(maps.exports);
+  try {
+    remote.fields["System.State"] = "Done"; remote.fields["System.Title"] = " Legacy reviewed title "; remote.rev++;
+    const service = resolver(f), plan = await service.plan(item.id);
+    delete plan.normalization;
+    plan.fields = resolutionFields(item, remote, maps, false); plan.mapping = resolutionDigest(maps);
+    const reviewed = choices(plan, "remote");
+    await assert.rejects(resolver(f, () => { throw new Error("Interrupted legacy prepare"); }).apply(reviewed), { code: "ado_partial_apply" });
+    const pending = JSON.parse(String((await f.pm.get(item.id)).item.ado_resolution_intent)) as { values: Record<string, unknown>; remote_values: Record<string, unknown> };
+    assert.equal(pending.values.status, " CLOSED "); assert.equal(pending.remote_values.status, " CLOSED ");
+    assert.equal((await service.apply(reviewed)).ok, true);
+    const before = snapshot(f.pmRoot); assert.equal((await service.apply(reviewed)).replayed, true);
+    assert.deepEqual(snapshot(f.pmRoot), before);
+    const settled = (await f.pm.get(item.id)).item; assert.equal(settled.status, "closed"); assert.equal(settled.title, "Legacy reviewed title");
+    assert.equal(remote.fields["System.State"], "Done"); assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 0);
+  } finally {
+    if (previousImports === undefined) delete process.env.ADO_STATUS_MAP; else process.env.ADO_STATUS_MAP = previousImports;
+    if (previousExports === undefined) delete process.env.ADO_EXPORT_STATE_MAP; else process.env.ADO_EXPORT_STATE_MAP = previousExports;
+  }
+});

@@ -45,6 +45,17 @@ export interface AgreementResult {
   remote: RemoteAgreementRead;
 }
 
+/** Decode per-key read-back revision witnesses; legacy bases have no per-key coordinates. */
+export function readBaseRevisions(base: Values | undefined): Record<string, number> {
+  if (base?.ado_agreed_revisions === undefined) return {};
+  let revisions: unknown;
+  try { revisions = JSON.parse(String(base.ado_agreed_revisions)); }
+  catch { throw new CommandError("Invalid ado_sync_base agreement revisions"); }
+  if (typeof revisions !== "object" || revisions === null || Array.isArray(revisions) ||
+      Object.values(revisions).some((value) => !Number.isSafeInteger(value) || Number(value) < 1)) throw new CommandError("Invalid ado_sync_base agreement revisions");
+  return revisions as Record<string, number>;
+}
+
 /** Advance each key only from matching post-operation reads; acknowledge a revision only on full agreement. */
 export async function advanceSyncBase(operations: AgreementOperations): Promise<AgreementResult> {
   const local = await operations.readLocal();
@@ -56,16 +67,24 @@ export async function advanceSyncBase(operations: AgreementOperations): Promise<
   }
   const keys = [...new Set([...Object.keys(local.values), ...Object.keys(remote.values)])];
   const base: Values = {};
+  const previousRevisions = readBaseRevisions(local.base);
+  const revisions: Record<string, number> = {};
   const differences: string[] = [];
   for (const key of keys) {
-    if (JSON.stringify(local.values[key]) === JSON.stringify(remote.values[key])) base[key] = structuredClone(local.values[key]);
+    if (JSON.stringify(local.values[key]) === JSON.stringify(remote.values[key])) {
+      base[key] = structuredClone(local.values[key]); revisions[key] = remote.revision;
+    }
     else {
       differences.push(key);
-      if (local.base !== undefined && Object.hasOwn(local.base, key)) base[key] = structuredClone(local.base[key]);
+      if (local.base !== undefined && Object.hasOwn(local.base, key)) {
+        base[key] = structuredClone(local.base[key]);
+        if (previousRevisions[key] !== undefined) revisions[key] = previousRevisions[key];
+      }
     }
   }
   // A versioned partial base distinguishes unknown keys from corrupt legacy JSON.
   if (Object.keys(base).length !== keys.length) base.ado_base_partial = 1;
+  base.ado_agreed_revisions = JSON.stringify(revisions);
   await operations.publish(base, differences.length === 0 ? remote.revision : undefined, local.version);
   return { base, differences, local, remote };
 }

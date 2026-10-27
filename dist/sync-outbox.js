@@ -149,7 +149,7 @@ export class SyncOutbox {
         return { remote, recovered, base: intent.base, accepted };
     }
     /** Reconcile a proven prior PATCH before treating its own effect as a competing writer. */
-    async bases(remotes, locals) {
+    async recoverEffects(remotes, locals) {
         const directory = join(this.pmRoot, "transactions/pm-ado-sync");
         const recovered = new Map();
         let names;
@@ -180,7 +180,7 @@ export class SyncOutbox {
             const accepted = await this.client.request("GET", `/_apis/wit/workitems/${intent.remote}/revisions/${intent.revision + 1}?api-version=7.1&$expand=relations`);
             if (accepted.fields["System.History"] !== `pm-ado operation ${intent.key}`)
                 continue;
-            recovered.set(local.id, { original: intent.base, accepted, fields: intent.fields });
+            recovered.set(local.id, { original: intent.base, accepted, fields: intent.fields, revision: intent.revision });
         }
         return recovered;
     }

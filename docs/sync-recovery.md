@@ -12,24 +12,25 @@ update uses `commitItemMutations` with an update `match` on that revision.
 Expected revisions advance only from this command's immutable history markers.
 Native no-ops retain the prior expected revision.
 
-A terminal import has three **separately conditional** SDK commits:
+A terminal import uses **separately conditional** SDK commits:
 
 1. Scalars without lifecycle options, `ado_sync_base` or `ado_rev`, matched to the inspected revision.
 2. A status-only close, matched to the revision returned by the scalar commit.
-3. Agreement publication (`ado_sync_base` and `ado_rev`), matched to the durable close revision.
+3. Restore the requested mapped assignment when native close clears it, matched to the close revision.
+4. Read back both stores and publish only witnessed agreement, matched to the last durable local revision.
 
 The second SDK update routes directly to the native close mutation. The base
 advances last. A crash after scalars leaves the old base, so ordinary `ado sync`
 imports the outstanding close instead of treating the old local status as a new
 reopening decision. A crash after close leaves both statuses equal and the old
-base; sync can finish publication. Non-terminal scalar/status changes and their
-base remain one conditional SDK update. Relation import and compensation finish
+base; sync can finish publication. Non-terminal scalar/status changes also finish before a separate, conditional
+read-back agreement publication. Relation import and compensation finish
 before publication. Initial local creates deliberately omit the base.
 
-Native SDK close clears assignment. Its resulting local change reconciles on a
-later sync under the existing mapping; this lifecycle policy is retained. Crash
-assertions explicitly disallow every reopening PATCH and compare settled values
-on both sides, including that policy.
+Native SDK close clears assignment. The import adapter explicitly completes the
+requested mapped assignment before claiming agreement. Each step is guarded;
+a peer edit prevents the following write. Crash assertions disallow every
+reopening PATCH and compare actual settled values on both sides.
 
 Each close and publication step is guarded. If another agent changes status,
 body, comments or other metadata between commits, the next commit refuses with `ADO_CONFLICT` and
@@ -41,6 +42,38 @@ The same guarded update callback is passed to relation import and its parent
 compensations. Initial local creation uses the SDK's atomic create; every later
 write to that new identity matches the revision returned by create. A crash
 never authorizes reusing a stale local revision.
+
+## Agreed base: one read-back rule
+
+`advanceSyncBase` in `agreement.ts` is the only rule for advancing any synced
+scalar or relation base. Its callers are the final publication in
+`runSyncCommand` (import, export, creation, ordinary sync and outbox recovery)
+and `AdoResolutionService.apply` (including receipt replay).
+
+The function reads the actual SDK item and its complete local graph after
+mutations, then performs a fresh expanded Azure read. For each canonical key,
+matching values can advance the base; disagreement retains that key's previous
+witnessed value, or remains unknown in a versioned partial base. Relation sets
+advance only when their complete canonical memberships match, so no added,
+removed or retargeted relation is acknowledged speculatively. Historical base
+values remain legitimate common ancestors while new edits diverge.
+
+Publication matches the actual local read revision. Azure revisions cannot
+move backward or precede the completed operation. `ado_rev` advances only when
+all synced keys agree. The base also stores internal `ado_agreed_revisions`
+coordinates for each witnessed key. A witnessed revision newer than an outbox
+request retires that request's proof for that key, even if another key still
+prevents advancing the item's acknowledged revision. A command with read-back differences returns
+`ADO_CONFLICT`, even when earlier effects succeeded. Requests, plans, cached
+responses and snapshots containing unimported remote changes never certify a
+base value. SDK normalization that leaves the stores different is therefore an
+explicit conflict rather than a false success.
+
+Recovery proof is separate: `mergeSyncValues` may recognize **only scalar keys
+actually written by the owned request**, comparing its original and accepted
+values. Unrelated accepted fields and relations never become a common base.
+An interrupted scalar PATCH with an unimported remote link therefore imports
+the link on resume; it cannot reinterpret that link as a local deletion.
 
 ## Private outbox and idempotency coordinates
 
@@ -87,9 +120,9 @@ still matches, or the adapter reads the expected resulting revision and proves
 its operation marker. It returns that proven historical snapshot rather than
 adopting a later writer's current document. Historical reads request expanded
 relations. Before three-way planning, recovery reads each pending PATCH's
-proven historical result in revision order. The latest proven result supplies
-the accepted base while its original local projection distinguishes subsequent
-local edits. This also recovers repeated local conflicts across several PATCHes
+proven historical result in revision order. The latest proven result supplies evidence only for scalar keys actually sent;
+its original local projection distinguishes subsequent local edits. Neither the
+accepted snapshot nor its unimported relations become the common base. This also recovers repeated local conflicts across several PATCHes
 without mistaking the adapter's own earlier effects for competing remote edits. Provider API references: [create](https://learn.microsoft.com/en-us/rest/api/azure/devops/wit/work-items/create?view=azure-devops-rest-7.1)
 and [revision lookup](https://learn.microsoft.com/en-us/rest/api/azure/devops/wit/revisions/get?view=azure-devops-rest-7.1).
 

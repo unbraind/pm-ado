@@ -70,19 +70,36 @@ async function worker(build: string, workspace: string, org: string): Promise<vo
   assert.equal(await fingerprint(pmRoot), before, "read-only commands changed authoritative files");
   const applyRoot = join(applyWorkspace, ".agents/pm");
   process.chdir(applyWorkspace);
+  const priorHistory = await readHistoryEntries(join(applyRoot, "history", `${linked.id}.jsonl`), linked.id);
   const applied = await harness.runCommand({ command: "ado import", pmRoot: applyRoot, options: { limit: 12 } });
   assert.equal((applied.result as { ok: boolean }).ok, true, JSON.stringify(applied.result));
   outputs.push(applied.result);
   const appliedPm = new PmClient({ cwd: applyWorkspace, pmRoot: applyRoot, author: "differential-runner" });
   const final = (await appliedPm.get(linked.id, { depth: "full" })).item;
   delete final.updated_at;
+  // Per-key witnessed revisions are new internal recovery coordinates, not synced values.
+  if (typeof final.ado_sync_base === "string") {
+    const canonical = JSON.parse(final.ado_sync_base) as Record<string, unknown>;
+    delete canonical.ado_agreed_revisions; final.ado_sync_base = JSON.stringify(canonical);
+  }
   outputs.push(final);
   const history = await readHistoryEntries(join(applyRoot, "history", `${linked.id}.jsonl`), linked.id);
   const last = history.at(-1)!;
-  outputs.push({ history_length: history.length, op: last.op, author: last.author,
-    patch: last.patch.filter((entry) => entry.path !== "/metadata/updated_at") });
+  const delta = history.slice(priorHistory.length);
+  assert.ok(delta.every((entry) => entry.op === last.op && entry.author === last.author));
+  // Agreement now has its own guarded, final event. Compare the same net patch,
+  // retaining its event count separately as an intentional audit-history difference.
+  const net = new Map(delta.flatMap((entry) => entry.patch).filter((entry) => entry.path !== "/metadata/updated_at").map((entry) => [entry.path, entry]));
+  outputs.push({ history_before_length: priorHistory.length, op: last.op, author: last.author,
+    patch: [...net.values()].map((entry) => {
+      if (entry.path === "/metadata/ado_sync_base" && "value" in entry) {
+        const value = JSON.parse(String(entry.value)) as Record<string, unknown>;
+        delete value.ado_agreed_revisions; return { ...entry, value: JSON.stringify(value) };
+      }
+      return entry;
+    }).sort((a, b) => a.path.localeCompare(b.path)) });
   assert.equal(await fingerprint(pmRoot), before, "mutation must use a separate writable copy");
-  process.stdout.write(JSON.stringify({ items: items.length, outputs, history_message: last.message }));
+  process.stdout.write(JSON.stringify({ items: items.length, outputs, history_message: last.message, history_new_events: delta.length }));
 }
 
 /** Prepare identical inputs once, then compare origin/main and the candidate byte-for-byte. */
@@ -140,13 +157,16 @@ async function compare(baseline: string, trackers: string[]): Promise<void> {
       const after = JSON.parse(results[1]) as Record<string, unknown>;
       assert.equal(before.history_message, "Azure DevOps revision 1");
       assert.match(String(after.history_message), /^bulk-item-transaction ado-sync-/u);
+      assert.equal(before.history_new_events, 1);
+      assert.equal(after.history_new_events, 2);
+      delete before.history_new_events; delete after.history_new_events;
       delete before.history_message;
       delete after.history_message;
       assert.deepEqual(after, before, `public corpus ${index + 1} differs`);
       total += items.length;
-      console.log(`Public corpus ${index + 1}: ${items.length} items; import/export/sync dry-run and resolution plan identical; authoritative files unchanged; writable-copy import receipts/values/history patches identical.`);
+      console.log(`Public corpus ${index + 1}: ${items.length} items; import/export/sync dry-run and resolution plan identical; authoritative files unchanged; writable-copy import receipts/values/net history patches identical; candidate publishes agreement in a second guarded event.`);
     }
-    console.log(`PASS: ${trackers.length} public corpora, ${total} real items, ${trackers.length * 7} differential comparisons; only intentional history-message differences (SDK transaction markers); mutation timestamps normalized.`);
+    console.log(`PASS: ${trackers.length} public corpora, ${total} real items, ${trackers.length * 7} differential comparisons; intentional history differences: SDK transaction markers, path ordering, two guarded events instead of one, and internal per-key revision coordinates; synced base values and net patch identical; mutation timestamps normalized.`);
   } finally {
     await new Promise<void>((done) => server.close(() => done()));
     // Undo read-only fixture permissions before portable cleanup.

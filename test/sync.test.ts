@@ -12,7 +12,7 @@ import * as runtimeSdk from "@unbrained/pm-cli/sdk";
 import { PmClient, createExtensionCommandSdk, runWithActiveExtensions, resolveRuntimeStatusRegistry, readSettings } from "@unbrained/pm-cli/sdk";
 import { createExtensionTestHarness } from "@unbrained/pm-cli/sdk/testing";
 import extension, { type AdoWorkItem, type AdoRelation, type JsonPatchOperation } from "../index.ts";
-import { buildWiql, localValues, remoteValues, IMPORT_STATE_MAP, runSyncCommand } from "../sync.ts";
+import { buildWiql, localValues, remoteValues, IMPORT_STATE_MAP, runSyncCommand, readLocalAgreement } from "../sync.ts";
 
 import { SyncOutbox, isProtocolTag, type OutboxState, type SyncBoundary, type SyncObserver } from "../sync-outbox.ts";
 
@@ -177,11 +177,11 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
     finally { process.chdir(cwd); }
   };
   /** Exercise the command with native SDK activation and a boundary observer. */
-  const observed = async (mode: "import" | "export" | "sync", observer: SyncObserver) => {
+  const observed = async (mode: "import" | "export" | "sync", observer: SyncObserver, options: Record<string, unknown> = {}) => {
     const before = { ...process.env }; const cwd = process.cwd();
     process.chdir(root); process.env = { ...env };
     try {
-      return await runWithActiveExtensions({ cwd: root, path: pmRoot }, () => runSyncCommand({ command: `ado ${mode}`, args: [], options: {},
+      return await runWithActiveExtensions({ cwd: root, path: pmRoot }, () => runSyncCommand({ command: `ado ${mode}`, args: [], options,
         global: {}, pm_root: pmRoot, sdk: createExtensionCommandSdk(pmRoot, pm) }, mode, observer));
     } finally { process.env = before; process.chdir(cwd); }
   };
@@ -332,6 +332,7 @@ test("relations round trip through real commands, with diagnostics for unknown l
   const f = await fixture(t, [workItem(1), workItem(2)]);
   f.items.get(2)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Reverse", url: `${f.org}/_apis/wit/workItems/1` },
     { rel: "Unknown.Type", url: "https://fixture.invalid/opaque" }];
+  f.items.get(1)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Forward", url: `${f.org}/_apis/wit/workItems/2` }];
   const imported = await f.command("import");
   assert.equal(imported.ok, true, JSON.stringify(imported));
   assert.equal(imported.diagnostics.length, 1);
@@ -517,13 +518,13 @@ test("remote relation additions import, local removals export, and remote remova
   await f.command("import");
   f.items.get(1)!.relations = [{ rel: "System.LinkTypes.Related", url: `${f.org}/_apis/wit/workItems/2` }];
   f.items.get(1)!.rev++;
-  assert.equal((await f.command("sync")).ok, true);
+  assert.equal((await f.command("sync", { limit: 1 })).ok, true);
   const a = (await f.pm.listAllComplete()).items.find((item) => item.ado_id === 1)!;
   assert.ok(a.dependencies!.length);
   f.items.get(1)!.relations = [];
   f.items.get(1)!.rev++;
   const before = snapshot(f.pmRoot);
-  assert.equal((await f.command("sync")).code, "ADO_CONFLICT");
+  assert.equal((await f.command("sync", { limit: 1 })).code, "ADO_CONFLICT");
   assert.deepEqual(snapshot(f.pmRoot), before);
   assert.equal((await f.command("export", { dryRun: true })).code, "ADO_CONFLICT");
 });
@@ -686,12 +687,12 @@ async function assertRetainedCreates(f: Awaited<ReturnType<typeof fixture>>, res
   for (const plan of created) {
     const item = linked.find((candidate) => candidate.ado_id === plan.ado_id)!;
     assert.ok(item, "successful creates must be linked before the run stops");
-    assert.equal(item.ado_rev, 1);
+    assert.equal(item.ado_rev, undefined, "creation identity alone does not acknowledge read-back agreement");
     assert.equal(item.ado_project, "Project");
     assert.equal(item.ado_org_url, f.org);
     assert.equal(item.ado_url, `${f.org}/_apis/wit/workItems/${plan.ado_id}`);
     assert.equal(item.ado_sync_base, undefined, "partial publication must not invent a shared base");
-    assert.deepEqual(plan.linked_fields, ["ado_id", "ado_rev", "ado_project", "ado_org_url", "ado_url"]);
+    assert.deepEqual(plan.linked_fields, ["ado_id", "ado_project", "ado_org_url", "ado_url"]);
     const history = readFileSync(join(f.pmRoot, "history", `${item.id}.jsonl`), "utf8");
     assert.match(history, /bulk-item-transaction ado-sync-/u);
     assert.match(history, /"path":"\/metadata\/ado_id"/u);
@@ -915,7 +916,7 @@ test("resolution preserves agreed status aliases and validates scalar schema bef
   const legacy = choices(await service.plan(item.id), "remote");
   assert.ok(legacy.fields.every((field) => field.base === null));
   assert.equal((await service.apply(legacy)).ok, true);
-  assert.equal((await row(f.pm)).ado_sync_base, undefined, "legacy relation agreement must not be invented by scalar decisions");
+  assert.deepEqual(JSON.parse(String((await row(f.pm)).ado_sync_base)).relations, [], "actual equal graph read-backs establish relation agreement");
   assert.equal((await f.command("sync")).ok, true, "existing sync can establish the complete base after scalar resolution");
   const former = await service.plan(item.id);
   await f.pm.update(item.id, { description: "Later decision" });
@@ -1147,10 +1148,14 @@ test("resolution recovery serializes two writers using the same prepared decisio
   const item = await row(f.pm);
   await f.pm.update(item.id, { title: "Concurrent reviewed decision" });
   const plan = choices(await resolver(f).plan(item.id));
-  const results = await Promise.all([resolver(f).apply(plan), resolver(f).apply(plan)]);
-  assert.ok(results.every((result) => result.ok));
+  const results = await Promise.allSettled([resolver(f).apply(plan), resolver(f).apply(plan)]);
+  assert.ok(results.some((result) => result.status === "fulfilled" && result.value.ok));
+  for (const result of results) if (result.status === "rejected") {
+    assert.ok(["ado_partial_apply", "apply_failed"].includes((result.reason as ResolutionRefusal).code));
+    assert.equal((result.reason as ResolutionRefusal).exitCode, 4);
+  }
+  assert.equal((await resolver(f).apply(plan)).replayed, true);
   assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 1);
-  assert.ok(results.some((result) => result.replayed));
 });
 
 test("resolution recovery handles a peer settling between prepare and settlement", async (t) => {
@@ -1390,7 +1395,7 @@ async function crashAt(f: Awaited<ReturnType<typeof fixture>>, mode: "import" | 
 /** Seed distinct create/import/link/recovery paths with real SDK metadata and server identities. */
 async function matrixFixture(t: test.TestContext, scenario: string) {
   const fresh = scenario === "export-create" || scenario === "export-recover";
-  const f = await fixture(t, fresh ? [] : scenario === "export-relations" ? [workItem(1), workItem(2)] : [workItem()]);
+  const f = await fixture(t, fresh ? [] : ["export-relations", "sync-concurrent-link", "sync-patch-recover"].includes(scenario) ? [workItem(1), workItem(2)] : [workItem()]);
   let mode: "import" | "export" | "sync";
   if (fresh) {
     await f.pm.create({ title: "Matrix export", type: "Task" });
@@ -1404,7 +1409,21 @@ async function matrixFixture(t: test.TestContext, scenario: string) {
     await f.pm.create({ title: "Matrix unlinked", type: "Task" }); mode = "sync";
   } else {
     assert.equal((await f.command("import")).ok, true);
-    if (scenario === "export-close") {
+    if (scenario === "sync-concurrent-link" || scenario === "sync-patch-recover") {
+      const linked = (await f.pm.listAllComplete()).items.find((item) => item.ado_id === 1)!;
+      await f.pm.update(linked.id, { title: "Matrix concurrent scalar" });
+      f.items.get(1)!.relations = [{ rel: "System.LinkTypes.Related", url: `${f.org}/_apis/wit/workItems/2` }];
+      f.items.get(1)!.rev++;
+      f.response("wiql", { workItems: [{ id: 1 }] });
+      mode = "sync";
+      if (scenario === "sync-patch-recover") {
+        let hit = false;
+        const interrupted = await f.observed("sync", (event) => {
+          if (event.boundary === "remote" && event.phase === "after" && event.operation.startsWith("PATCH")) { hit = true; throw new Error("Scalar accepted before relation import"); }
+        });
+        assert.equal(hit, true); assert.equal(interrupted.ok, false);
+      }
+    } else if (scenario === "export-close") {
       await f.pm.update((await row(f.pm)).id, { status: "closed", closeReason: "Planned terminal export" }); mode = "export";
     } else if (scenario === "import-close") {
       f.items.get(1)!.fields["System.State"] = "Closed"; f.items.get(1)!.rev++; mode = "import";
@@ -1415,10 +1434,10 @@ async function matrixFixture(t: test.TestContext, scenario: string) {
       mode = "export";
     }
   }
-  return { f, mode, edited: (await row(f.pm)).id, expected: scenario === "sync-mixed" || scenario === "export-relations" ? 2 : 1 };
+  return { f, mode, edited: (await row(f.pm)).id, expected: ["sync-mixed", "export-relations", "sync-concurrent-link", "sync-patch-recover"].includes(scenario) ? 2 : 1 };
 }
 
-for (const scenario of ["import-close", "export-close", "export-create", "export-relations", "export-recover", "sync-mixed"]) {
+for (const scenario of ["import-close", "export-close", "export-create", "export-relations", "export-recover", "sync-mixed", "sync-concurrent-link", "sync-patch-recover"]) {
   test(`boundary matrix ${scenario}: every REST/local/intent boundary preserves edits or holds an ambiguous create safely`, async (t) => {
     const probe = await matrixFixture(t, scenario);
     const trace: SyncBoundary[] = [];
@@ -1745,38 +1764,38 @@ test("pending PATCH bases ignore unrelated or unapplied records and prove only t
   const local = await row(f.pm);
   const remote = structuredClone(f.items.get(1)!);
   const projection = localValues(local);
-  assert.equal((await outbox(f).bases([remote], [local])).size, 0);
+  assert.equal((await outbox(f).recoverEffects([remote], [local])).size, 0);
   for (const phase of ["prepared", "dispatched"]) {
     const service = outbox(f, (event) => {
       if (event.boundary === "intent" && event.phase === "after" && event.operation === phase) throw new Error("Interrupted journal");
     });
     const fields = { "System.Title": `Planned ${phase}` };
     await assert.rejects(service.patch(local.id, remote, fields, [], projection), /Interrupted journal/u);
-    assert.equal((await outbox(f).bases([remote], [local])).size, 0);
+    assert.equal((await outbox(f).recoverEffects([remote], [local])).size, 0);
   }
   f.effect(400);
   await assert.rejects(outbox(f).patch(local.id, remote, { "System.Title": "Rejected projected effect" }, [], projection), CommandError);
-  assert.equal((await outbox(f).bases([remote], [local])).size, 0);
+  assert.equal((await outbox(f).recoverEffects([remote], [local])).size, 0);
   // An effect made without a local projection cannot silently invent a merge base.
   await outbox(f).patch(local.id, remote, { "System.Title": "Unprojected effect" }, []);
-  assert.equal((await outbox(f).bases([f.items.get(1)!], [local])).size, 0);
+  assert.equal((await outbox(f).recoverEffects([f.items.get(1)!], [local])).size, 0);
   const current = structuredClone(f.items.get(1)!);
   await f.setFields(local.id, { ado_rev: current.rev });
   const inspected = await row(f.pm);
   await outbox(f).patch(local.id, current, { "System.Title": "Known effect" }, [], localValues(inspected));
   const latest = f.items.get(1)!;
-  assert.equal((await outbox(f).bases([latest], [])).size, 0);
-  assert.equal((await outbox(f).bases([latest], [{ ...inspected, ado_rev: "invalid" }])).size, 0);
-  assert.equal((await outbox(f).bases([], [inspected])).size, 0);
+  assert.equal((await outbox(f).recoverEffects([latest], [])).size, 0);
+  assert.equal((await outbox(f).recoverEffects([latest], [{ ...inspected, ado_rev: "invalid" }])).size, 0);
+  assert.equal((await outbox(f).recoverEffects([], [inspected])).size, 0);
   await f.setFields(local.id, { ado_id: 2 });
-  assert.equal((await outbox(f).bases([latest], [await row(f.pm)])).size, 0);
+  assert.equal((await outbox(f).recoverEffects([latest], [await row(f.pm)])).size, 0);
   await f.setFields(local.id, { ado_id: 1, ado_rev: latest.rev });
-  assert.equal((await outbox(f).bases([latest], [await row(f.pm)])).size, 0);
+  assert.equal((await outbox(f).recoverEffects([latest], [await row(f.pm)])).size, 0);
   const directory = join(f.pmRoot, "transactions/pm-ado-sync");
   writeFileSync(join(directory, "note.txt"), "not an intent");
   writeFileSync(join(directory, "foreign.json"), JSON.stringify({ operation: "patch", scope: "another scope" }));
   writeFileSync(join(directory, "other.json"), JSON.stringify({ operation: "another operation" }));
-  const recovered = await outbox(f).bases([latest], [inspected]);
+  const recovered = await outbox(f).recoverEffects([latest], [inspected]);
   assert.equal(recovered.get(local.id)!.accepted.fields["System.Title"], "Known effect");
 });
 
@@ -2050,6 +2069,8 @@ test("500 seeded import/export/sync sequences preserve every owned field, relati
   const f = await fixture(t, [workItem(1), workItem(2)]);
   f.items.get(1)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Reverse", url: `${f.org}/_apis/wit/workItems/2` },
     { rel: "System.LinkTypes.Related", url: `${f.org}/_apis/wit/workItems/2` }];
+  f.items.get(2)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Forward", url: `${f.org}/_apis/wit/workItems/1` },
+    { rel: "System.LinkTypes.Related", url: `${f.org}/_apis/wit/workItems/1` }];
   assert.equal((await f.command("import")).ok, true);
   const initial = (await f.pm.listAllComplete()).items;
   const ids = new Map(initial.map((item) => [Number(item.ado_id), item.id]));
@@ -2074,7 +2095,8 @@ test("500 seeded import/export/sync sequences preserve every owned field, relati
   const registry = resolveRuntimeStatusRegistry((await readSettings(f.pmRoot)).schema);
   f.env.ADO_STATUS_MAP = JSON.stringify(Object.fromEntries(statuses.map((status, index) => [`Remote${index}`, status])));
   f.env.ADO_EXPORT_STATE_MAP = JSON.stringify(Object.fromEntries(statuses.map((status, index) => [status, `Remote${index}`])));
-  let remoteMirrored = false, localMirrored = false;
+  await model.update(reference.get(2)!, { dep: [`id=${reference.get(1)},kind=related,source_kind=System.LinkTypes.Related`] });
+  let remoteMirrored = true, localMirrored = true;
   let mirrorMetadata: unknown;
   const archive: AdoWorkItem[] = [];
   const modeCounts: Record<string, number> = { import: 0, export: 0, sync: 0 };
@@ -2108,7 +2130,14 @@ test("500 seeded import/export/sync sequences preserve every owned field, relati
     }
     if (mode !== "import") remoteMirrored = true;
     const result = await f.command(mode);
-    assert.equal(result.ok, true, `seed ${seed} sequence ${sequence} mode ${mode}: ${JSON.stringify(result)}`);
+    if (!result.ok) {
+      assert.equal(result.code, "ADO_CONFLICT", `seed ${seed} sequence ${sequence}: ${JSON.stringify(result)}`);
+      const normalized = (await model.get(reference.get(1)!, { depth: "full" })).item;
+      const accepted = f.items.get(1)!;
+      Object.assign(accepted.fields, { "System.Description": normalized.description ?? "", "System.AssignedTo": normalized.assignee ?? "" });
+      accepted.rev++;
+      assert.equal((await f.command("import")).ok, true);
+    }
     const actualRows = (await f.pm.listAllComplete()).items;
     const expectedRows = (await model.listAllComplete()).items;
     const actual = actualRows.find((item) => item.id === ids.get(1))!;
@@ -2174,4 +2203,248 @@ test("older remote revision snapshots refuse import, export and sync before any 
   for (const mode of ["import", "export", "sync"]) {
     assert.equal((await f.command(mode)).code, "ADO_CONFLICT"); assert.deepEqual(snapshot(f.pmRoot), before);
   }
+});
+
+/** Independent projections for the two-sided, interruptible three-way reference model. */
+test("round-3 model: 512 two-sided sequences preserve edits and witness every base advance", async (t) => {
+  const f = await fixture(t, [1, 2, 3].map((id) => workItem(id, { "System.AssignedTo": "" })));
+  assert.equal((await f.command("import")).ok, true);
+  const rows = (await f.pm.listAllComplete()).items;
+  const root = rows[0]!, remoteId = Number(root.ado_id);
+  const peers = rows.filter((item) => item.id !== root.id);
+  const byId = new Map(rows.map((item) => [item.id, Number(item.ado_id)]));
+  f.response("wiql", { workItems: [{ id: remoteId }] });
+  const options = { limit: 1 };
+  const modelSettings = await readSettings(f.pmRoot);
+  const located = (await runtimeSdk.locateItem(f.pmRoot, root.id, modelSettings.id_prefix, modelSettings.item_format, runtimeSdk.resolveItemTypeRegistry(modelSettings).type_to_folder))!;
+  /** Read the real authoritative document using the SDK parser without command presentation overhead. */
+  const readModelItem = async () => (await runtimeSdk.readLocatedItem(located, { schema: modelSettings.schema,
+    extensionFieldNames: ["ado_id", "ado_rev", "ado_project", "ado_org_url", "ado_sync_base", "ado_area_path", "ado_iteration_path", "ado_url", "ado_type"] })).document.metadata;
+  type State = Record<string, string | number | string[]>;
+  /** Reference local projection reads native storage, independently of the production graph adapter. */
+  const local = async (): Promise<State> => {
+    const item = await readModelItem();
+    const relations = (item.dependencies ?? []).filter((edge) => edge.kind === "related").map((edge) => JSON.stringify(["System.LinkTypes.Related", byId.get(edge.id)]));
+    if (item.parent !== undefined) relations.push(JSON.stringify(["System.LinkTypes.Hierarchy-Reverse", byId.get(item.parent)]));
+    return { title: item.title!, description: item.description ?? "", status: item.status!, priority: item.priority!,
+      tags: [...item.tags!].sort(), assignee: item.assignee ?? "", ado_area_path: String(item.ado_area_path ?? ""), ado_iteration_path: String(item.ado_iteration_path ?? ""), relations: [...new Set(relations)].sort() };
+  };
+  /** Reference Azure projection reads the recording server's authoritative objects. */
+  const remote = (): State => {
+    const item = f.items.get(remoteId)!, fields = item.fields;
+    return { title: String(fields["System.Title"]), description: String(fields["System.Description"] ?? ""),
+      status: ({ New: "open", Active: "in_progress", Closed: "closed", Blocked: "blocked" } as Record<string, string>)[String(fields["System.State"])],
+      priority: Number(fields["Microsoft.VSTS.Common.Priority"]), tags: String(fields["System.Tags"] ?? "").split(";").map((v) => v.trim()).filter(Boolean).sort(),
+      assignee: String(fields["System.AssignedTo"] ?? ""), ado_area_path: String(fields["System.AreaPath"] ?? ""), ado_iteration_path: String(fields["System.IterationPath"] ?? ""),
+      relations: (item.relations ?? []).map((edge) => JSON.stringify([edge.rel, Number(edge.url.split("/").at(-1))])).sort() };
+  };
+  /** Equality is defined by the independent canonical reference representation. */
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  /** Read the persisted base without using its production decoder. */
+  const base = async (): Promise<State> => JSON.parse(String((await readModelItem()).ado_sync_base));
+  let seed = 0x37a9c521;
+  /** Reproducible LCG covers edits, directions and interruption positions. */
+  const random = (n: number) => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed % n; };
+  let pending = new Map<string, Map<string, State[string]>>();
+  const witnesses = new Map<string, Set<string>>();
+  let invariantFailure: Error | undefined;
+  /** Only paired actual reads can certify a new value; requests and accepted snapshots cannot. */
+  const witness = async () => {
+    const l = await local(), r = remote();
+    for (const key of Object.keys(l)) if (same(l[key], r[key])) {
+      if (!witnesses.has(key)) witnesses.set(key, new Set());
+      witnesses.get(key)!.add(JSON.stringify(l[key]));
+      for (const [side, value] of pending.get(key) ?? []) if (same(value, l[key])) pending.get(key)!.delete(side);
+    }
+  };
+  /** Every newly published base key must have a real post-operation equality witness. */
+  const invariant = async () => {
+    const b = await base();
+    for (const [key, value] of Object.entries(b)) if (!["ado_base_partial", "ado_agreed_revisions"].includes(key) && !witnesses.get(key)?.has(JSON.stringify(value))) {
+      invariantFailure = new Error(`unwitnessed base ${key}: ${JSON.stringify(value)}`); throw invariantFailure;
+    }
+  };
+  await witness();
+  const wireNames: Record<string, string> = { title: "System.Title", description: "System.Description", status: "System.State", priority: "Microsoft.VSTS.Common.Priority", tags: "System.Tags", assignee: "System.AssignedTo", ado_area_path: "System.AreaPath", ado_iteration_path: "System.IterationPath" };
+  /** Explicit operator resolution after a reported conflict aligns Azure to the retained local state. */
+  const resolve = async () => {
+    const l = await local(), item = f.items.get(remoteId)!;
+    const saved = await readModelItem();
+    if (same(l, remote()) && Object.keys(l).every((key) => same(l[key], (JSON.parse(String(saved.ado_sync_base)) as State)[key])) && saved.ado_rev === item.rev) { await witness(); await invariant(); return; }
+    for (const [key, wire] of Object.entries(wireNames)) item.fields[wire] = key === "status" ? ({ open: "New", in_progress: "Active", closed: "Closed", blocked: "Blocked" } as Record<string, string>)[String(l[key])] : key === "tags" ? (l.tags as string[]).join("; ") : l[key];
+    item.relations = (l.relations as string[]).map((edge) => { const [rel, id] = JSON.parse(edge) as [string, number]; return { rel, url: `${f.org}/_apis/wit/workItems/${id}` }; });
+    item.rev++;
+    await witness();
+    const result = await f.observed("sync", async () => { await witness(); }, options);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    await invariant();
+  };
+  const operations = ["title", "description", "assignee", "priority", "tags", "ado_area_path", "ado_iteration_path", "status", "relations"];
+  const counts: Record<string, number> = {}, boundaries = new Set<string>();
+  let interrupted = 0, conflicts = 0, successes = 0;
+  /** Apply an actor edit through the real SDK or the authoritative fake server, then record its actual value. */
+  const edit = async (side: "local" | "remote", key: string, sequence: number): Promise<State[string]> => {
+    const value = key === "priority" ? random(5) : key === "tags" ? (random(3) ? [`${side}-${sequence}`] : []) : key === "status" ? ["open", "in_progress", "closed"][random(3)]! : key === "relations" ? random(3) : key === "title" ? `${side} ${sequence}` : random(3) ? `${side} ${sequence}` : "";
+    counts[`${side}:${key}`] = (counts[`${side}:${key}`] ?? 0) + 1;
+    if (side === "local") {
+      if (key === "relations") {
+        await f.pm.update(root.id, { unset: ["parent"], depRemove: [...new Set((await readModelItem()).dependencies?.map((edge) => edge.id) ?? [])] });
+        if (value !== 0) await f.pm.update(root.id, random(2) ? { parent: peers[Number(value) - 1]!.id } : { dep: [`id=${peers[Number(value) - 1]!.id},kind=related,source_kind=System.LinkTypes.Related`] });
+      } else if (key.startsWith("ado_")) await f.setFields(root.id, { [key]: String(value) });
+      else await f.pm.update(root.id, key === "status" ? { status: String(value), closeReason: "Reference close", force: true } : key === "tags" ? { tags: JSON.stringify(value) } : key === "assignee" && value === "" ? { unset: ["assignee"] } : { [key]: value });
+      return (await local())[key];
+    }
+    const item = f.items.get(remoteId)!;
+    if (key === "relations") item.relations = value === 0 ? [] : [{ rel: random(2) ? "System.LinkTypes.Related" : "System.LinkTypes.Hierarchy-Reverse", url: `${f.org}/_apis/wit/workItems/${byId.get(peers[Number(value) - 1]!.id)}` }];
+    else item.fields[wireNames[key]] = key === "status" ? ({ open: "New", in_progress: "Active", closed: "Closed" } as Record<string, string>)[String(value)] : key === "tags" ? (value as string[]).join("; ") : value;
+    item.rev++;
+    return remote()[key];
+  };
+  await f.pm.update(root.id, { title: "Reference interrupted scalar" });
+  f.items.get(remoteId)!.relations = [{ rel: "System.LinkTypes.Related", url: `${f.org}/_apis/wit/workItems/${byId.get(peers[0]!.id)}` }];
+  f.items.get(remoteId)!.rev++;
+  let reviewed = false;
+  await f.observed("sync", async (event) => {
+    await witness(); await invariant();
+    if (event.phase === "after" && event.boundary === "remote" && event.operation.startsWith("PATCH")) { reviewed = true; throw new Error("Reviewed interruption"); }
+  }, options);
+  assert.equal(reviewed, true);
+  const recovered = await f.observed("sync", async () => { await witness(); await invariant(); }, options);
+  assert.equal(recovered.ok, true, JSON.stringify(recovered));
+  assert.equal((remote().relations as string[]).length, 1, "recovery must import, never erase, the remote edit");
+  assert.deepEqual(await local(), remote());
+  for (let sequence = 0; sequence < 512; sequence++) {
+    await resolve();
+    const mode = (["import", "export", "sync"] as const)[sequence % 3]!;
+    pending = new Map<string, Map<string, State[string]>>();
+    /** Keep each actor's latest edit for a key; a typed conflict is the only permitted unresolved result. */
+    const actor = async (side: "local" | "remote", key: string) => {
+      const before = side === "local" ? await local() : remote();
+      await edit(side, key, sequence);
+      const after = side === "local" ? await local() : remote();
+      for (const changed of Object.keys(before)) if (!same(before[changed], after[changed])) {
+        const existing = pending.get(changed) ?? new Map<string, State[string]>();
+        existing.set(side, after[changed]); pending.set(changed, existing);
+      }
+      await witness();
+    };
+    // Directed commands start with an edit on their source; sync starts with edits on both sides.
+    await actor(mode === "import" ? "remote" : "local", operations[sequence % operations.length]!);
+    if (mode === "sync") await actor("remote", operations[random(operations.length)]!);
+    const l0 = await local(), r0 = remote(), b0 = await base();
+    const expectedImports: string[] = [], expectedExports: string[] = [], expectedConflicts: string[] = [];
+    for (const key of Object.keys(l0)) {
+      if (same(l0[key], r0[key])) continue;
+      if (mode === "import") expectedImports.push(key);
+      else if (mode === "export") expectedExports.push(key);
+      else if (same(l0[key], b0[key])) {
+        if (key === "relations" && (l0[key] as string[]).some((edge) => !(r0[key] as string[]).includes(edge))) expectedConflicts.push(key);
+        else expectedImports.push(key);
+      } else if (same(r0[key], b0[key])) expectedExports.push(key);
+      else expectedConflicts.push(key);
+    }
+    const selectedOptions = mode === "export" ? { limit: 3 } : options;
+    const preview = await f.command(mode, { ...selectedOptions, dryRun: true });
+    const rootPlan = preview.plans.find((entry) => entry.ado_id === remoteId)!;
+    if (expectedConflicts.length) {
+      assert.equal(preview.code, "ADO_CONFLICT");
+      assert.deepEqual(Object.keys(preview.conflicts[0]!.fields).sort(), expectedConflicts.sort());
+    } else {
+      assert.ok(preview.ok || mode === "export" && preview.code === "ADO_CONFLICT", JSON.stringify(preview));
+      assert.deepEqual(rootPlan.import_fields.sort(), expectedImports.sort());
+      assert.deepEqual(rootPlan.export_fields.sort(), expectedExports.sort());
+    }
+    const target = Math.floor(sequence / 3) % 36;
+    let position = 0, hit = false;
+    const result = await f.observed(mode, async (event) => {
+      await witness();
+      await invariant();
+      boundaries.add(`${mode}:${event.phase}:${event.boundary}:${event.operation}`);
+      if (position++ === target) {
+        hit = true; interrupted++;
+        // Both actors can edit while the command is suspended, including after an accepted PATCH.
+        await actor("local", operations[random(operations.length)]!);
+        await actor("remote", operations[random(operations.length)]!);
+        throw new Error("Model process interruption");
+      }
+    }, selectedOptions);
+    // An interrupted command cannot report success. Subsequent ordinary sync must preserve or conflict.
+    if (hit) assert.equal(result.ok, false);
+    const resumed = await f.observed("sync", async () => { await witness(); await invariant(); }, options);
+    await invariant();
+    assert.ifError(invariantFailure);
+    if (resumed.ok) { successes++; assert.deepEqual(await local(), remote(), `success mismatch seed=${seed} sequence=${sequence}`); }
+    else { conflicts++; assert.equal(resumed.code, "ADO_CONFLICT", JSON.stringify(resumed)); }
+    const l = await local(), r = remote();
+    for (const [key, edits] of pending) for (const value of edits.values()) {
+      assert.ok(same(l[key], value) || same(r[key], value) || !resumed.ok && (resumed.error !== undefined || resumed.conflicts.some((conflict) => Object.hasOwn(conflict.fields, key))), `lost ${key} edit seed=${seed} sequence=${sequence}: ${JSON.stringify({ value, l, r, result, resumed, pending: [...pending].map(([k,v])=>[k,[...v]]) })}`);
+    }
+    // Further edits after restart exercise a fresh plan rather than only immediate replay.
+    await resolve();
+    const k = operations[random(operations.length)]!;
+    const retained = await edit(sequence % 2 ? "local" : "remote", k, sequence + 1000);
+    await witness();
+    const further = await f.observed("sync", async () => { await witness(); await invariant(); }, options);
+    assert.ok(further.ok || further.code === "ADO_CONFLICT", JSON.stringify(further));
+    if (further.ok) assert.deepEqual(await local(), remote());
+    assert.ok(same((await local())[k], retained) || same(remote()[k], retained) || !further.ok);
+    assert.equal(f.items.size, 3, "model must never create a duplicate object");
+    if ((sequence + 1) % 64 === 0) t.diagnostic(`two-sided model completed ${sequence + 1}/512 sequences`);
+  }
+  assert.ok(interrupted >= 200);
+  assert.ok(successes > 0 && conflicts > 0);
+  for (const side of ["local", "remote"]) for (const key of operations) assert.ok(counts[`${side}:${key}`], `${side} ${key} missing`);
+  t.diagnostic(JSON.stringify({ sequences: 512, seed: "0x37a9c521", interrupted, successes, conflicts, boundaries: [...boundaries].sort(), actor_operations: counts }));
+});
+
+test("round-3 fixed: interrupted scalar PATCH never promotes an unimported remote relation", async (t) => {
+  const f = await fixture(t, [workItem(1), workItem(2)]);
+  assert.equal((await f.command("import")).ok, true);
+  const rows = (await f.pm.listAllComplete()).items;
+  const root = rows.find((item) => item.ado_id === 1)!, peer = rows.find((item) => item.ado_id === 2)!;
+  await f.pm.update(root.id, { title: "Local scalar edit" });
+  f.items.get(1)!.relations = [{ rel: "System.LinkTypes.Related", url: `${f.org}/_apis/wit/workItems/2` }];
+  f.items.get(1)!.rev++;
+  let hit = false;
+  await f.observed("sync", (event) => {
+    if (event.boundary === "remote" && event.phase === "after" && event.operation.startsWith("PATCH")) { hit = true; throw new Error("Lost response after scalar acceptance"); }
+  }, { limit: 1 });
+  assert.equal(hit, true);
+  assert.deepEqual(JSON.parse(String((await f.pm.get(root.id)).item.ado_sync_base)).relations, []);
+  const result = await f.command("sync", { limit: 1 });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(f.items.get(1)!.fields["System.Title"], "Local scalar edit");
+  assert.equal(f.items.get(1)!.relations!.length, 1);
+  assert.ok((await f.pm.get(root.id)).item.dependencies!.some((edge) => edge.id === peer.id));
+});
+
+test("round-3 read-back fences refuse missing and older Azure state without advancing agreement", async (t) => {
+  for (const outcome of ["missing", "older"] as const) await t.test(outcome, async (sub) => {
+    const f = await fixture(sub);
+    assert.equal((await f.command("import")).ok, true);
+    const item = await row(f.pm), originalBase = item.ado_sync_base;
+    f.items.get(1)!.fields["System.Title"] = "New remote title"; f.items.get(1)!.rev++;
+    let batches = 0;
+    f.afterBatch(async () => {
+      if (++batches === 1) f.response("workitemsbatch", { value: outcome === "missing" ? [] : [workItem(1)] });
+    });
+    const result = await f.command("import");
+    assert.equal(result.code, "ADO_CONFLICT", JSON.stringify(result));
+    const kept = (await f.pm.get(item.id)).item;
+    assert.equal(kept.title, "New remote title");
+    assert.equal(kept.ado_sync_base, originalBase);
+    assert.equal(kept.ado_rev, 1);
+  });
+  const f = await fixture(t, [workItem(1), workItem(2)]);
+  const config = { orgUrl: f.org, project: "Project", token: "synthetic-token" };
+  assert.equal((await f.command("import")).ok, true);
+  await assert.rejects(readLocalAgreement(f.pm, "fixture-missing", config), /disappeared/u);
+  const rows = (await f.pm.listAllComplete()).items, root = rows[0]!, peer = rows[1]!;
+  assert.equal((await readLocalAgreement(f.pm, root.id, config)).identities.size, 2);
+  await f.setFields(peer.id, { ado_org_url: "https://dev.azure.com/other" });
+  assert.equal((await readLocalAgreement(f.pm, root.id, config)).identities.size, 1);
+  await f.setFields(peer.id, { ado_org_url: f.org, ado_id: 1.5 });
+  assert.equal((await readLocalAgreement(f.pm, root.id, config)).identities.size, 1);
+  await f.setFields(root.id, { ado_project: "Other" });
+  await assert.rejects(readLocalAgreement(f.pm, root.id, config, root.updated_at), { exitCode: 4 });
 });

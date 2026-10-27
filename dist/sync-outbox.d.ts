@@ -66,10 +66,11 @@ export declare class SyncOutbox {
     /** Recover actual creation defaults rather than treating an unfinished link as a legacy base. */
     private creation;
     /** Reconcile a proven prior PATCH before treating its own effect as a competing writer. */
-    bases(remotes: readonly AdoWorkItem[], locals: readonly ItemMetadata[]): Promise<Map<string, {
+    recoverEffects(remotes: readonly AdoWorkItem[], locals: readonly ItemMetadata[]): Promise<Map<string, {
         original: Values;
         accepted: AdoWorkItem;
         fields: Record<string, unknown>;
+        revision: number;
     }>>;
     /** Find the stamped object before considering creation; never silently choose between duplicate markers. */
     private lookup;

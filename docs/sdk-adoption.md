@@ -40,9 +40,10 @@ Public inputs used:
 Results: 14 comparisons across 140 real items. Import/export/sync dry-run
 receipts and resolution plans match exactly on read-only copies, with identical
 authoritative bytes before and after. Actual import runs on separate writable
-copies; command receipts, final item values and history operation/author/patch
-projections match after normalizing only mutation timestamps. History length
-also matches. No public tracker contents or temporary fixture files are checked
+copies; command receipts, final item values and net history operation/author/patch
+projections match after normalizing mutation timestamps and patch path order.
+The candidate records two conditional events (scalar/provenance, then read-back
+agreement) where the baseline records one; the script asserts these counts. No public tracker contents or temporary fixture files are checked
 in.
 
 Intentional differences:
@@ -53,6 +54,9 @@ Intentional differences:
   error. Earlier remote writes can remain.
 - SDK update history messages use mandatory `bulk-item-transaction` markers in
   place of adapter prose; the differential asserts each expected message form.
+  Agreement publishes in a separate guarded final event; the net history patch
+  and author remain identical. The differential also excludes the newly stored
+  internal per-key witnessed revision coordinates from synced base values.
   SDK journals remain ignored runtime state.
 - Configured nested type folders now resolve instead of returning a scope
   refusal. The raw document hash is unchanged for existing supported items.
@@ -63,7 +67,8 @@ Intentional differences:
 records a pinned SDK limitation for the orchestrator to report upstream: an
 update's timestamp match also runs during its internal terminal close, after
 its preliminary write has changed the timestamp. The package uses separately matched SDK updates: scalars excluding agreement,
-a status-only close, then base/revision publication last. Each carries forward
+a status-only close, explicit mapped assignment completion when needed, then
+per-key read-back base/revision publication last. Each carries forward
 the preceding revision; crash recovery resumes with ordinary three-way sync.
 The original unguarded close workaround was rejected in review and replaced.
 A match consumed once per top-level update, or a match on a close mutation,

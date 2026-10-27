@@ -63,7 +63,7 @@ export declare function pmFields(values: Values, remote: AdoWorkItem, config: Ad
 /** Canonical recognized relations; opaque or out-of-scope links stay with the adapter. */
 export declare function relationValues(relations: readonly AdoRelation[], config: AdoConfig, identities: ReadonlyMap<number, string>): string[];
 /** Read actual local graph edges independently of a remote snapshot or proposed patch. */
-export declare function readLocalAgreement(pm: Pick<PmClient, "listAllComplete">, id: string, config: AdoConfig): Promise<{
+export declare function readLocalAgreement(pm: Pick<PmClient, "listAllComplete">, id: string, config: AdoConfig, expectedVersion?: string): Promise<{
     item: import("@unbrained/pm-cli/sdk").ListTreeItem | import("@unbrained/pm-cli/sdk").ListedItem;
     identities: Map<number, string>;
     values: {
@@ -77,6 +77,19 @@ export declare function readLocalAgreement(pm: Pick<PmClient, "listAllComplete">
 export declare function remoteAgreement(remote: AdoWorkItem, local: Values, config: AdoConfig, identities: ReadonlyMap<number, string>, imports: Readonly<Record<string, string>>, exports: Readonly<Record<string, string>>): Values;
 /** Compare a proven owned effect without claiming its unrelated remote fields were ever agreed. */
 export declare function recoveredField(local: unknown, remote: unknown, original: unknown, accepted: unknown): "local" | "remote" | "conflict";
+/** Evidence of an owned remote effect, kept separate from the agreed common base. */
+export interface OwnedEffect {
+    /** Local projection before the owned request. */
+    original: Values;
+    /** Accepted remote projection, whose unrelated keys are never common base. */
+    accepted: Values;
+    /** Scalar keys actually included in that request. */
+    keys: string[];
+    /** Revision asserted by the owned request; a later witnessed key retires this proof. */
+    revision: number;
+}
+/** Choose each key using only its witnessed base or proof of that exact owned scalar effect. */
+export declare function mergeSyncValues(local: Values, remote: Values, base: Values | undefined, effect?: OwnedEffect): Record<string, "equal" | "local" | "remote" | "conflict">;
 /** Execute the real REST transport; failures are converted to stable command receipts. */
 export declare function transport(method: string, url: string, body: string | undefined, headers: Readonly<Record<string, string>>): Promise<{
     status: number;

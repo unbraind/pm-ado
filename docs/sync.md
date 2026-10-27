@@ -112,8 +112,10 @@ Sync plans an import followed by an export per field, before changing either sid
 | Changed to the same value | Changed to the same value | Accept agreement |
 | Changed to different values | Changed to different values | Conflict with base/local/remote values |
 
-The base is the dedicated `ado_sync_base` snapshot from the last successful
-synchronization, not the latest edit timestamp. Without a base, matching fields
+The dedicated `ado_sync_base` stores the last actual read-back agreement for
+each key, independently of edit timestamps. Only matching post-operation SDK
+and Azure reads can advance a key; disagreement retains its prior common
+ancestor (or remains unknown in a versioned partial base). Without a base, matching fields
 bootstrap safely and differing fields conflict. Malformed base JSON fails with
 exit 2 (`ADO_USAGE`), naming the item and `ado_sync_base`.
 After reconciliation, sync asserts the current remote revision it just compared,
@@ -140,8 +142,9 @@ Sync's own link and relation writes advance its
 expected revision from their immutable transaction history. SDK transaction
 markers are recorded in update history messages. Terminal changes use a
 separately matched status-only SDK update after scalars, followed by a final
-matched base/revision publication. Agreement never advances ahead of durable
-close. Concurrent edits between any steps refuse persistence. Azure creation and PATCH use durable
+matched per-key read-back base publication. The acknowledged revision advances
+only on full agreement. Agreement never advances ahead of durable close or
+unimported relations. Concurrent edits between any steps refuse persistence. Azure creation and PATCH use durable
 intents and scoped operation markers; retries resolve pending export ownership
 before import pairing. See [conditional commits and recovery](sync-recovery.md)
 for the dispatch-ambiguity boundary and fault matrix.

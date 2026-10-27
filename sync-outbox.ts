@@ -208,9 +208,9 @@ export class SyncOutbox {
   }
 
   /** Reconcile a proven prior PATCH before treating its own effect as a competing writer. */
-  async bases(remotes: readonly AdoWorkItem[], locals: readonly ItemMetadata[]): Promise<Map<string, { original: Values; accepted: AdoWorkItem; fields: Record<string, unknown> }>> {
+  async recoverEffects(remotes: readonly AdoWorkItem[], locals: readonly ItemMetadata[]): Promise<Map<string, { original: Values; accepted: AdoWorkItem; fields: Record<string, unknown>; revision: number }>> {
     const directory = join(this.pmRoot, "transactions/pm-ado-sync");
-    const recovered = new Map<string, { original: Values; accepted: AdoWorkItem; fields: Record<string, unknown> }>();
+    const recovered = new Map<string, { original: Values; accepted: AdoWorkItem; fields: Record<string, unknown>; revision: number }>();
     let names: string[];
     try { names = await readdir(directory); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return recovered; throw error; }
@@ -230,7 +230,7 @@ export class SyncOutbox {
       this.validate(intent, local.id, "patch");
       const accepted = await this.client.request("GET", `/_apis/wit/workitems/${intent.remote}/revisions/${intent.revision + 1}?api-version=7.1&$expand=relations`) as AdoWorkItem;
       if (accepted.fields["System.History"] !== `pm-ado operation ${intent.key}`) continue;
-      recovered.set(local.id, { original: intent.base, accepted, fields: intent.fields });
+      recovered.set(local.id, { original: intent.base, accepted, fields: intent.fields, revision: intent.revision });
     }
     return recovered;
   }

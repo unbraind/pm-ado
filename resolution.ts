@@ -422,7 +422,7 @@ export class AdoResolutionService {
       }
       let readback: Awaited<ReturnType<typeof readLocalAgreement>>;
       const agreement = await advanceSyncBase({ expectedVersion, minimumRemoteRevision: intent?.expected_remote_revision ?? plan.remote.revision,
-        readLocal: async () => { readback = await readLocalAgreement(this.pm, plan.local.id, this.config); return readback; },
+        readLocal: async () => { readback = await readLocalAgreement(this.pm, plan.local.id, this.config, expectedVersion); return readback; },
         readRemote: async (local) => {
           const remote = await this.remote(plan.remote.id);
           this.scope(readback.item, remote);

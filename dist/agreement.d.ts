@@ -41,6 +41,8 @@ export interface AgreementResult {
     /** Native Azure read used by the agreement rule. */
     remote: RemoteAgreementRead;
 }
+/** Decode per-key read-back revision witnesses; legacy bases have no per-key coordinates. */
+export declare function readBaseRevisions(base: Values | undefined): Record<string, number>;
 /** Advance each key only from matching post-operation reads; acknowledge a revision only on full agreement. */
 export declare function advanceSyncBase(operations: AgreementOperations): Promise<AgreementResult>;
 //# sourceMappingURL=agreement.d.ts.map

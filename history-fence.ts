@@ -92,7 +92,7 @@ export class NativeWriteFence {
     return this.commit(id, options, transactionId, expected, this.author, this.sdk.deriveMutationTransactionId(JSON.stringify(options)));
   }
 
-  /** Bind SDK journal identity to the immutable inspected head and payload, independent of timestamps. */
+  /** Bind SDK journal identity to the immutable inspected head, independent of timestamps. */
   private journalId(transactionId: string, expected: NativeHead, payload?: string): string {
     return `${transactionId}-${this.sdk.deriveMutationTransactionId(JSON.stringify(payload === undefined ? expected : { ...expected, payload }))}`;
   }

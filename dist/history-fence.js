@@ -82,7 +82,7 @@ export class NativeWriteFence {
         await this.assertCurrent(id);
         return this.commit(id, options, transactionId, expected, this.author, this.sdk.deriveMutationTransactionId(JSON.stringify(options)));
     }
-    /** Bind SDK journal identity to the immutable inspected head and payload, independent of timestamps. */
+    /** Bind SDK journal identity to the immutable inspected head, independent of timestamps. */
     journalId(transactionId, expected, payload) {
         return `${transactionId}-${this.sdk.deriveMutationTransactionId(JSON.stringify(payload === undefined ? expected : { ...expected, payload }))}`;
     }

@@ -308,3 +308,11 @@ default evidence; ignoring foreign local reversion overwrites an edit; and
 skipping proven native assignment recovery prevents convergence. Restoring
 all five passes the same five cases. Receipts are recorded on the adoption
 item. The public-tracker differential remains 14/14 over 140 real items.
+
+
+Additional focused cases cover empty-assignment close recovery, per-key revision
+fencing without `ado_rev`, removal of a server-default relation during explicit
+creation export, and a pending inverse endpoint that has not yet been read back
+on Azure. The last case refuses sync without a PATCH or tracker mutation, then
+converges after the matching remote inverse is observed. These use real SDK
+trackers; expected native behavior is not hand-written into the fixture.

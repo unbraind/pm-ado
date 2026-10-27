@@ -2683,3 +2683,45 @@ test("unassigned terminal imports resume an interrupted close without inventing 
   assert.equal(JSON.parse(String(settled.ado_sync_base)).status, "closed");
   assert.ok(f.requests.every((request) => request.method !== "PATCH"));
 });
+
+
+test("creation recovery removes a server-default relation absent from the explicit export", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const created = await f.pm.create({ title: "Explicit export without links", type: "Task" });
+  f.afterCreate(async () => {
+    f.items.get(2)!.relations = [{ rel: "System.LinkTypes.Related", url: `${f.org}/_apis/wit/workItems/1` }];
+  });
+  const result = await f.command("export");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal((await f.pm.get(created.item.id)).item.ado_id, 2);
+  assert.deepEqual(f.items.get(2)!.relations, []);
+  assert.ok(f.requests.some((request) => request.method === "PATCH" && (request.body as JsonPatchOperation[]).some((operation) => operation.op === "remove" && operation.path === "/relations/0")));
+  const writes = f.requests.filter((request) => request.method === "PATCH" || request.path.includes("/workitems/$")).length;
+  assert.equal((await f.command("sync")).ok, true);
+  assert.equal(f.requests.filter((request) => request.method === "PATCH" || request.path.includes("/workitems/$")).length, writes);
+});
+
+test("pending inverse endpoint refuses unagreed local relation ownership until Azure read-back matches", async (t) => {
+  const f = await fixture(t, [workItem(1), workItem(2)]);
+  assert.equal((await f.command("import")).ok, true);
+  const rows = (await f.pm.listAllComplete()).items;
+  const root = rows.find((item) => item.ado_id === 1)!, child = rows.find((item) => item.ado_id === 2)!;
+  f.items.get(1)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Forward", url: `${f.org}/_apis/wit/workItems/2` }];
+  f.items.get(1)!.rev++;
+  assert.equal((await f.command("import", { limit: 1 })).ok, true);
+  assert.equal((await f.pm.get(child.id)).item.parent, root.id);
+  assert.ok((await f.pm.get(child.id)).item.ado_sync_intent);
+  f.response("wiql", { workItems: [{ id: 2 }] });
+  const before = snapshot(f.pmRoot);
+  const resumed = await f.command("sync");
+  assert.equal(resumed.code, "ADO_CONFLICT", JSON.stringify(resumed));
+  assert.ok(resumed.conflicts[0]!.fields.relations);
+  assert.deepEqual(snapshot(f.pmRoot), before);
+  assert.deepEqual(f.items.get(2)!.relations, []);
+  assert.ok(f.requests.every((request) => request.method !== "PATCH"));
+  f.items.get(2)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Reverse", url: `${f.org}/_apis/wit/workItems/1` }];
+  f.items.get(2)!.rev++;
+  assert.equal((await f.command("sync")).ok, true);
+  assert.equal((await f.pm.get(child.id)).item.ado_sync_intent, undefined);
+});

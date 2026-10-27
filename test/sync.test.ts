@@ -5,6 +5,8 @@ import { execFile, fork } from "node:child_process";
 import { chmodSync, cpSync, lstatSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
+import type * as Package from "../index.ts";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
@@ -2986,4 +2988,151 @@ test("round-4 canonical status aliases survive an interrupted close and resume",
   assert.equal(settled.ado_sync_intent, undefined);
   assert.equal(f.items.get(1)!.fields["System.State"], "Closed");
   assert.equal((await f.command("sync")).ok, true);
+});
+
+test("round-5 Done mapped to CLOSED applies and replays through normalized agreement", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm);
+  f.items.get(1)!.fields["System.State"] = "Done";
+  f.items.get(1)!.fields["System.Title"] = "Reviewed Done title"; f.items.get(1)!.rev++;
+  const previous = process.env.ADO_STATUS_MAP;
+  process.env.ADO_STATUS_MAP = JSON.stringify({ Done: "CLOSED" });
+  try {
+    const service = resolver(f), plan = choices(await service.plan(item.id), "remote");
+    assert.equal((await service.apply(plan)).ok, true);
+    const before = snapshot(f.pmRoot);
+    assert.equal((await service.apply(plan)).replayed, true);
+    assert.deepEqual(snapshot(f.pmRoot), before);
+    assert.equal((await f.pm.get(item.id)).item.status, "closed");
+    assert.equal(f.items.get(1)!.fields["System.State"], "Done");
+    assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 0);
+  } finally { if (previous === undefined) delete process.env.ADO_STATUS_MAP; else process.env.ADO_STATUS_MAP = previous; }
+});
+
+test("round-5 all configured mappings and SDK-accepted status spellings choose apply and replay without remote reversal", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm);
+  await f.pm.schemaAddStatus("review_stage", { alias: ["Ready To Review", "ready-to-verify"], role: ["active"] });
+  await f.pm.schemaAddStatus("constructor", { alias: ["Own Constructor"], role: ["active"] });
+  const settings = await readSettings(f.pmRoot), registry = resolveRuntimeStatusRegistry(settings.schema);
+  const old = process.env.ADO_STATUS_MAP;
+  let cases = 0;
+  try {
+    for (const [wire, target] of Object.entries({ ...IMPORT_STATE_MAP, "Awaiting Review": "review_stage", constructor: "constructor" })) {
+      const accepted = new Set([target, ...[...registry.alias_to_id].filter(([, canonical]) => canonical === target).map(([alias]) => alias)]);
+      for (const alias of [...accepted]) for (const spelling of [alias, alias.toUpperCase(), ` \t${alias}\u00a0`, alias.replaceAll("_", "-")]) {
+        if (runtimeSdk.normalizeStatusInput(spelling, registry) !== target) continue;
+        process.env.ADO_STATUS_MAP = JSON.stringify({ [wire]: spelling });
+        const remote = f.items.get(1)!;
+        remote.fields["System.State"] = wire; remote.fields["System.Title"] = `Reviewed alias ${++cases}`; remote.rev++;
+        await f.setFields(item.id, { ado_sync_base: JSON.stringify({ ado_base_partial: 1, relations: [] }) });
+        const service = resolver(f), plan = choices(await service.plan(item.id), "remote");
+        assert.equal((await service.apply(JSON.parse(JSON.stringify(plan)))).ok, true, `${wire}: ${spelling}`);
+        assert.equal((await f.pm.get(item.id)).item.status, target, `${wire}: native status`);
+        const before = snapshot(f.pmRoot);
+        assert.equal((await service.apply(plan)).replayed, true, `${wire}: replay`);
+        assert.deepEqual(snapshot(f.pmRoot), before, `${wire}: replay must be a no-op`);
+        assert.equal(remote.fields["System.State"], wire, `${wire}: no reverse-map substitution`);
+      }
+    }
+  } finally { if (old === undefined) delete process.env.ADO_STATUS_MAP; else process.env.ADO_STATUS_MAP = old; }
+  assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 0);
+  t.diagnostic(`${cases} configured-map/SDK spelling cases; choose/apply/replay; no PATCH or remote state reversal`);
+});
+
+test("round-5 JSON and TOON plans, artifact apply, ID prefixes and map aliases share normalized coordinates", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm), remote = f.items.get(1)!;
+  remote.fields["System.State"] = "Done"; remote.fields["System.Title"] = " \tReviewed CLI title\u00a0"; remote.rev++;
+  f.env.ADO_STATUS_MAP = JSON.stringify({ Done: " CLOSED " });
+  f.env.ADO_EXPORT_STATE_MAP = JSON.stringify({ " CLOSED ": "Done" });
+  const id = ` #${item.id.toUpperCase()} `;
+  const json = await f.host(["ado", "resolve-plan", "--item", id, "--json"]);
+  assert.equal(json.code, 0, json.stdout + json.stderr);
+  const plan = choices((JSON.parse(json.stdout) as { plan: ResolutionPlan }).plan, "remote");
+  assert.equal(plan.local.id, item.id);
+  assert.equal(plan.fields.find((field) => field.field === "status")!.remote, resolutionDigest("closed"));
+  const toon = await f.host(["ado", "resolve-plan", "--item", item.id.slice("fixture-".length), "--output-format", "toon"]);
+  assert.equal(toon.code, 0, toon.stdout + toon.stderr); assert.ok(toon.stdout.includes(resolutionDigest("closed")));
+  const artifact = join(f.root, "normalized-plan.json"); writeFileSync(artifact, JSON.stringify(plan));
+  // Equivalent SDK spellings in configuration cannot reinterpret the semantic plan.
+  f.env.ADO_STATUS_MAP = JSON.stringify({ Done: "closed" });
+  f.env.ADO_EXPORT_STATE_MAP = JSON.stringify({ closed: "Done" });
+  const applied = await f.host(["ado", "resolve-apply", "--artifact", artifact, "--json"]);
+  assert.equal(applied.code, 0, applied.stdout + applied.stderr);
+  const before = snapshot(f.pmRoot);
+  plan.local.id = ` #${item.id.toUpperCase()} `; writeFileSync(artifact, JSON.stringify(plan));
+  const replayed = await f.host(["ado", "resolve-apply", "--artifact", artifact, "--output-format", "toon"]);
+  assert.equal(replayed.code, 0, replayed.stdout + replayed.stderr); assert.match(replayed.stdout, /replayed: true/u);
+  assert.deepEqual(snapshot(f.pmRoot), before);
+  const settled = (await f.pm.get(item.id)).item; assert.equal(settled.status, "closed"); assert.equal(settled.title, "Reviewed CLI title");
+  assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 0);
+});
+
+test("round-5 actual released version-2 plans pending intents and receipts remain readable and replayable", async (t) => {
+  const released = join(repo, "test/fixtures/normalization/released-2026.10.26");
+  const provenance = JSON.parse(readFileSync(join(released, "provenance.json"), "utf8")) as { version: string; integrity: string };
+  assert.equal(provenance.version, "2026.10.26"); assert.match(provenance.integrity, /^sha512-/u);
+  for (const state of ["prepared", "settled"]) await t.test(state, async (sub) => {
+    const root = mkdtempSync(join(tmpdir(), "ado-legacy-v2-")); sub.after(() => rmSync(root, { recursive: true, force: true }));
+    const pmRoot = join(root, ".agents/pm"); cpSync(join(released, state), pmRoot, { recursive: true });
+    const installed = join(pmRoot, "extensions/pm-ado"); mkdirSync(installed, { recursive: true });
+    cpSync(join(repo, "dist"), join(installed, "dist"), { recursive: true }); cpSync(join(repo, "manifest.json"), join(installed, "manifest.json"));
+    mkdirSync(join(root, "node_modules/@unbrained"), { recursive: true }); symlinkSync(join(repo, "node_modules/@unbrained/pm-cli"), join(root, "node_modules/@unbrained/pm-cli"), "junction");
+    const pm = new PmClient({ cwd: root, pmRoot, author: "fixture-agent" });
+    const plan = JSON.parse(readFileSync(join(released, "plan.json"), "utf8")) as ResolutionPlan;
+    assert.equal(plan.normalization, undefined);
+    const remote = JSON.parse(readFileSync(join(released, "remote.json"), "utf8")) as AdoWorkItem;
+    const config = { orgUrl: "https://fixture.invalid/organization", project: "Project", token: "synthetic-token" };
+    let writes = 0;
+    const client = new AdoClient(config, async (method) => { if (method === "PATCH") writes++; return { status: 200, body: JSON.stringify({ value: [remote] }) }; });
+    const previous = process.env.ADO_STATUS_MAP, cwd = process.cwd(); process.env.ADO_STATUS_MAP = JSON.stringify({ Done: "CLOSED" }); process.chdir(root);
+    try {
+      const historyPath = join(pmRoot, "history", `${plan.local.id}.jsonl`), originalHistory = readFileSync(historyPath, "utf8");
+      const service = new AdoResolutionService(pmRoot, "fixture-agent", pm, client, config, runtimeSdk);
+      assert.equal((await service.apply(plan)).ok, true);
+      const settled = (await pm.get(plan.local.id)).item; assert.equal(settled.status, "closed"); assert.equal(settled.ado_resolution_intent, undefined);
+      assert.ok(readFileSync(historyPath, "utf8").startsWith(originalHistory), "released history stays byte-prefix intact");
+      const before = snapshot(pmRoot);
+      assert.equal((await service.apply(plan)).replayed, true); assert.deepEqual(snapshot(pmRoot), before);
+      assert.equal(writes, 0);
+    } finally { process.chdir(cwd); if (previous === undefined) delete process.env.ADO_STATUS_MAP; else process.env.ADO_STATUS_MAP = previous; }
+  });
+});
+
+
+test("round-5 injected SDK normalization and canonical scope work without a package module link", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.command("import")).ok, true);
+  const item = await row(f.pm), remote = f.items.get(1)!;
+  const isolated = mkdtempSync(join(tmpdir(), "ado-injected-runtime-"));
+  t.after(() => rmSync(isolated, { recursive: true, force: true }));
+  cpSync(join(repo, "dist"), join(isolated, "dist"), { recursive: true });
+  writeFileSync(join(isolated, "package.json"), JSON.stringify({ type: "module" }));
+  const request = createRequire(join(isolated, "dist/index.js"));
+  assert.throws(() => request.resolve("@unbrained/pm-cli/sdk"), /Cannot find module/u);
+  const copied = request(join(isolated, "dist/index.js")) as typeof Package;
+  const config = { orgUrl: f.org, project: "Project", token: "synthetic-token" };
+  const padded = { ...config, orgUrl: ` ${f.org}/// `, project: " Project " };
+  assert.equal(copied.resolutionScopeReference(padded), copied.resolutionScopeReference(config));
+  assert.notEqual(copied.resolutionScopeReference(padded, true), copied.resolutionScopeReference(config, true));
+  const old = process.env.ADO_STATUS_MAP; process.env.ADO_STATUS_MAP = JSON.stringify({ Done: " CLOSED " });
+  try {
+    remote.fields["System.State"] = "Done"; remote.fields["System.Title"] = " Injected API title "; remote.rev++;
+    const client = new copied.AdoClient(config, transport);
+    const producer = new copied.AdoResolutionService(f.pmRoot, "fixture-agent", f.pm, client, padded, runtimeSdk);
+    const consumer = new copied.AdoResolutionService(f.pmRoot, "fixture-agent", f.pm, client, config, runtimeSdk);
+    const plan = choices(await producer.plan(` #${item.id.toUpperCase()} `), "remote");
+    assert.equal((await consumer.apply(plan)).ok, true);
+    const before = snapshot(f.pmRoot);
+    assert.equal((await producer.apply(plan)).replayed, true);
+    assert.deepEqual(snapshot(f.pmRoot), before);
+    const settled = (await f.pm.get(item.id)).item;
+    assert.equal(settled.status, "closed"); assert.equal(settled.title, "Injected API title");
+    assert.equal(remote.fields["System.State"], "Done");
+    assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 0);
+  } finally { if (old === undefined) delete process.env.ADO_STATUS_MAP; else process.env.ADO_STATUS_MAP = old; }
 });

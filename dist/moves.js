@@ -1,3 +1,4 @@
+import { normalizeItemReference, normalizeScopeValue } from "./normalization.js";
 import { AdoClient, buildUpdatePatch, relationTargetId, stripTrailingSlashes } from "./index.js";
 import { ContractRefusal, discoverProjectContract } from "./contracts.js";
 /** Hard bounds: one type contract, two batch reads and at most fifty validations. */
@@ -63,19 +64,21 @@ function boundary(left, right) {
  * through revision-checked PATCH validateOnly=true, bypassRules=false. No changes are saved.
  * Single-item validations are observations, not a transaction or a future permission grant.
  */
-export async function simulateMove(config, request, options) {
+export async function simulateMove(config, request, options, normalization) {
     try {
+        config = { ...config, orgUrl: normalizeScopeValue(config.orgUrl, true), project: normalizeScopeValue(config.project) };
         const paths = [options.areaPath, options.iterationPath].filter((path) => path !== undefined);
         if (paths.length === 0 || paths.some((path) => typeof path !== "string" || path.length > 1024 || path.split("\\")[0] !== config.project || path.split("\\").some((part) => !part.trim() || [".", ".."].includes(part))))
             throw new MoveRefusal("configuration");
-        if (options.ids.length === 0 || options.ids.length > MOVE_LIMITS.items || new Set(options.ids).size !== options.ids.length)
+        const selectedIds = options.ids.map((id) => normalizeItemReference(id, normalization));
+        if (selectedIds.length === 0 || selectedIds.length > MOVE_LIMITS.items || new Set(selectedIds).size !== selectedIds.length)
             throw new MoveRefusal("selection");
-        const selected = options.ids.map((id) => options.items.find((item) => item.id === id));
+        const selected = selectedIds.map((id) => options.items.find((item) => normalizeItemReference(item.id, normalization) === id));
         if (selected.some((item) => !item || !Number.isSafeInteger(item.ado_id) || Number(item.ado_id) <= 0) || new Set(selected.map((item) => item.ado_id)).size !== selected.length)
             throw new MoveRefusal("selection");
         const local = selected;
-        if (local.some((item) => item.ado_org_url !== stripTrailingSlashes(config.orgUrl) || item.ado_project !== config.project ||
-            options.items.filter((entry) => entry.ado_id === item.ado_id && entry.ado_org_url === item.ado_org_url && entry.ado_project === item.ado_project).length !== 1))
+        if (local.some((item) => normalizeScopeValue(String(item.ado_org_url ?? ""), true) !== normalizeScopeValue(config.orgUrl, true) || normalizeScopeValue(String(item.ado_project ?? "")) !== normalizeScopeValue(config.project) ||
+            options.items.filter((entry) => entry.ado_id === item.ado_id && normalizeScopeValue(String(entry.ado_org_url ?? ""), true) === normalizeScopeValue(String(item.ado_org_url ?? ""), true) && normalizeScopeValue(String(entry.ado_project ?? "")) === normalizeScopeValue(String(item.ado_project ?? ""))).length !== 1))
             throw new MoveRefusal("selection");
         local.sort((a, b) => a.id < b.id ? -1 : Number(a.id > b.id));
         let requests = 0;
@@ -174,7 +177,23 @@ export async function runMoveCommand(ctx) {
         const project = option("project"), items = option("items");
         if (!project || !items || !ctx.sdk?.client || !process.env.ADO_ORG_URL?.trim() || !process.env.ADO_TOKEN?.trim())
             throw new MoveRefusal("configuration");
-        return await simulateMove({ orgUrl: process.env.ADO_ORG_URL.trim(), project, token: process.env.ADO_TOKEN.trim() }, moveTransport, { items: (await ctx.sdk.client.listAllComplete()).items, ids: items.split(","), areaPath: option("area-path"), iterationPath: option("iteration-path"), type: option("type"), expectedFingerprint: option("expect-fingerprint") });
+        const references = items.split(","), client = ctx.sdk.client;
+        if (references.length === 0 || references.length > MOVE_LIMITS.items)
+            throw new MoveRefusal("selection");
+        const snapshot = (await client.listAllComplete()).items;
+        const canonical = new Map(snapshot.map((item) => [item.id, item.id]));
+        for (const reference of references) {
+            try {
+                canonical.set(reference, (await client.get(reference)).item.id);
+            }
+            catch (error) {
+                if (ctx.sdk.isItemNotFoundError(error))
+                    throw new MoveRefusal("selection");
+                throw error;
+            }
+        }
+        const normalization = { resolveReference: (value) => canonical.get(value) ?? value };
+        return await simulateMove({ orgUrl: process.env.ADO_ORG_URL.trim(), project, token: process.env.ADO_TOKEN.trim() }, moveTransport, { items: snapshot, ids: references, areaPath: option("area-path"), iterationPath: option("iteration-path"), type: option("type"), expectedFingerprint: option("expect-fingerprint") }, normalization);
     }
     catch (error) {
         const refusal = error instanceof MoveRefusal || error instanceof ContractRefusal ? error : new MoveRefusal("remote_failure");

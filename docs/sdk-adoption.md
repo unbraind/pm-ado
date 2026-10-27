@@ -38,7 +38,8 @@ Public inputs used:
 | `unbraind/pm-jira` | `2fd1537c8d0df5755d0d4ba86f06eda59a3c644e` | 108 |
 
 Results: 14 comparisons across 140 real items. Import/export/sync dry-run
-receipts and resolution plans match exactly on read-only copies, with identical
+receipts and resolution plans match on read-only copies after excluding the documented
+optional canonical-coordinate marker, with identical
 authoritative bytes before and after. Actual import runs on separate writable
 copies; command receipts, final item values and net history operation/author/patch
 projections match after normalizing mutation timestamps and patch path order.
@@ -60,6 +61,9 @@ Intentional differences:
   whose final synced values and author remain identical. The differential also excludes the newly stored
   internal per-key witnessed revision coordinates from synced base values.
   SDK journals remain ignored runtime state.
+- New resolution plans carry the optional `pm-ado/fields/1` canonical-coordinate
+  marker; the differential asserts and removes only this additional marker.
+  Status aliases and mapping spellings now compare as their native SDK values.
 - Configured nested type folders now resolve instead of returning a scope
   refusal. The raw document hash is unchanged for existing supported items.
 
@@ -112,3 +116,50 @@ The initial CI evidence above belongs to the initial adoption commits. The
 review repairs, durable outbox, process-crash matrix and remaining provider
 constraint are documented in [sync recovery](sync-recovery.md). New gate and
 revert evidence is appended to the adoption item; earlier evidence is retained.
+
+
+## Round-5 normalization class
+
+`normalization.ts` exports the shared field functions; `sync.ts` projections,
+three-way merge, agreement read-back and pending recovery, `resolution.ts`
+plan/apply/replay, contract discovery, move selection and scope checks call
+them. `remoteScalarValues` is the shared read-back projection. Import aliases
+are independent of reverse export mappings. New plans canonicalize semantic
+field coordinates and mapping interpretation, while released plans/intents
+and wire identities preserve their original integrity coordinates.
+
+Adversarial coverage includes every configured builtin mapping, custom status
+aliases (including a prototype-like status name), SDK-accepted case, padding,
+nonbreaking whitespace and hyphen spellings: 120 choose/apply/replay cases,
+with no Azure PATCH or state reversal. Native SDK write-oracle tests cover
+scalar clear tokens, literal Unicode/whitespace, tag ordering and priorities.
+JSON/TOON plans and replay accept native prefixed/hash-marker ID spellings;
+read-only contracts and moves also work without a module link in non-git
+trackers. Explicit SDK injection also owns normalization without a package module
+link; new plan scope fingerprints compare canonical organization/project values,
+while released fingerprints and outbox/wire identities stay literal. The packed installation matrix repeats resolution apply/replay for
+the import-only `Done` alias. Actual released prepared/settled fixtures verify
+old-artifact reads, pending recovery and replay without rewriting history.
+
+[pm-ado-sdk-scalar-normalization](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-sdk-scalar-normalization.toon)
+records the missing public `isLegacyNoneToken` or
+`normalizeAssigneeMutationInput` export. SDK trimming is public; the SDK's
+assignment clear-token predicate is private. This small centralized adapter
+predicate is verified against actual native writes. The orchestrator files
+the upstream API request; neither original audit replacement is deferred.
+
+
+Function-only normalization revert evidence (rebuild before execution):
+
+| Reverted behavior | Selected regression result | Restored result |
+| --- | --- | --- |
+| Status normalizer returns the input spelling | 3 failed / 3: Done/CLOSED read-back, SDK alias property, host contract | 5/5 combined status/ID cases pass |
+| ID normalizer returns the operator spelling | 1 failed / 2: host move aliases; artifact path independently uses native lookup | 5/5 combined status/ID cases pass |
+| Scope normalizer returns the input spelling | 4 failed / 4: scalar oracle, contract, moves, injected SDK | 4/4 pass |
+| Agreement raw-ID projection falls back to package SDK lookup | 1 failed / 1: isolated runtime with explicit native SDK injection | 4/4 combined scope/injection cases pass |
+
+Final focused normalization/API checkpoint: 7/7 pass, including the unchanged
+published consumer under Node and Bun; the complete new normalizer module
+measures 100% lines, branches and functions. The linked spelling suite separately
+passes 10/10 tests and all 120 choose/apply/replay cases. Full package coverage
+retains its independent statement gate and unchanged 100% thresholds.

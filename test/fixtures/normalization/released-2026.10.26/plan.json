@@ -1,0 +1,84 @@
+{
+  "schema": "pm-ado/resolution/2",
+  "scope": {
+    "ref": "285c9fc78e9d6a973c37f584d982d426d3def6ca7300135a0fb0eed0028a1a00"
+  },
+  "local": {
+    "id": "fixture-p56n",
+    "revision": "b8136e41e36260632c2912630621ef5ebdca8e3d876245c9862301b69bb2fe0e"
+  },
+  "remote": {
+    "id": 1,
+    "revision": 2,
+    "digest": "491f8a3162cbdac98f86a54553e642093fce8cd67ec2f2060d3023cdbcb18d23"
+  },
+  "fields": [
+    {
+      "field": "title",
+      "base": "5a4d721c7876da0e3ba06d8c074f350747d2da230c9b09eb05a116467393c1f3",
+      "local": "5a4d721c7876da0e3ba06d8c074f350747d2da230c9b09eb05a116467393c1f3",
+      "remote": "5bed737b51be7482c2f92ece64f6840f523f4a6aba1668a7ac63b34af966e40a",
+      "conflict": false
+    },
+    {
+      "field": "description",
+      "base": "ebc7bf40f12e237ea22047135a6283ad553d28145e437123173175174e8a40c0",
+      "local": "ebc7bf40f12e237ea22047135a6283ad553d28145e437123173175174e8a40c0",
+      "remote": "ebc7bf40f12e237ea22047135a6283ad553d28145e437123173175174e8a40c0",
+      "conflict": false
+    },
+    {
+      "field": "status",
+      "base": "35ff74aeea25311f4fe759a6b762c8cd41a79adb23dd5615b92cf215175a63e5",
+      "local": "35ff74aeea25311f4fe759a6b762c8cd41a79adb23dd5615b92cf215175a63e5",
+      "remote": "a8519c42d78eadafc0d8e243adf20d076e5ca3ba6e9fb79d0ad31fcf842dd38e",
+      "conflict": false
+    },
+    {
+      "field": "priority",
+      "base": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35",
+      "local": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35",
+      "remote": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35",
+      "conflict": false
+    },
+    {
+      "field": "tags",
+      "base": "526090baae76b59408ecc41ac4aced809b2701723b25ca5bcddc82d474ccd4c2",
+      "local": "526090baae76b59408ecc41ac4aced809b2701723b25ca5bcddc82d474ccd4c2",
+      "remote": "526090baae76b59408ecc41ac4aced809b2701723b25ca5bcddc82d474ccd4c2",
+      "conflict": false
+    },
+    {
+      "field": "assignee",
+      "base": "2d685ef632b1612294979295b7922e3c697245e5c318222f47c702a2e03d47ad",
+      "local": "2d685ef632b1612294979295b7922e3c697245e5c318222f47c702a2e03d47ad",
+      "remote": "2d685ef632b1612294979295b7922e3c697245e5c318222f47c702a2e03d47ad",
+      "conflict": false
+    },
+    {
+      "field": "ado_area_path",
+      "base": "1b0877a09b80a8a3ae510b59ac56e0fe999b5d1e49e919bfde85f8bd7c85eace",
+      "local": "1b0877a09b80a8a3ae510b59ac56e0fe999b5d1e49e919bfde85f8bd7c85eace",
+      "remote": "1b0877a09b80a8a3ae510b59ac56e0fe999b5d1e49e919bfde85f8bd7c85eace",
+      "conflict": false
+    },
+    {
+      "field": "ado_iteration_path",
+      "base": "017f90f58a567b67de57349ac784175758b1b0a28c8ad4c3c857ac08466cc332",
+      "local": "017f90f58a567b67de57349ac784175758b1b0a28c8ad4c3c857ac08466cc332",
+      "remote": "017f90f58a567b67de57349ac784175758b1b0a28c8ad4c3c857ac08466cc332",
+      "conflict": false
+    }
+  ],
+  "mapping": "44d2837583437892690adf8df0832fc89e25ecb3581b537679e983635d396a4e",
+  "choices": [
+    {
+      "field": "title",
+      "take": "remote"
+    },
+    {
+      "field": "status",
+      "take": "remote"
+    }
+  ]
+}

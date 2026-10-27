@@ -234,3 +234,14 @@ test("adversarial duplicate type metadata cannot exceed the total request budget
   assert.equal(f.calls.length, MOVE_LIMITS.requests);
   assert.ok(f.calls.every((call) => call.method === "GET"));
 });
+
+test("round-5 move IDs use host SDK prefix case and hash-marker normalization without a module link", async (t) => {
+  const f = await host(t), id = f.options.ids[0]!;
+  for (const project of ["Example", " Example "]) for (const reference of [id.toUpperCase(), ` #${id.toUpperCase()} `, id.slice("fixture-".length)]) {
+    const result = await f.command({ project, items: reference, areaPath: "Example\\New" });
+    assert.equal(result.ok, true, JSON.stringify(result)); assert.equal(result.rows[0]!.id, id);
+  }
+  const before = f.calls.length;
+  const duplicate = await f.command({ project: "Example", items: `${id}, #${id.toUpperCase()}`, areaPath: "Example\\New" });
+  assert.equal(duplicate.code, "selection"); assert.equal(f.calls.length, before);
+});

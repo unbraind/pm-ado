@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { CommandHandlerContext } from "@unbrained/pm-cli/sdk/authoring";
 import type { ItemMetadata, SchemaListResult } from "@unbrained/pm-cli/sdk";
 import { CommandError, EXIT_CODE, RELATION_MAP, STATE_MAP, stripTrailingSlashes, type AdoConfig, type AdoTransport } from "./index.ts";
+import { normalizeStatusValue, normalizeStateMaps, normalizeScopeValue, type StatusReferenceNormalization, type ValueNormalization } from "./normalization.ts";
 import { ADO_FIELD_MAP, IMPORT_STATE_MAP, azureFields, localValues, stateMap } from "./sync.ts";
 
 /** Stable refusal vocabulary for SDK callers and host-rendered CLI results. */
@@ -129,6 +130,8 @@ export interface ContractOptions {
   importStates?: Readonly<Record<string, string>>;
   /** Optional complete local snapshot supplied by the host SDK. */
   items?: readonly ItemMetadata[];
+  /** Native status normalization, including custom aliases and host-owned registry lookup. */
+  normalization?: ValueNormalization | StatusReferenceNormalization;
 }
 
 /** Fail closed when remote metadata no longer has the documented shape. */
@@ -181,6 +184,7 @@ function canonical(value: unknown): unknown {
  * A schema fingerprint covers selected remote metadata, excluding tracker contents and maps.
  */
 export async function discoverProjectContract(config: AdoConfig, request: AdoTransport, options: ContractOptions = {}): Promise<ProjectContract> {
+  config = { ...config, orgUrl: normalizeScopeValue(config.orgUrl, true), project: normalizeScopeValue(config.project) };
   let org: URL;
   try { org = new URL(config.orgUrl); }
   catch { throw new ContractRefusal("configuration", "Set ADO_ORG_URL to an absolute HTTPS organization URL.", EXIT_CODE.usage); }
@@ -249,8 +253,8 @@ export async function discoverProjectContract(config: AdoConfig, request: AdoTra
     if (previous) previous.count++;
     else issues.push({ code, target, count: 1, remedy });
   };
-  const exportStates = options.exportStates ?? STATE_MAP;
-  const importStates = options.importStates ?? IMPORT_STATE_MAP;
+  const { imports: importStates, exports: exportStates } = normalizeStateMaps({ imports: options.importStates ?? IMPORT_STATE_MAP, exports: options.exportStates ?? STATE_MAP }, options.normalization);
+  const localStatuses = options.localStatuses?.map((status) => normalizeStatusValue(status, options.normalization));
   for (const type of types) {
     if (type.disabled) issue("item_type", type.name, "Select an enabled Azure work item type.");
     for (const [local, ref] of Object.entries(ADO_FIELD_MAP)) {
@@ -265,7 +269,7 @@ export async function discoverProjectContract(config: AdoConfig, request: AdoTra
       if (field.writable && field.required && field.default === null && !Object.values(ADO_FIELD_MAP).includes(field.ref)) issue("required_unmapped", `${type.name}/${field.ref}`, "Supply a process default or add an explicit adapter mapping for this required field.");
     }
     for (const [status, state] of Object.entries(exportStates)) if (!type.states.includes(state)) issue("export_state", `${type.name}/${status}`, "Configure ADO_EXPORT_STATE_MAP with a state exposed by this type.");
-    for (const state of type.states) if (!Object.hasOwn(importStates, state) || (options.localStatuses !== undefined && !options.localStatuses.includes(importStates[state]))) issue("import_state", `${type.name}/${state}`, "Configure ADO_STATUS_MAP for this Azure state using a status in the local SDK schema.");
+    for (const state of type.states) if (!Object.hasOwn(importStates, state) || (localStatuses !== undefined && !localStatuses.includes(importStates[state]))) issue("import_state", `${type.name}/${state}`, "Configure ADO_STATUS_MAP for this Azure state using a status in the local SDK schema.");
   }
   for (const ref of Object.keys(RELATION_MAP)) {
     const relation = relations.find((entry) => entry.ref === ref);
@@ -278,8 +282,9 @@ export async function discoverProjectContract(config: AdoConfig, request: AdoTra
     if (options.type !== undefined && typeName !== options.type && enabledTypes.get(typeName) === true) { skippedItems++; continue; }
     const type = types.find((entry) => entry.name === typeName && !entry.disabled);
     if (!type) { issue("item_type", typeName, "Select or map an enabled Azure type for these tracker items."); continue; }
-    if (!Object.hasOwn(exportStates, item.status)) { issue("export_state", `${typeName}/${item.status}`, "Configure ADO_EXPORT_STATE_MAP for this local status."); continue; }
-    const values = azureFields(localValues(item), Object.keys(ADO_FIELD_MAP), exportStates);
+    const status = normalizeStatusValue(item.status, options.normalization);
+    if (!Object.hasOwn(exportStates, status)) { issue("export_state", `${typeName}/${item.status}`, "Configure ADO_EXPORT_STATE_MAP for this local status."); continue; }
+    const values = azureFields({ ...localValues(item, false), status }, Object.keys(ADO_FIELD_MAP), exportStates, false);
     for (const field of type.fields) {
       if (!Object.hasOwn(values, field.ref)) continue;
       const value = values[field.ref];
@@ -309,8 +314,16 @@ export async function runContractCommand(ctx: CommandHandlerContext) {
     const pm = ctx.sdk?.client;
     if (checkTracker && pm === undefined) throw new ContractRefusal("configuration", "Use a host-bound pm SDK to read the complete tracker, or omit --check-tracker.", EXIT_CODE.usage);
     const localSchema = checkTracker ? await pm!.schema("list") as SchemaListResult : undefined;
+    const exports = stateMap(process.env.ADO_EXPORT_STATE_MAP, STATE_MAP), imports = stateMap(process.env.ADO_STATUS_MAP, IMPORT_STATE_MAP);
+    const canonical = new Map<string, string>();
+    if (localSchema) for (const value of new Set([...Object.keys(exports), ...Object.values(imports), ...localSchema.statuses.builtin.map((status) => status.id), ...localSchema.statuses.custom.map((status) => status.id)])) {
+      try { canonical.set(value, (await pm!.schemaShowStatus(value)).status.id); }
+      catch { canonical.set(value, value); /* Unknown historical mappings remain diagnosable without new refusals. */ }
+    }
+    // Metadata-only discovery needs no SDK module link; native tracker reads certify mapping values.
+    const normalization = { resolveStatus: (value: string) => canonical.get(value) ?? value };
     return await discoverProjectContract({ orgUrl: process.env.ADO_ORG_URL.trim(), project: project.trim(), token: process.env.ADO_TOKEN.trim() }, contractTransport,
-      { type, expectedFingerprint: expected, localStatuses: localSchema ? [...localSchema.statuses.builtin, ...localSchema.statuses.custom].map((status) => status.id) : undefined, exportStates: stateMap(process.env.ADO_EXPORT_STATE_MAP, STATE_MAP), importStates: stateMap(process.env.ADO_STATUS_MAP, IMPORT_STATE_MAP),
+      { type, expectedFingerprint: expected, localStatuses: localSchema ? [...localSchema.statuses.builtin, ...localSchema.statuses.custom].map((status) => status.id) : undefined, exportStates: exports, importStates: imports, normalization,
         items: checkTracker ? (await pm!.listAllComplete()).items : undefined });
   } catch (error) {
     const refusal = ContractRefusal.from(error);

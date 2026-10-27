@@ -353,3 +353,28 @@ test("refusal normalization preserves typed failures and classifies other errors
     assert.doesNotMatch(failure.message + failure.remedy, /server-secret/u);
   }
 });
+
+
+test("round-5 read-only contract comparisons use native aliases in host SDK JSON and TOON without module links", async (t) => {
+  const canonical = await discoverProjectContract(config, fixture().request);
+  const padded = await discoverProjectContract({ ...config, orgUrl: ` ${config.orgUrl}/// `, project: ` ${config.project} ` }, fixture().request);
+  assert.deepEqual(padded, canonical);
+  const f = await hostFixture(t);
+  await f.pm.schemaAddStatus("review_stage", { alias: ["Ready To Review"], role: ["active"] });
+  const types = f.types[0]!.states as { name: string }[];
+  types.push({ name: "Awaiting Review" });
+  await f.pm.update(f.item.item.id, { status: "review_stage" });
+  const changes = { ADO_STATUS_MAP: JSON.stringify({ New: " OPEN ", Active: "IN-PROGRESS", Closed: " CLOSED ", "Awaiting Review": " READY TO REVIEW " }),
+    ADO_EXPORT_STATE_MAP: JSON.stringify({ " OPEN ": "New", " IN-PROGRESS ": "Active", " CLOSED ": "Closed", " READY TO REVIEW ": "Awaiting Review" }) };
+  const before = snapshot(f.pmRoot);
+  const result = await f.command({ project: config.project, type: "Task", checkTracker: true }, true, changes) as ProjectContract;
+  assert.equal(result.compatible, true, JSON.stringify(result.issues));
+  const json = await f.cli(["--project", config.project, "--type", "Task", "--check-tracker", "--json"], changes);
+  assert.equal(json.code, 0, json.stderr); assert.equal(JSON.parse(json.stdout).compatible, true);
+  const toon = await f.cli(["--project", config.project, "--type", "Task", "--check-tracker", "--output-format", "toon"], changes);
+  assert.equal(toon.code, 0, toon.stderr); assert.match(toon.stdout, /compatible: true/u);
+  const historical = await f.command({ project: config.project, type: "Task", checkTracker: true }, true, { ...changes, ADO_STATUS_MAP: JSON.stringify({ New: "unknown_historical" }) }) as ProjectContract;
+  assert.equal(historical.compatible, false); assert.ok(historical.issues.some((issue) => issue.code === "import_state"));
+  assert.deepEqual(snapshot(f.pmRoot), before);
+  assert.ok(f.calls.every((call) => call.method === "GET"));
+});

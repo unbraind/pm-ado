@@ -1,0 +1,21 @@
+id: pm-ado-sdk-scalar-normalization
+title: Expose SDK assignment mutation normalization
+description: "SDK 2026.10.23 has no public pure assignment-mutation normalizer. sdk/lifecycle/legacy-none-tokens.d.ts:65 declares isLegacyNoneToken(value: string | undefined), but that internal module is absent from package exports; root and sdk/runtime namespaces expose neither isLegacyNoneToken nor normalizeAssigneeMutationInput. Public toNonEmptyImportString handles trimming; normalizeItemMetadata preserves literal assignee strings, whereas native commitItemMutations interprets assignment none/null as clear. previewItemMutations returns ItemMutationPreviewValidation only, without canonical field results; transaction/settings/events/history APIs do not provide a pure equivalent. Open upstream searches normalize assignee and isLegacyNoneToken SDK found no matching issue. Adapter uses the SDK trim primitive plus one centralized clear-token predicate, verified against actual native writes. Title/description none/null remain literal. Missing public export: isLegacyNoneToken or an SDK normalizeAssigneeMutationInput with explicit scalar clear semantics. Orchestrator verifies and files upstream."
+type: Issue
+status: open
+priority: 2
+tags[1]: sdk-gap
+created_at: "2026-10-27T09:56:19.176Z"
+updated_at: "2026-10-27T10:22:56.823Z"
+author: codex-agent
+parent: pm-ado-sdk-adoption
+comments[1]{created_at,author,text}:
+  "2026-10-27T10:22:56.796Z",codex-agent,"Native SDK write-oracle verification passed: assignment none/null clears while title/description none/null remain literal; whitespace and Unicode are preserved exactly where native writes preserve them. The pure missing assignment clear-token export is the only new SDK API gap; original audit replacements remain implemented. The shared normalizer module measured 100% lines, branches and functions in the focused native-tracker run."
+files[2]{path,scope}:
+  normalization.ts,project
+  test/normalization.test.ts,project
+tests[1]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
+  node --test --test-concurrency=2 test/normalization.test.ts,project,codex-agent,"2026-10-27T10:19:54.565Z",local_mutation,refactor/sdk-adoption-1025
+docs[1]{path,scope}:
+  docs/sdk-adoption.md,project
+body: ""

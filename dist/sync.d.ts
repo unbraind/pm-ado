@@ -1,3 +1,4 @@
+import { type ValueNormalization } from "./normalization.ts";
 import { type SyncObserver } from "./sync-outbox.ts";
 import type { CommandHandlerContext, FlagDefinition } from "@unbrained/pm-cli/sdk/authoring";
 import type { ItemMetadata, PmUpdateActionOptions, PmClient } from "@unbrained/pm-cli/sdk";
@@ -47,23 +48,23 @@ export declare function stateMap(raw: string | undefined, defaults: Readonly<Rec
 /** Escape WIQL literals; explicit WIQL cannot be combined with generated filters. */
 export declare function buildWiql(options: Record<string, unknown>, project: string): string;
 /** Project Azure fields into the same normalized shape as local metadata. */
-export declare function remoteValues(item: AdoWorkItem, mapping: Readonly<Record<string, string>>): Values;
+export declare function remoteValues(item: AdoWorkItem, mapping: Readonly<Record<string, string>>, normalization?: ValueNormalization | false): Values;
 /** Project pm fields, preserving unrelated metadata outside this mapping. */
-export declare function localValues(item: ItemMetadata): Values;
+export declare function localValues(item: ItemMetadata, normalization?: ValueNormalization | false): Values;
 /** Decode and validate the dedicated base; missing legacy bases never imply a winner. */
-export declare function readBase(item: ItemMetadata, sample: Values): Values | undefined;
+export declare function readBase(item: ItemMetadata, sample: Values, normalization?: ValueNormalization | false): Values | undefined;
 /** Exact field mapping used by reconciliation and remote-contract discovery. */
 export declare const ADO_FIELD_MAP: Readonly<Record<string, string>>;
 /** Convert agreed canonical values to Azure reference names for changed fields only. */
-export declare function azureFields(values: Values, keys: readonly string[], states: Record<string, string>): Record<string, unknown>;
+export declare function azureFields(values: Values, keys: readonly string[], states: Record<string, string>, normalization?: ValueNormalization | false): Record<string, unknown>;
 /** Convert canonical fields and provenance to one SDK mutation with a history record. */
-export declare function pmFields(values: Values, remote: AdoWorkItem, config: AdoConfig): PmUpdateActionOptions & {
+export declare function pmFields(values: Values, remote: AdoWorkItem, config: AdoConfig, normalization?: ValueNormalization): PmUpdateActionOptions & {
     field: string[];
 };
 /** Canonical recognized relations; opaque or out-of-scope links stay with the adapter. */
 export declare function relationValues(relations: readonly AdoRelation[], config: AdoConfig, identities: ReadonlyMap<number, string>): string[];
 /** Read actual local graph edges independently of a remote snapshot or proposed patch. */
-export declare function readLocalAgreement(pm: Pick<PmClient, "listAllComplete">, id: string, config: AdoConfig, expectedVersion?: string): Promise<{
+export declare function readLocalAgreement(pm: Pick<PmClient, "listAllComplete">, id: string, config: AdoConfig, expectedVersion?: string, normalization?: ValueNormalization): Promise<{
     item: import("@unbrained/pm-cli/sdk").ListTreeItem | import("@unbrained/pm-cli/sdk").ListedItem;
     identities: Map<number, string>;
     values: {
@@ -73,8 +74,10 @@ export declare function readLocalAgreement(pm: Pick<PmClient, "listAllComplete">
     base: Values | undefined;
     acknowledgedRevision: number | undefined;
 }>;
-/** Project an actual Azure read, preserving only an equivalent configured local status alias. */
-export declare function remoteAgreement(remote: AdoWorkItem, local: Values, config: AdoConfig, identities: ReadonlyMap<number, string>, imports: Readonly<Record<string, string>>, exports: Readonly<Record<string, string>>): Values;
+/** Project mapped scalars through SDK normalization, retaining only an explicit equivalent export witness. */
+export declare function remoteScalarValues(remote: AdoWorkItem, preferred: Values | undefined, imports: Readonly<Record<string, string>>, exports: Readonly<Record<string, string>>, normalization?: ValueNormalization | false): Values;
+/** Compare actual expanded Azure and local reads in the same native field representation. */
+export declare function remoteAgreement(remote: AdoWorkItem, local: Values, config: AdoConfig, identities: ReadonlyMap<number, string>, imports: Readonly<Record<string, string>>, exports: Readonly<Record<string, string>>, normalization?: ValueNormalization): Values;
 /** Compare a proven owned effect without claiming its unrelated remote fields were ever agreed. */
 export declare function recoveredField(local: unknown, remote: unknown, original: unknown, accepted: unknown): "local" | "remote" | "conflict";
 /** Evidence of an owned remote effect, kept separate from the agreed common base. */
@@ -89,7 +92,7 @@ export interface OwnedEffect {
     revision: number;
 }
 /** Choose each key from its witnessed base or the latest proof for that exact owned scalar. */
-export declare function mergeSyncValues(local: Values, remote: Values, base: Values | undefined, effect?: OwnedEffect | readonly OwnedEffect[]): Record<string, "equal" | "local" | "remote" | "conflict">;
+export declare function mergeSyncValues(local: Values, remote: Values, base: Values | undefined, effect?: OwnedEffect | readonly OwnedEffect[], normalization?: ValueNormalization): Record<string, "equal" | "local" | "remote" | "conflict">;
 /** Execute the real REST transport; failures are converted to stable command receipts. */
 export declare function transport(method: string, url: string, body: string | undefined, headers: Readonly<Record<string, string>>): Promise<{
     status: number;

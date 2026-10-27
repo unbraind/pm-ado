@@ -165,7 +165,7 @@ test("packed npm-global, bun-global, npx, bunx, local-bin and copied-extension c
         "System.WorkItemType": "Task", "Microsoft.VSTS.Common.Priority": 2, "System.Tags": "fixture", "System.AreaPath": "Example", "System.IterationPath": "Example" } };
       const tracker = join(root, `global-tracker-${shape.name}`), globalHome = join(root, `global-home-${shape.name}`);
       mkdirSync(tracker); mkdirSync(globalHome); mkdirSync(join(globalHome, ".config"));
-      const globals = { ...runtime, HOME: globalHome, XDG_CONFIG_HOME: join(globalHome, ".config") };
+      const globals: NodeJS.ProcessEnv = { ...runtime, HOME: globalHome, XDG_CONFIG_HOME: join(globalHome, ".config") };
       await command(shape.binary, [...shape.prefix, "install", packageRoot, "--global", "--json"], tracker, globals);
       /** Keep the SDK-managed global module link outside this non-git tracker. */
       const pm = (args: string[]) => command(shape.binary, [...shape.prefix, "--pm-path", join(tracker, ".agents/pm"), ...args, "--json"], tracker, globals);
@@ -182,6 +182,20 @@ test("packed npm-global, bun-global, npx, bunx, local-bin and copied-extension c
       const artifact = join(tracker, "reviewed-partial.json"); writeFileSync(artifact, JSON.stringify(partial.plan));
       assert.equal((JSON.parse(await pm(["ado", "resolve-apply", "--artifact", artifact])) as { ok: boolean }).ok, true);
       assert.equal((JSON.parse(await pm(["get", created.id])) as { item: { title: string } }).item.title, "Reviewed packed title");
+      globals.ADO_STATUS_MAP = JSON.stringify({ Done: " CLOSED " });
+      remote.fields["System.State"] = "Done"; remote.fields["System.Title"] = " Reviewed packed Done "; remote.rev++;
+      const normalized = JSON.parse(await pm(["ado", "resolve-plan", "--item", ` #${created.id.toUpperCase()} `])) as { plan: ResolutionPlan };
+      assert.equal(normalized.plan.fields.find((field) => field.field === "status")!.local, normalized.plan.fields.find((field) => field.field === "status")!.remote);
+      normalized.plan.choices = normalized.plan.fields.filter((field) => field.local !== field.remote).map(({ field }) => ({ field, take: "remote" }));
+      writeFileSync(artifact, JSON.stringify(normalized.plan));
+      assert.equal((JSON.parse(await pm(["ado", "resolve-apply", "--artifact", artifact])) as { ok: boolean }).ok, true);
+      const afterAlias = (JSON.parse(await pm(["get", created.id])) as { item: { title: string; status: string } }).item;
+      assert.equal(afterAlias.title, "Reviewed packed Done"); assert.equal(afterAlias.status, "closed");
+      const replay = JSON.parse(await pm(["ado", "resolve-apply", "--artifact", artifact])) as { ok: boolean; replayed: boolean };
+      assert.equal(replay.ok, true); assert.equal(replay.replayed, true);
+      assert.deepEqual((JSON.parse(await pm(["get", created.id])) as { item: unknown }).item, afterAlias);
+      assert.equal(remote.fields["System.State"], "Done");
+      delete globals.ADO_STATUS_MAP;
       await assertEndpointPreserved(pm);
       assert.equal(existsSync(join(tracker, ".git")), false);
       t.diagnostic(`${shape.name}: global SDK runtime supports partial-base apply and preserves unselected endpoint edits`);

@@ -1,3 +1,4 @@
+import { normalizeScopeValue } from "./normalization.js";
 import { AdoClient, batchIds, readConfig } from "./index.js";
 import { ADO_FIELD_MAP, localValues, readBase, transport } from "./sync.js";
 /** Typed, remedy-bearing failure shared by SDK and CLI callers. */
@@ -119,11 +120,12 @@ export function compileRefreshPlan(input) {
 export function refreshSaved(items, config) {
     const saved = [];
     for (const item of items) {
-        if (item.ado_id === undefined || item.ado_org_url !== config.orgUrl || item.ado_project !== config.project)
+        if (item.ado_id === undefined || normalizeScopeValue(String(item.ado_org_url ?? ""), true) !== normalizeScopeValue(config.orgUrl, true) || normalizeScopeValue(String(item.ado_project ?? "")) !== normalizeScopeValue(config.project))
             continue;
         let base;
+        // Sparse coverage coordinates need shape only; no semantic value comparison or native write occurs here.
         try {
-            base = readBase(item, localValues(item));
+            base = readBase(item, localValues(item, false), false);
         }
         catch {
             throw new RefreshRefusal("invalid_input");
@@ -148,7 +150,7 @@ export async function observeRefreshPlan(pm, config, request, needs, maxOutputBy
         const plan = compileRefreshPlan({ ...input, saved: currentSaved, observed: result.items.map((item) => ({ id: item.id, revision: item.rev })) });
         plan.skipped = [
             { reason: "unlinked", count: currentItems.filter((item) => item.ado_id === undefined).length },
-            { reason: "foreign_scope", count: currentItems.filter((item) => item.ado_id !== undefined && (item.ado_org_url !== config.orgUrl || item.ado_project !== config.project)).length },
+            { reason: "foreign_scope", count: currentItems.filter((item) => item.ado_id !== undefined && (normalizeScopeValue(String(item.ado_org_url ?? ""), true) !== normalizeScopeValue(config.orgUrl, true) || normalizeScopeValue(String(item.ado_project ?? "")) !== normalizeScopeValue(config.project))).length },
         ];
         if (Buffer.byteLength(JSON.stringify(plan)) > (maxOutputBytes ?? 65536))
             throw new RefreshRefusal("output_budget");

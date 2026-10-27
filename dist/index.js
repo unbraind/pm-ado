@@ -1,17 +1,4 @@
-// pm-ado — Azure DevOps work item sync for pm-cli.
-//
-// The design point of this package is that Azure DevOps is the one major
-// tracker whose write API is natively conflict-aware. Work items are updated
-// with a JSON Patch document, and that document may carry a `test` operation
-// asserting the current `System.Rev`. When another writer moved the item first
-// the service rejects the WHOLE document rather than applying part of it, so a
-// lost update becomes a visible, retryable failure instead of silent data loss.
-//
-// That is a compare-and-swap on a remote tracker, and it is the primitive pm
-// already organises itself around for multi-agent work. Every other integration
-// in this fleet performs last-write-wins updates. This one does not, so every
-// remote write here asserts a revision — there is no unchecked write path to
-// fall back to, by construction rather than by convention.
+import { normalizeScopeValue } from "./normalization.js";
 import { runSyncCommand, SYNC_FLAGS } from "./sync.js";
 import { runRefreshCommand } from "./refresh.js";
 export { compileRefreshPlan, validateRefreshInput, refreshSaved, observeRefreshPlan, RefreshRefusal } from "./refresh.js";
@@ -182,7 +169,7 @@ export async function planRelationImport(remote, orgUrl, identities, pm, custom 
             }
             else {
                 const key = JSON.stringify([source, target, kind, relation.rel]);
-                const nativeEquivalent = RELATION_MAP[relation.rel] === kind && native.has(JSON.stringify([source, target, kind]));
+                const nativeEquivalent = Object.hasOwn(RELATION_MAP, relation.rel) && RELATION_MAP[relation.rel] === kind && native.has(JSON.stringify([source, target, kind]));
                 if (!seen.has(key) && !nativeEquivalent) {
                     const deps = additions.get(source) ?? [];
                     deps.push(`id=${target},kind=${kind},source_kind=${relation.rel}`);
@@ -586,12 +573,12 @@ export function stripTrailingSlashes(value) {
  * @returns The configuration, or `undefined` when any part is missing.
  */
 export function readConfig(env) {
-    const orgUrl = env.ADO_ORG_URL?.trim();
-    const project = env.ADO_PROJECT?.trim();
+    const orgUrl = env.ADO_ORG_URL === undefined ? undefined : normalizeScopeValue(env.ADO_ORG_URL, true);
+    const project = env.ADO_PROJECT === undefined ? undefined : normalizeScopeValue(env.ADO_PROJECT);
     const token = env.ADO_TOKEN?.trim();
     if (!orgUrl || !project || !token)
         return undefined;
-    return { orgUrl: stripTrailingSlashes(orgUrl), project, token };
+    return { orgUrl, project, token };
 }
 /** The names of the environment variables {@link readConfig} requires. */
 export const REQUIRED_ENV = ["ADO_ORG_URL", "ADO_PROJECT", "ADO_TOKEN"];
@@ -1011,4 +998,5 @@ export default defineExtension({
         });
     },
 });
+export { normalizeStatusValue, normalizeItemReference, normalizeTitleValue, normalizeAssigneeValue, normalizeTagValues, normalizePriorityValue, normalizeLiteralValue, normalizeScopeValue, normalizeFieldValues, normalizeStateMaps } from "./normalization.js";
 //# sourceMappingURL=index.js.map

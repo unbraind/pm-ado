@@ -1,0 +1,20 @@
+id: fixture-p56n
+title: Legacy reviewed title
+description: Details
+type: Task
+status: closed
+priority: 2
+tags[2]: blue,green
+created_at: "2026-10-27T09:40:02.059Z"
+updated_at: "2026-10-27T09:40:03.733Z"
+assignee: fixture@example.invalid
+author: fixture-agent
+ado_area_path: "Project\\Area"
+ado_id: 1
+ado_iteration_path: "Project\\Sprint"
+ado_org_url: "https://fixture.invalid/organization"
+ado_project: Project
+ado_resolution_receipt: 9e2fce0e1f965a69ace503b745cb557034806fd375c1aef11dd67c705ba8f123
+ado_rev: 2
+ado_sync_base: "{\"title\":\"Legacy reviewed title\",\"description\":\"Details\",\"status\":\"CLOSED\",\"priority\":2,\"tags\":[\"blue\",\"green\"],\"assignee\":\"fixture@example.invalid\",\"ado_area_path\":\"Project\\\\Area\",\"ado_iteration_path\":\"Project\\\\Sprint\",\"relations\":[]}"
+body: ""

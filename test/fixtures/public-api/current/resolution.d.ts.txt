@@ -1,3 +1,4 @@
+import { type ValueNormalization } from "./normalization.ts";
 import type * as Sdk from "@unbrained/pm-cli/sdk";
 import type { CommandHandlerContext } from "@unbrained/pm-cli/sdk/authoring";
 import { AdoClient, type AdoConfig, type AdoWorkItem, type JsonPatchOperation } from "./index.ts";
@@ -41,6 +42,8 @@ export interface ResolutionField {
 export interface ResolutionPlan {
     /** Versioned package decision contract, independent of core Plan storage. */
     schema: "pm-ado/resolution/2";
+    /** New plans bind normalized semantic fields; absent on supported legacy version-2 artifacts. */
+    normalization?: "pm-ado/fields/1";
     /** Opaque credential-keyed scope reference; configuration is never persisted. */
     scope: {
         ref: string;
@@ -101,11 +104,13 @@ export interface ResolutionIntent {
     patch: JsonPatchOperation[];
     /** Reviewed canonical outcome, retained only on the target item. */
     values: Values;
+    /** Original remote field coordinates; older pending intents omit this witness and retain their exact wire validation. */
+    remote_values?: Values;
     /** Existing per-key sync base; null preserves legacy absence. */
     base: Values | null;
 }
 /** Bind organization and project without storing either value or a dictionary-testable plain hash. */
-export declare function resolutionScopeReference(config: AdoConfig): string;
+export declare function resolutionScopeReference(config: AdoConfig, literal?: boolean): string;
 /** Hash recursively sorted JSON so artifact property order has no semantics. */
 export declare function resolutionDigest(value: unknown): string;
 /** Load resolution primitives from package imports or caller-supplied anchors, never inferred launcher paths. */
@@ -120,7 +125,7 @@ export interface ResolutionMaps {
     exports: Readonly<Record<string, string>>;
 }
 /** Build digests from the same field projections and three-way base used by sync. */
-export declare function resolutionFields(item: Sdk.ItemMetadata, remote: AdoWorkItem, maps: ResolutionMaps): ResolutionField[];
+export declare function resolutionFields(item: Sdk.ItemMetadata, remote: AdoWorkItem, maps: ResolutionMaps, normalization?: ValueNormalization | false): ResolutionField[];
 /** Revision-bound decisions use core reads, Plan storage and audited item mutation, never git. */
 export declare class AdoResolutionService {
     private readonly pmRoot;
@@ -152,8 +157,8 @@ export declare class AdoResolutionService {
     private patch;
     /** Reject corrupted or substituted recovery data before using its stored PATCH. */
     private intent;
-    /** Delegate lifecycle identity to the SDK without changing portable field or mapping digests. */
-    private nativeStatus;
+    /** Share the host SDK schema and prefix across all field projections, writes and read-backs. */
+    private normalization;
     /** Audit intent before the remote side effect; ordinary stale plans still make no item writes. */
     private prepare;
     /** Prove a prepared PATCH was applied, including its unique marker and complete mapped result. */

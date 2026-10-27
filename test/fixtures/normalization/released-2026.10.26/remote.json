@@ -1,0 +1,19 @@
+{
+  "id": 1,
+  "rev": 2,
+  "relations": [],
+  "fields": {
+    "System.Title": "Legacy reviewed title",
+    "System.Description": "Details",
+    "System.State": "Done",
+    "System.WorkItemType": "Task",
+    "Microsoft.VSTS.Common.Priority": 2,
+    "System.Tags": "blue; green",
+    "System.AssignedTo": {
+      "uniqueName": "fixture@example.invalid",
+      "displayName": "Fixture"
+    },
+    "System.AreaPath": "Project\\Area",
+    "System.IterationPath": "Project\\Sprint"
+  }
+}

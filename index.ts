@@ -1,3 +1,4 @@
+import { normalizeScopeValue } from "./normalization.ts";
 // pm-ado — Azure DevOps work item sync for pm-cli.
 //
 // The design point of this package is that Azure DevOps is the one major
@@ -287,7 +288,7 @@ export async function planRelationImport(
         parents.set(child, parent);
       } else {
         const key = JSON.stringify([source, target, kind, relation.rel]);
-        const nativeEquivalent = RELATION_MAP[relation.rel] === kind && native.has(JSON.stringify([source, target, kind]));
+        const nativeEquivalent = Object.hasOwn(RELATION_MAP, relation.rel) && RELATION_MAP[relation.rel] === kind && native.has(JSON.stringify([source, target, kind]));
         if (!seen.has(key) && !nativeEquivalent) {
           const deps = additions.get(source) ?? [];
           deps.push(`id=${target},kind=${kind},source_kind=${relation.rel}`);
@@ -735,11 +736,11 @@ export function stripTrailingSlashes(value: string): string {
  * @returns The configuration, or `undefined` when any part is missing.
  */
 export function readConfig(env: Readonly<Record<string, string | undefined>>): AdoConfig | undefined {
-  const orgUrl = env.ADO_ORG_URL?.trim();
-  const project = env.ADO_PROJECT?.trim();
+  const orgUrl = env.ADO_ORG_URL === undefined ? undefined : normalizeScopeValue(env.ADO_ORG_URL, true);
+  const project = env.ADO_PROJECT === undefined ? undefined : normalizeScopeValue(env.ADO_PROJECT);
   const token = env.ADO_TOKEN?.trim();
   if (!orgUrl || !project || !token) return undefined;
-  return { orgUrl: stripTrailingSlashes(orgUrl), project, token };
+  return { orgUrl, project, token };
 }
 
 /** The names of the environment variables {@link readConfig} requires. */
@@ -1211,3 +1212,6 @@ export default defineExtension({
     });
   },
 });
+
+export { normalizeStatusValue, normalizeItemReference, normalizeTitleValue, normalizeAssigneeValue, normalizeTagValues, normalizePriorityValue, normalizeLiteralValue, normalizeScopeValue, normalizeFieldValues, normalizeStateMaps } from "./normalization.ts";
+export type { ValueNormalization, StatusReferenceNormalization, ItemReferenceNormalization } from "./normalization.ts";

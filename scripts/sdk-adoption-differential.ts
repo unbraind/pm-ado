@@ -162,9 +162,12 @@ async function compare(baseline: string, trackers: string[]): Promise<void> {
       delete before.history_new_events; delete after.history_new_events;
       delete before.history_message;
       delete after.history_message;
+      const plan = (after.outputs as Record<string, unknown>[])[3];
+      assert.equal(plan.normalization, "pm-ado/fields/1");
+      delete plan.normalization; // Explicit version-2 canonical-coordinate marker; other plan fields stay exact.
       assert.deepEqual(after, before, `public corpus ${index + 1} differs`);
       total += items.length;
-      console.log(`Public corpus ${index + 1}: ${items.length} items; import/export/sync dry-run and resolution plan identical; authoritative files unchanged; writable-copy import receipts/values/net history patches identical; candidate prepares its local intent and publishes agreement in separate guarded events.`);
+      console.log(`Public corpus ${index + 1}: ${items.length} items; import/export/sync dry-run and resolution plan identical after removing the documented canonical-coordinate marker; authoritative files unchanged; writable-copy import receipts/values/net history patches identical; candidate prepares its local intent and publishes agreement in separate guarded events.`);
     }
     console.log(`PASS: ${trackers.length} public corpora, ${total} real items, ${trackers.length * 7} differential comparisons; intentional history differences: SDK transaction markers, path ordering, three guarded events instead of one, and internal per-key revision coordinates; synced base values and net patch identical; mutation timestamps normalized.`);
   } finally {

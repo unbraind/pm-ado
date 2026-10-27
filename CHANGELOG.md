@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Compile sparse Azure refresh plans with explicit field accounting ([pm-ado-sparse-refresh](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-sparse-refresh.toon))
+
+### Other
+
+- Stop Hound from linting generated dist/ output ([pm-ado-hound-generated-dist](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-hound-generated-dist.toon))
+
 ## 2026.10.26 - 2026-10-26
 
 ### Breaking Changes

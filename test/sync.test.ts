@@ -15,6 +15,7 @@ import { PmClient, createExtensionCommandSdk, runWithActiveExtensions, resolveRu
 import { createExtensionTestHarness } from "@unbrained/pm-cli/sdk/testing";
 import extension, { type AdoWorkItem, type AdoRelation, type JsonPatchOperation } from "../index.ts";
 import { buildWiql, localValues, remoteValues, IMPORT_STATE_MAP, runSyncCommand, readLocalAgreement } from "../sync.ts";
+import { runSyncCommand as runBuiltSyncCommand } from "../dist/sync.js";
 
 import { SyncOutbox, isProtocolTag, type OutboxState, type SyncBoundary, type SyncObserver } from "../sync-outbox.ts";
 
@@ -297,11 +298,11 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
     finally { process.chdir(cwd); }
   };
   /** Exercise the command with native SDK activation and a boundary observer. */
-  const observed = async (mode: "import" | "export" | "sync", observer: SyncObserver, options: Record<string, unknown> = {}, anchors?: readonly string[]) => {
+  const observed = async (mode: "import" | "export" | "sync", observer: SyncObserver, options: Record<string, unknown> = {}, anchors?: readonly string[], implementation = runSyncCommand) => {
     const before = { ...process.env }; const cwd = process.cwd();
     process.chdir(root); process.env = { ...env };
     try {
-      return await runWithActiveExtensions({ cwd: root, path: pmRoot }, () => runSyncCommand({ command: `ado ${mode}`, args: [], options,
+      return await runWithActiveExtensions({ cwd: root, path: pmRoot }, () => implementation({ command: `ado ${mode}`, args: [], options,
         global: {}, pm_root: pmRoot, sdk: createExtensionCommandSdk(pmRoot, pm) }, mode, observer, anchors));
     } finally { process.env = before; process.chdir(cwd); }
   };
@@ -1817,6 +1818,67 @@ test("new imports guard every write after creation and keep concurrent annotatio
   const kept = (await f.pm.get(edited, { depth: "full" })).item;
   assert.equal(kept.body, "Preserve context after create");
   assert.ok((kept.comments as { text: string }[]).some((comment) => comment.text === "Concurrent annotation"));
+});
+
+test("round-9 birth witnesses preserve every post-create edit before relation import", async (t) => {
+  for (const [implementation, execute] of [["source", runSyncCommand], ["built", runBuiltSyncCommand]] as const) {
+    for (const mode of ["import", "sync"] as const) for (const edit of ["parent", "parent-aba", "related", "scalar", "context", "mixed", "audit"] as const) {
+      await t.test(`${implementation}:${mode}:${edit}`, async (sub) => {
+        const f = await fixture(sub, [workItem(2), workItem(3)]);
+        assert.equal((await f.command("import")).ok, true);
+        const parents = (await f.pm.listAllComplete()).items;
+        const a = parents.find((item) => item.ado_id === 2)!, b = parents.find((item) => item.ado_id === 3)!;
+        f.items.set(1, { ...workItem(1), relations: [{ rel: "System.LinkTypes.Hierarchy-Reverse", url: `${f.org}/_apis/wit/workItems/2` }] });
+        f.response("wiql", { workItems: [{ id: 1 }] });
+        sub.mock.timers.enable({ apis: ["Date"], now: new Date("2030-01-01T00:00:00.000Z") });
+        let created: string | undefined, peer: Record<string, string> | undefined;
+        try {
+          const result = await f.observed(mode, async (event) => {
+            if (event.boundary !== "local" || event.phase !== "after" || event.operation !== "create") return;
+            created = event.item!;
+            if (edit === "parent" || edit === "parent-aba" || edit === "mixed") await f.pm.update(created, { parent: b.id });
+            if (edit === "parent-aba") await f.pm.update(created, { unset: ["parent"] });
+            if (edit === "related" || edit === "mixed") await f.pm.update(created, { dep: [`id=${b.id},kind=related,source_kind=System.LinkTypes.Related`] });
+            if (edit === "scalar" || edit === "mixed") await f.pm.update(created, { title: "Peer title", tags: '["peer"]', priority: 0, status: "blocked" });
+            if (edit === "context" || edit === "mixed") await f.pm.update(created, { body: "Peer body", comment: ["text=Peer context"] });
+            if (edit === "audit") await runtimeSdk.mutateItemWithHistoryContext({ pmRoot: f.pmRoot, settings: await readSettings(f.pmRoot),
+              id: created, author: "fixture-agent", op: "update", historyContext: { peer_birth_audit: true }, mutate: () => ({ changedFields: [] }) });
+            peer = snapshot(f.pmRoot);
+          }, { limit: 1 }, undefined, execute);
+          assert.ok(created); assert.ok(peer);
+          const actual = (await f.pm.get(created, { depth: "full" })).item;
+          if (edit === "parent" || edit === "mixed") assert.equal(actual.parent, b.id, "the peer's parent B must survive even when a later step conflicts");
+          assert.notEqual(actual.parent, a.id, "Azure parent A must not overwrite the post-create peer state");
+          assert.equal(result.code, "ADO_CONFLICT", JSON.stringify(result));
+          assert.deepEqual(snapshot(f.pmRoot), peer, "a post-birth edit cannot become an owned creation baseline");
+          assert.equal((await f.pm.listAllComplete()).items.length, 3);
+          assert.equal(f.requests.filter((request) => request.method === "PATCH" || request.path.includes("/workitems/$")).length, 0);
+        } finally { sub.mock.timers.reset(); }
+      });
+    }
+  }
+});
+
+test("round-9 uncontended births import relations and replay through JSON and TOON without git", async (t) => {
+  for (const mode of ["import", "sync"]) await t.test(mode, async (sub) => {
+    const f = await fixture(sub, [workItem(2)]);
+    assert.equal((await f.command("import")).ok, true);
+    const parent = await row(f.pm);
+    f.items.set(1, { ...workItem(1), relations: [{ rel: "System.LinkTypes.Hierarchy-Reverse", url: `${f.org}/_apis/wit/workItems/2` }] });
+    f.response("wiql", { workItems: [{ id: 1 }] });
+    const options = { GIT_CEILING_DIRECTORIES: tmpdir(), PATH: f.pmRoot };
+    const imported = await f.host(["ado", mode, "--limit", "1", "--json"], options);
+    assert.equal(imported.code, 0, imported.stdout + imported.stderr);
+    assert.equal((JSON.parse(imported.stdout) as { ok: boolean }).ok, true);
+    const child = (await f.pm.listAllComplete()).items.find((item) => item.ado_id === 1)!;
+    assert.equal(child.parent, parent.id);
+    const before = snapshot(f.pmRoot);
+    const replay = await f.host(["ado", mode, "--limit", "1", "--output-format", "toon"], options);
+    assert.equal(replay.code, 0, replay.stdout + replay.stderr);
+    assert.match(replay.stdout, /ok: true/u);
+    assert.deepEqual(snapshot(f.pmRoot), before);
+    assert.equal((await f.pm.listAllComplete()).items.length, 2);
+  });
 });
 
 test("sync reconnects its own pending export before import pairing and preserves edited mapped fields", async (t) => {

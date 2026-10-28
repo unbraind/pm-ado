@@ -667,7 +667,7 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
                     localSeen.set(item.id, remoteAgreement(entry.remote, values, config, identities, states, exportStates, normalization));
                     localRemote.set(item.id, { id: remote.id, revision: remote.rev });
                     versions.set(item.id, item.updated_at);
-                    await nativeWrites.capture(item.id);
+                    await nativeWrites.captureCreated(item);
                     plan.pm_id = item.id;
                     identities.set(remote.id, item.id);
                 }

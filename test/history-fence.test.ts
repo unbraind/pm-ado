@@ -28,6 +28,61 @@ test("native history witnesses accept empty and hashed heads and reject malforme
   assert.equal(isNativeHead({ length: 1, hash: "a".repeat(64) }), true);
 });
 
+test("birth witnesses accept the exact native create receipt and reject absent or mismatched births", async (t) => {
+  const f = await fixture(t);
+  const fence = new NativeWriteFence(sdk, f.pmRoot, "history-agent");
+  await fence.captureCreated(f.item);
+  assert.equal(fence.head(f.item.id).length, 1);
+  assert.deepEqual(fence.head(f.item.id), await nativeHead(sdk, f.pmRoot, f.item.id));
+  const before = (await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, f.item.id), f.item.id)).raw;
+  await assert.rejects(fence.captureCreated({ ...f.item, title: "Not the SDK receipt" }), NativeHistoryConflict);
+  await assert.rejects(fence.captureCreated({ ...f.item, id: "history-absent" }), NativeHistoryConflict);
+  assert.equal((await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, f.item.id), f.item.id)).raw, before);
+});
+
+test("birth witnesses preserve native create defaults, lifecycle states and creator receipts", async (t) => {
+  const f = await fixture(t);
+  const cases: sdk.PmCreateActionOptions[] = [
+    { title: "Tag and body receipt", tags: '["z","a","z"]', description: "  Native description  ", body: "Native body\r\n" },
+    { title: "Different creator receipt", author: "creator-agent", priority: 0, status: "blocked" },
+    { title: "Parent receipt", parent: f.item.id },
+    { title: "Terminal receipt", status: "closed", closeReason: "Created complete" },
+    { title: "Context receipt", comment: ["text=Created context"], note: ["text=Native note"] },
+  ];
+  for (const options of cases) {
+    const { item } = await f.pm.create({ type: "Task", ...options });
+    const fence = new NativeWriteFence(sdk, f.pmRoot, "history-agent");
+    await fence.captureCreated(item);
+    await fence.update(item.id, { description: "Owned follow-up" }, "birth-receipt-control");
+    assert.equal((await f.pm.get(item.id)).item.description, "Owned follow-up");
+  }
+});
+
+test("birth witness property refuses every nonempty fixed-clock peer edit set including ABA and audits", async (t) => {
+  let seed = 0x6b17cafe;
+  for (let sequence = 0; sequence < 32; sequence++) await t.test(String(sequence), async (sub) => {
+    const f = await fixture(sub);
+    sub.mock.timers.enable({ apis: ["Date"], now: new Date(f.item.updated_at) });
+    try {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      const fields = (seed % 31) + 1;
+      await f.pm.update(f.item.id, { ...(fields & 1 ? { title: "Peer title" } : {}), ...(fields & 2 ? { tags: '["peer"]' } : {}),
+        ...(fields & 4 ? { body: "Peer body" } : {}), ...(fields & 8 ? { status: "blocked" } : {}), ...(fields & 16 ? { priority: 0 } : {}) });
+      if (sequence % 3 === 0) await f.pm.update(f.item.id, { title: f.item.title, tags: JSON.stringify(f.item.tags), body: "", status: f.item.status, priority: f.item.priority });
+      if (sequence % 3 === 1) await sdk.mutateItemWithHistoryContext({ pmRoot: f.pmRoot, settings: await sdk.readSettings(f.pmRoot),
+        id: f.item.id, author: "history-agent", op: "update", historyContext: { peer_birth_audit: true }, mutate: () => ({ changedFields: [] }) });
+      const before = (await f.pm.get(f.item.id, { depth: "full" })).item;
+      const history = (await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, f.item.id), f.item.id)).raw;
+      const fence = new NativeWriteFence(sdk, f.pmRoot, "history-agent");
+      await assert.rejects(fence.captureCreated(f.item), NativeHistoryConflict);
+      await assert.rejects(fence.update(f.item.id, { title: "Must not overwrite a peer" }, "birth-property"), NativeHistoryConflict);
+      assert.deepEqual((await f.pm.get(f.item.id, { depth: "full" })).item, before);
+      assert.equal((await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, f.item.id), f.item.id)).raw, history);
+    } finally { sub.mock.timers.reset(); }
+  });
+  t.diagnostic("seed 0x6b17cafe: 32 post-birth peer edit sets, including ABA and immutable audit witnesses");
+});
+
 test("native equivalent updates get an owned witness and refuse peer audits on either side of the call", async (t) => {
   for (const peer of ["none", "before", "after"]) await t.test(peer, async (sub) => {
     const f = await fixture(sub);
@@ -260,6 +315,7 @@ test("native history fence accepts a legacy item-state-only birth record without
   writeFileSync(sdk.getItemPath(f.pmRoot, "Task", id, settings.item_format), sdk.serializeItemDocument(document, { schema: settings.schema }));
   writeFileSync(sdk.getHistoryPath(f.pmRoot, id), raw);
   const fence = new NativeWriteFence(sdk, f.pmRoot, "history-agent");
+  await fence.captureCreated(document.metadata);
   await fence.capture(id);
   assert.equal(fence.head(id).hash, sdk.hashHistoryRecord(legacy));
   await fence.update(id, { title: "Legacy works" }, "native-legacy");

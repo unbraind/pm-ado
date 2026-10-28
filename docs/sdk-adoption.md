@@ -1,6 +1,6 @@
 # SDK adoption evidence (2026-10-25)
 
-**Current implementation (R8):** native writes use SDK lifecycle operations
+**Current implementation (R9):** native writes use SDK lifecycle operations
 inside `commitWorkspaceTransaction`, with history-head verification and
 selective compensation under `mutateItemWithHistoryContext`. Fixed-clock and
 ABA edits now refuse with typed conflicts and retain peer state. This is the
@@ -8,6 +8,8 @@ owner-authorized detect-after-write fallback for
 [pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576); it does not claim
 the SDK has gained a pre-write conditional lifecycle API. R7's failing probe
 and limitation report below are historical and superseded by this fallback.
+New-item continuations bind the immutable SDK create receipt and birth event;
+they never adopt a later post-create peer head as their own baseline.
 
 Tracker: [pm-ado-sdk-adoption](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-sdk-adoption.toon).
 Related certification: [pm-ado-qq1p](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-qq1p.toon).
@@ -387,3 +389,37 @@ without an own effect is classified as a conflict when a peer advanced the
 head. A stable-head SDK refusal preserves its original cause. Verification
 and compensation wait for live peer leases; they do not force those leases
 away. Forward lifecycle actions retain their normal SDK permission checks.
+
+## R9 creation receipts and immutable birth witnesses
+
+Newly imported native items receive their scalar fields before their relations.
+An ordinary `capture` after creation could accept a peer's intervening parent,
+dependency or scalar edit as the integration's own baseline. Later relation
+import could then overwrite it before returning a conflict.
+
+`NativeWriteFence.captureCreated` instead reads the immutable first SDK create
+event, uses SDK replay and value equality to verify its complete metadata
+against the returned create receipt, and binds the witness to that event's
+length and hash. Any later native entry refuses before further local writes,
+including a same-millisecond ABA or a zero-value audit. Unsealed legacy birth
+records use the SDK's record hash function. Existing-item capture remains for
+fresh plans whose actual document reads occur after capture. The package's one
+native create-to-follow-up path, shared by import and sync, uses the new method.
+Standalone relation planning, resolution read-back and core Plan creation were
+checked for the same rule; none reuses a stale native create receipt.
+
+The fixed-clock integration property covers source and built import/sync with
+seven peer-edit families: parent, parent ABA, dependency, scalar fields,
+body/comments, mixed edits and audit-only history. It checks parent B explicitly
+and compares all authoritative item and history bytes after the refusal.
+Uncontended creation still imports parent A, and actual no-git JSON/TOON CLI
+replay leaves those bytes unchanged. The native property also generates 32
+nonempty peer field sets with seed `0x6b17cafe`; valid native creator, lifecycle,
+parent, tag/body and context receipts remain accepted.
+
+Reverting only the birth-capture function to ordinary late capture in a
+disposable copy, then rebuilding, fails all 28 integration cases (29 reported
+failures including the parent): eight explicit parent-B failures and twenty
+other Azure-parent-A overwrite failures. The fixed integration/CLI suite passes
+32/32. Only the current additive declaration snapshot changes; the released
+consumer and its declaration fixtures remain unchanged.

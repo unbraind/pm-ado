@@ -32,6 +32,8 @@ export declare class NativeWriteFence {
     constructor(sdk: typeof Sdk, pmRoot: string, author: string, write?: (id: string, options: Sdk.PmUpdateActionOptions) => Promise<unknown>, onTransition?: Sdk.CommitWorkspaceTransactionOptions["onTransition"]);
     /** Recover interrupted verifications before a fresh inspection of this item. */
     capture(id: string): Promise<void>;
+    /** Fence a create receipt from its immutable SDK birth, rejecting every later entry before further writes. */
+    captureCreated(created: Sdk.ItemMetadata): Promise<void>;
     /** Expose a copy for portable plans and locked preflight checks. */
     head(id: string): NativeHead;
     /** Refuse a read-back whose native history advanced even when no publication is needed. */

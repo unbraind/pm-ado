@@ -75,6 +75,16 @@ export class NativeWriteFence {
     this.heads.set(id, await nativeHead(this.sdk, this.pmRoot, id));
   }
 
+  /** Fence a create receipt from its immutable SDK birth, rejecting every later entry before further writes. */
+  async captureCreated(created: Sdk.ItemMetadata): Promise<void> {
+    const { entries } = await this.sdk.readHistorySnapshot(this.sdk.getHistoryPath(this.pmRoot, created.id), created.id);
+    const birth = entries[0];
+    if (birth?.op !== "create" || !this.sdk.stableValueEquals(
+      this.sdk.replayToItemDocument(this.sdk.replayHistoryToTarget(entries, 0)).metadata, created)) throw new NativeHistoryConflict();
+    this.heads.set(created.id, { length: 1, hash: birth.record_hash ?? this.sdk.hashHistoryRecord(birth) });
+    await this.assertCurrent(created.id);
+  }
+
   /** Expose a copy for portable plans and locked preflight checks. */
   head(id: string): NativeHead { return { ...this.heads.get(id)! }; }
 

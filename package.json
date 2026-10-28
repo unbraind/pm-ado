@@ -1,6 +1,6 @@
 {
   "name": "pm-ado",
-  "version": "2026.10.26",
+  "version": "2026.10.28",
   "description": "Azure DevOps work-item sync for pm-cli, with revision-checked writes so concurrent agents cannot clobber each other",
   "repository": {
     "type": "git",

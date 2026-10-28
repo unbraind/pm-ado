@@ -1,6 +1,12 @@
 # SDK adoption evidence (2026-10-25)
 
-**Current implementation (R9):** native writes use SDK lifecycle operations
+**Escalated review remains blocked:** the proposed lock-only replacement cannot
+protect ordinary SDK writers in either pinned SDK `2026.10.25` or published SDK
+`2026.10.28`. See the cross-process capability assessment below. The recovery
+finding involving an intent compensation record remains unresolved; the earlier
+passing gates do not establish that it is fixed.
+
+**Retained implementation (R9):** native writes use SDK lifecycle operations
 inside `commitWorkspaceTransaction`, with history-head verification and
 selective compensation under `mutateItemWithHistoryContext`. Fixed-clock and
 ABA edits now refuse with typed conflicts and retain peer state. This is the
@@ -423,3 +429,54 @@ failures including the parent): eight explicit parent-B failures and twenty
 other Azure-parent-A overwrite failures. The fixed integration/CLI suite passes
 32/32. Only the current additive declaration snapshot changes; the released
 consumer and its declaration fixtures remain unchanged.
+
+## Escalated review: workspace transaction isolation prerequisite
+
+The requested replacement imports `commitWorkspaceTransaction` from the broad
+`@unbrained/pm-cli/sdk` entry. Its public declaration promises ordered steps under
+one workspace writer lock, and `inspect()` and `apply()` do execute under that
+lock. However, its `sdk-workspace-transaction` lock is acquired by transaction
+callers and workspace snapshot operations, not ordinary native SDK lifecycle
+updates. Those writers use item/hierarchy locks. Holding a workspace transaction
+does not prevent a second process from changing the current item between its
+inspection and application. Re-reading inside `inspect()` alone therefore does
+not make the later write conditional.
+
+Run the standalone capability diagnostic with the pinned SDK:
+
+```sh
+node test/helpers/workspace-lock-probe.ts
+```
+
+It creates a real tracker outside git, starts a second OS process for each
+native `sdk.update`, and waits for that process to commit while the parent still
+holds the workspace transaction lock. Every transaction uses a unique
+`${item}-${randomUUID()}` identity and reads current state inside `inspect()`.
+The diagnostic exits **4** when the advertised isolation is unavailable. It is
+not a passing acceptance test and is not added to the release test suite.
+
+| Peer edit after locked inspection | Subsequent transaction write | Observed result |
+| --- | --- | --- |
+| Title becomes `Peer` | Set title to `Azure` | Peer title lost; transaction `committed` |
+| Assign parent B | Assign parent A | Parent B lost; transaction `committed` |
+| Add a related dependency | Clear dependencies | Peer dependency lost; transaction `committed` |
+| Assign `peer-agent` | Assign `azure-agent` | Peer assignment lost; transaction `committed` |
+
+All **4/4** cases reproduce with installed SDK `2026.10.25`. The same standalone
+probe run against an isolated copy of the published `2026.10.28` package also
+reproduces **4/4** violations; no repository dependency was changed. Public
+transaction, item-mutation and history declarations and open upstream issues
+were checked. There is no expected native history-head/hash precondition in the
+installed lifecycle API. A true item compare-and-set is tracked by
+[pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576).
+
+The required SDK contract is either a workspace critical section joined by
+**all** native writers, with reentrancy for writes made inside it, or an expected
+item revision/hash checked under the native item lock. Merely adding more
+current-state reads leaves the same race before the next native write.
+
+No production fence, history proof or compensation code was removed in this
+assessment. The requested lock-removal revert proof and sync/crash acceptance
+matrix cannot establish safety until the underlying SDK isolation exists.
+There is **zero** production line delta in this escalation; it documents a
+blocking prerequisite rather than claiming a completed repair.

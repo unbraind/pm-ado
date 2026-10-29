@@ -10,8 +10,18 @@ export function isNativeHead(value) {
 export class NativeHistoryConflict extends Error {
     exitCode = 4;
     code = "ADO_CONFLICT";
-    /** Return a stable refusal without leaking item content. */
-    constructor() { super("Native item history advanced; re-read both trackers and retry."); }
+    /** Stable forward-only class alongside the compatible CLI envelope. */
+    kind = "sync_conflict";
+    /** Canonical local target, when a guarded write has selected one. */
+    item;
+    /** Saved and current field values; null represents an absent field. */
+    fields;
+    /** Return a structured, forward-only conflict without rewriting either writer's work. */
+    constructor(item = null, fields = {}) {
+        super("Local sync state changed; re-read both trackers and re-plan from current tracker state.");
+        this.item = item;
+        this.fields = fields;
+    }
 }
 /** Use the SDK's native record chain as the only local revision witness. */
 export async function nativeHead(sdk, pmRoot, id) {
@@ -19,207 +29,108 @@ export async function nativeHead(sdk, pmRoot, id) {
     const last = entries.at(-1);
     return { length: entries.length, hash: last === undefined ? "empty" : last.record_hash ?? sdk.hashHistoryRecord(last) };
 }
-/** Apply later native peer set edits to the state before the stale write, using SDK value equality. */
-function preservePeerCollection(sdk, before, own, latest) {
-    const result = before.filter((value) => !own.some((entry) => sdk.stableValueEquals(entry, value)) || latest.some((entry) => sdk.stableValueEquals(entry, value)));
-    for (const value of latest)
-        if (!own.some((entry) => sdk.stableValueEquals(entry, value)) && !result.some((entry) => sdk.stableValueEquals(entry, value)))
-            result.push(structuredClone(value));
-    return result;
-}
-/** Capture before inspecting, then carry only verified own revisions between writes. */
+/** Inspect native state before each write and detect intervening events without compensation. */
 export class NativeWriteFence {
     heads = new Map();
+    snapshots = new Map();
+    /** Upper bound from final revision read to the latest SDK write completing, in milliseconds. */
+    lastWriteWindowMs = 0;
+    /** Bind real SDK lifecycle operations; the optional dispatch also supports host-owned adapters. */
     sdk;
     pmRoot;
     author;
     write;
-    onTransition;
-    journals = new Map();
-    inspectedJournals = false;
-    /** Bind the host SDK without replacing extensions, hooks or lifecycle policy. */
-    constructor(sdk, pmRoot, author, write, onTransition) {
+    /** Bind SDK operations without replacing their hierarchy or permission validation. */
+    constructor(sdk, pmRoot, author, write) {
         this.sdk = sdk;
         this.pmRoot = pmRoot;
         this.author = author;
         this.write = write ?? ((id, options) => sdk.update(id, options, { pmRoot }));
-        this.onTransition = onTransition;
     }
-    /** Recover interrupted verifications before a fresh inspection of this item. */
+    /** Read authoritative normalized fields through settings-aware SDK location. */
+    async document(id) {
+        const settings = await this.sdk.readSettings(this.pmRoot);
+        const located = await this.sdk.locateItem(this.pmRoot, id, settings.id_prefix, settings.item_format, this.sdk.resolveItemTypeRegistry(settings, this.sdk.getActiveExtensionRegistrations()).type_to_folder);
+        if (located === null)
+            throw new NativeHistoryConflict(id, { item: { base: "present", current: null } });
+        return (await this.sdk.readLocatedItem(located, { schema: settings.schema })).document;
+    }
+    /** Capture current state for a new plan; abandoned journals never replay old writes. */
     async capture(id) {
-        if (!this.inspectedJournals) {
-            const inspection = await this.sdk.runWorkspaceTransactionGc(this.pmRoot, { dryRun: true, retentionDays: Infinity });
-            for (const journal of inspection.entries)
-                this.journals.set(journal.file, journal.status);
-            this.inspectedJournals = true;
-        }
-        const history = (await this.sdk.readHistorySnapshot(this.sdk.getHistoryPath(this.pmRoot, id), id)).entries;
-        for (const entry of history) {
-            const marker = entry.message?.match(/^bulk-item-transaction (\S+) native-fence:(\d+):([a-zA-Z0-9_-]+)(?: native-payload:([a-zA-Z0-9_-]+))? apply$/u);
-            if (marker === undefined || marker === null)
-                continue;
-            const expected = { length: Number(marker[2]), hash: marker[3] };
-            const journal = `transactions/sdk/${this.journalId(marker[1], expected, marker[4])}.json`;
-            if (this.journals.get(journal) === "committed" && history.some((event) => event.context?.ado_native_write === entry.record_hash))
-                continue;
-            await this.commit(id, {}, marker[1], expected, entry.author, marker[4]);
-        }
-        this.heads.set(id, await nativeHead(this.sdk, this.pmRoot, id));
+        const head = await nativeHead(this.sdk, this.pmRoot, id), document = await this.document(id);
+        this.heads.set(id, head);
+        this.snapshots.set(id, document);
     }
-    /** Fence a create receipt from its immutable SDK birth, rejecting every later entry before further writes. */
+    /** Bind a newly created item to its SDK birth receipt rather than adopting a later peer edit. */
     async captureCreated(created) {
         const { entries } = await this.sdk.readHistorySnapshot(this.sdk.getHistoryPath(this.pmRoot, created.id), created.id);
         const birth = entries[0];
-        if (birth?.op !== "create" || !this.sdk.stableValueEquals(this.sdk.replayToItemDocument(this.sdk.replayHistoryToTarget(entries, 0)).metadata, created))
-            throw new NativeHistoryConflict();
+        if (birth?.op !== "create")
+            throw new NativeHistoryConflict(created.id);
+        const document = this.sdk.replayToItemDocument(this.sdk.replayHistoryToTarget(entries, 0));
+        if (!this.sdk.stableValueEquals(document.metadata, created))
+            throw new NativeHistoryConflict(created.id);
+        this.snapshots.set(created.id, document);
         this.heads.set(created.id, { length: 1, hash: birth.record_hash ?? this.sdk.hashHistoryRecord(birth) });
         await this.assertCurrent(created.id);
     }
-    /** Expose a copy for portable plans and locked preflight checks. */
+    /** Copy the portable native coordinate used by resolution plans. */
     head(id) { return { ...this.heads.get(id) }; }
-    /** Refuse a read-back whose native history advanced even when no publication is needed. */
+    /** Build field evidence from saved and current SDK-normalized documents. */
+    conflict(id, current, keys) {
+        const previous = this.snapshots.get(id);
+        const before = new Map(Object.entries({ ...previous.metadata, body: previous.body }));
+        const after = new Map(Object.entries({ ...current.metadata, body: current.body }));
+        const fields = Object.fromEntries((keys ?? [...new Set([...before.keys(), ...after.keys()])]).filter((key) => key !== "updated_at" &&
+            !this.sdk.stableValueEquals(before.get(key), after.get(key))).map((key) => [key, { base: before.get(key) ?? null, current: after.get(key) ?? null }]));
+        return new NativeHistoryConflict(id, fields);
+    }
+    /** Refuse advanced native history, including fixed-clock ABA, without any reverse mutation. */
     async assertCurrent(id) {
         const current = await nativeHead(this.sdk, this.pmRoot, id), expected = this.heads.get(id);
-        if (current.length !== expected?.length || current.hash !== expected.hash)
-            throw new NativeHistoryConflict();
-    }
-    /** Commit a native SDK update, then verify or selectively compensate inside its workspace transaction. */
-    async update(id, options, transactionId) {
-        const expected = this.heads.get(id);
         if (expected === undefined)
-            throw new NativeHistoryConflict();
-        await this.assertCurrent(id);
-        return this.commit(id, options, transactionId, expected, this.author, this.sdk.deriveMutationTransactionId(JSON.stringify(options)));
+            throw new NativeHistoryConflict(id, { history: { base: null, current } });
+        if (current.length !== expected.length || current.hash !== expected.hash) {
+            const conflict = this.conflict(id, await this.document(id));
+            if (!Object.keys(conflict.fields).length)
+                conflict.fields.history = { base: expected, current };
+            throw conflict;
+        }
     }
-    /** Bind SDK journal identity to the immutable inspected head, independent of timestamps. */
-    journalId(transactionId, expected, payload) {
-        return `${transactionId}-${this.sdk.deriveMutationTransactionId(JSON.stringify(payload === undefined ? expected : { ...expected, payload }))}`;
-    }
-    /** Replay the exact native marker after a crash; the SDK owns transaction journaling and lifecycle writes. */
-    async commit(id, options, transactionId, expected, author, payload) {
-        const sdk = this.sdk, pmRoot = this.pmRoot;
-        const message = `bulk-item-transaction ${transactionId} native-fence:${expected.length}:${expected.hash}${payload === undefined ? "" : ` native-payload:${payload}`} apply`;
-        let conflict = false;
-        let version = "";
-        /** Verify the actual native author, operation and immutable patch under the same lease as compensation. */
-        const verify = async (compensate = false) => {
-            const settings = await sdk.readSettings(pmRoot);
-            const entries = (await sdk.readHistorySnapshot(sdk.getHistoryPath(pmRoot, id), id)).entries;
-            const index = entries.findIndex((entry) => entry.message === message && entry.author === author);
-            if (index < 0)
-                throw new NativeHistoryConflict();
-            const own = entries[index];
-            const verified = entries.map((entry) => entry.context?.ado_native_write === own.record_hash).lastIndexOf(true);
-            if (verified >= 0 && (!compensate || entries[verified].context?.ado_native_conflict === true)) {
-                conflict = entries[verified].context?.ado_native_conflict === true;
-                version = entries[verified].ts;
-                this.heads.set(id, { length: verified + 1, hash: entries[verified].record_hash });
-                return true;
-            }
-            const context = { ado_native_write: own.record_hash, ado_native_conflict: false };
-            await sdk.mutateItemWithHistoryContext({ pmRoot, settings, id, author, op: "update", bypassAssigneeConflict: true,
-                message: "Verify native Azure mutation", historyContext: context,
-                mutate: async (document) => {
-                    const history = (await sdk.readHistorySnapshot(sdk.getHistoryPath(pmRoot, id), id)).entries;
-                    const actualIndex = history.findIndex((entry) => entry.record_hash === own.record_hash);
-                    const prior = history[expected.length - 1];
-                    conflict = compensate || actualIndex !== expected.length || (prior !== undefined && (prior.record_hash ?? sdk.hashHistoryRecord(prior)) !== expected.hash) ||
-                        history.length !== expected.length + 1 || !["update", "close", "reopen"].includes(own.op);
-                    context.ado_native_conflict = conflict;
-                    if (!conflict)
-                        return { changedFields: [] };
-                    // SDK replay verifies the immutable patch and reconstructs the actual peer state immediately before our write.
-                    const before = sdk.replayHistoryToTarget(history, actualIndex - 1);
-                    const afterOwn = sdk.applyHistoryPatch(structuredClone(before), own.patch, actualIndex + 1, own.op);
-                    const fields = new Set(own.patch.map((patch) => patch.path.split("/").slice(0, 3).join("/")));
-                    const later = new Set(history.slice(actualIndex + 1).flatMap((entry) => entry.patch.map((patch) => patch.path.split("/").slice(0, 3).join("/"))));
-                    const changedFields = [];
-                    for (const path of fields) {
-                        const key = path.split("/")[2];
-                        if (later.has(path)) {
-                            if (key === "tags" || key === "dependencies") {
-                                Object.assign(document.metadata, { [key]: preservePeerCollection(sdk, (before.metadata[key] ?? []), (afterOwn.metadata[key] ?? []), (document.metadata[key] ?? [])) });
-                                changedFields.push(key);
-                            }
-                            continue; // Later native scalar values remain authoritative.
-                        }
-                        if (path === "/body") {
-                            document.body = before.body;
-                            changedFields.push("body");
-                            continue;
-                        }
-                        if (Object.hasOwn(before.metadata, key))
-                            document.metadata[key] = structuredClone(before.metadata[key]);
-                        else
-                            delete document.metadata[key];
-                        changedFields.push(key);
-                    }
-                    return { changedFields };
-                } });
-            const after = (await sdk.readHistorySnapshot(sdk.getHistoryPath(pmRoot, id), id)).entries;
-            const receipt = after.map((entry) => entry.context?.ado_native_write === own.record_hash).lastIndexOf(true);
-            version = after[receipt].ts;
-            this.heads.set(id, { length: receipt + 1, hash: after[receipt].record_hash });
-            return true;
-        };
-        const journalId = this.journalId(transactionId, expected, payload);
-        await sdk.commitWorkspaceTransaction({ pmRoot, author, onTransition: this.onTransition,
-            transactionId: journalId, steps: [{ id: "native-write",
-                    inspect: async () => {
-                        const history = (await sdk.readHistorySnapshot(sdk.getHistoryPath(pmRoot, id), id)).entries;
-                        const own = history.find((entry) => entry.message === message && entry.author === author);
-                        const receipt = own === undefined ? -1 : history.map((entry) => entry.context?.ado_native_write === own.record_hash).lastIndexOf(true);
-                        if (receipt < 0)
-                            return { state: "pending" };
-                        conflict = history[receipt].context?.ado_native_conflict === true;
-                        version = history[receipt].ts;
-                        this.heads.set(id, { length: receipt + 1, hash: history[receipt].record_hash });
-                        return { state: "applied", result: { conflict } };
-                    },
-                    apply: async () => {
-                        const history = (await sdk.readHistorySnapshot(sdk.getHistoryPath(pmRoot, id), id)).entries;
-                        if (!history.some((entry) => entry.message === message && entry.author === author)) {
-                            try {
-                                await this.write(id, { ...options, author, message });
-                            }
-                            catch (error) {
-                                const failed = (await sdk.readHistorySnapshot(sdk.getHistoryPath(pmRoot, id), id)).entries;
-                                if (failed.some((entry) => entry.message === message && entry.author === author)) {
-                                    await verify();
-                                    if (conflict)
-                                        return { conflict };
-                                }
-                                else {
-                                    const current = await nativeHead(sdk, pmRoot, id);
-                                    if (current.length !== expected.length || current.hash !== expected.hash)
-                                        throw new NativeHistoryConflict();
-                                }
-                                throw error;
-                            }
-                            const after = (await sdk.readHistorySnapshot(sdk.getHistoryPath(pmRoot, id), id)).entries;
-                            if (!after.some((entry) => entry.message === message && entry.author === author)) {
-                                // Native update deliberately omits history for an equivalent value. Give that successful no-op a locked witness.
-                                await sdk.mutateItemWithHistoryContext({ pmRoot, settings: await sdk.readSettings(pmRoot), id, author, op: "update",
-                                    message, bypassAssigneeConflict: true, skipNoop: false, historyContext: { ado_native_noop: true },
-                                    mutate: async () => {
-                                        const current = await nativeHead(sdk, pmRoot, id);
-                                        if (current.length !== expected.length || current.hash !== expected.hash)
-                                            throw new NativeHistoryConflict();
-                                        return { changedFields: [] };
-                                    } });
-                            }
-                        }
-                        await verify();
-                        return { conflict };
-                    },
-                    compensate: async () => { await verify(true); }, }] });
-        this.journals.set(`transactions/sdk/${journalId}.json`, "committed");
-        // A committed journal may replay without invoking its steps; immutable verification remains authoritative.
-        await verify();
-        if (conflict)
-            throw new NativeHistoryConflict();
+    /** Re-read changed fields, write forward once, and report races without restoring anything. */
+    async update(id, options, transactionId) {
+        if (!this.snapshots.has(id))
+            throw new NativeHistoryConflict(id);
+        const keys = [...Object.keys(options).filter((key) => !["field", "unset", "dep", "message", "author", "force"].includes(key)),
+            ...(options.field ?? []).map((field) => field.split("=")[0]), ...(options.unset ?? []),
+            ...(options.dep !== undefined || options.clearDeps || options.replaceDeps ? ["dependencies"] : []), ...(options.status !== undefined ? ["assignee"] : [])];
+        const conflict = this.conflict(id, await this.document(id), keys);
+        if (Object.keys(conflict.fields).length)
+            throw conflict;
         await this.assertCurrent(id);
-        return version;
+        const expected = this.heads.get(id);
+        const message = `bulk-item-transaction ${transactionId} apply${options.message === undefined ? "" : `; ${options.message}`}`;
+        // Native CAS is missing (#1576, #1620): an ordinary writer can still enter after this read.
+        const readAt = performance.now();
+        try {
+            await this.write(id, { ...options, author: this.author, message });
+        }
+        catch (error) {
+            await this.assertCurrent(id);
+            throw error;
+        }
+        finally {
+            this.lastWriteWindowMs = performance.now() - readAt;
+        }
+        const { entries } = await this.sdk.readHistorySnapshot(this.sdk.getHistoryPath(this.pmRoot, id), id);
+        const current = await this.document(id);
+        if (entries.slice(expected.length).some((entry) => entry.author !== this.author || entry.message !== message))
+            throw this.conflict(id, current);
+        this.snapshots.set(id, current);
+        const last = entries.at(-1);
+        this.heads.set(id, { length: entries.length, hash: last === undefined ? "empty" : last.record_hash ?? this.sdk.hashHistoryRecord(last) });
+        await this.assertCurrent(id);
+        return current.metadata.updated_at;
     }
 }
 //# sourceMappingURL=history-fence.js.map

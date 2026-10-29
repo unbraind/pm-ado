@@ -41,6 +41,36 @@ interface Plan {
     /** Provenance fields already persisted after a successful remote creation. */
     linked_fields?: string[];
 }
+/** Stable command receipt; native races retain the established ADO_CONFLICT envelope and typed field evidence. */
+export interface SyncCommandResult {
+    /** Whether every selected operation completed. */
+    ok: boolean;
+    /** Preview mode does not commit either tracker. */
+    dry_run: boolean;
+    /** Planned and completed operation coordinates. */
+    plans: Plan[];
+    /** Three-way field conflicts observed before effects. */
+    conflicts: Conflict[];
+    /** Unmapped relation and transport diagnostics. */
+    diagnostics: unknown[];
+    /** Existing CLI machine code. */
+    code?: string;
+    /** Existing process exit contract. */
+    exit_code?: number;
+    /** Human-readable refusal, when present. */
+    error?: string;
+    /** Forward-only conflict class, also available with compact output. */
+    kind?: "sync_conflict";
+    /** Exact native target and before/current field values. */
+    sync_conflict?: {
+        code: "sync_conflict";
+        pm_id: string | null;
+        fields: Record<string, {
+            base: unknown;
+            current: unknown;
+        }>;
+    };
+}
 /** Detect a field requiring an explicit decision rather than choosing either writer. */
 export declare function threeWayFieldConflict(local: unknown, remote: unknown, base: unknown): boolean;
 /** Parse an optional JSON state map and reject unusable configuration before reads. */
@@ -99,33 +129,6 @@ export declare function transport(method: string, url: string, body: string | un
     body: string;
 }>;
 /** Build and apply one command plan using only the host-bound SDK client. */
-export declare function runSyncCommand(ctx: CommandHandlerContext, mode: "import" | "export" | "sync", observer?: SyncObserver, sdkAnchors?: readonly string[]): Promise<{
-    ok: boolean;
-    code: string;
-    exit_code: 4;
-    dry_run: boolean;
-    plans: Plan[];
-    conflicts: Conflict[];
-    diagnostics: unknown[];
-    error?: undefined;
-} | {
-    ok: boolean;
-    dry_run: boolean;
-    plans: Plan[];
-    conflicts: Conflict[];
-    diagnostics: unknown[];
-    code?: undefined;
-    exit_code?: undefined;
-    error?: undefined;
-} | {
-    ok: boolean;
-    code: string;
-    exit_code: number;
-    dry_run: boolean;
-    plans: Plan[];
-    conflicts: Conflict[];
-    diagnostics: unknown[];
-    error: string;
-}>;
+export declare function runSyncCommand(ctx: CommandHandlerContext, mode: "import" | "export" | "sync", observer?: SyncObserver, sdkAnchors?: readonly string[]): Promise<SyncCommandResult>;
 export {};
 //# sourceMappingURL=sync.d.ts.map

@@ -1,4 +1,5 @@
-import { normalizeFieldValues, normalizeStatusValue, normalizeAssigneeValue, normalizeItemReference, normalizeScopeValue, normalizeStateMaps, type ValueNormalization } from "./normalization.ts";
+import { randomUUID } from "node:crypto";
+import { normalizeFieldValues, normalizeStatusValue, normalizeItemReference, normalizeScopeValue, normalizeStateMaps, type ValueNormalization } from "./normalization.ts";
 /** Command orchestration and per-field Azure DevOps reconciliation. */
 import { advanceSyncBase, readBaseRevisions, knownBase, baseFields } from "./agreement.ts";
 import { loadResolutionSdk, resolutionDigest } from "./resolution.ts";
@@ -58,6 +59,29 @@ interface Plan {
   export_fields: string[];
   /** Provenance fields already persisted after a successful remote creation. */
   linked_fields?: string[];
+}
+/** Stable command receipt; native races retain the established ADO_CONFLICT envelope and typed field evidence. */
+export interface SyncCommandResult {
+  /** Whether every selected operation completed. */
+  ok: boolean;
+  /** Preview mode does not commit either tracker. */
+  dry_run: boolean;
+  /** Planned and completed operation coordinates. */
+  plans: Plan[];
+  /** Three-way field conflicts observed before effects. */
+  conflicts: Conflict[];
+  /** Unmapped relation and transport diagnostics. */
+  diagnostics: unknown[];
+  /** Existing CLI machine code. */
+  code?: string;
+  /** Existing process exit contract. */
+  exit_code?: number;
+  /** Human-readable refusal, when present. */
+  error?: string;
+  /** Forward-only conflict class, also available with compact output. */
+  kind?: "sync_conflict";
+  /** Exact native target and before/current field values. */
+  sync_conflict?: { code: "sync_conflict"; pm_id: string | null; fields: Record<string, { base: unknown; current: unknown }> };
 }
 /** Internal plan retaining snapshots without exposing private item bodies by default. */
 interface Entry {
@@ -290,24 +314,18 @@ export function mergeSyncValues(local: Values, remote: Values, base: Values | un
   }));
 }
 
-/** Package-owned local plan; native SDK transactions supply all durability and conditional writes. */
+/** Advisory observed-revision checkpoint; it never grants authority to overwrite or restore native fields. */
 interface PendingSyncWrite {
-  /** Versioned integration recovery contract. */
-  schema: "pm-ado/local/1";
-  /** Original plan scope and inspected local revision. */
+  /** Current checkpoint format; older mutable intents are retired on every fresh invocation. */
+  schema: "pm-ado/local/2";
+  /** Selected Azure scope, recorded only as an opaque coordinate. */
   scope: string;
-  /** Timestamp read before preparing this plan. */
-  version: string;
-  /** Digest binds scope, local identity and inspected revision. */
+  /** Unique invocation coordinate, never a timestamp or a replay lock. */
   plan: string;
-  /** Requested local scalar values are intent, never common-base evidence. */
-  wanted: Values;
-  /** Actual Azure projection seen before local application; not common-base evidence. */
-  seen: Values;
-  /** Minimum observed Azure identity/revision, when that endpoint has been read. */
+  /** Actual observed Azure identity/revision, when available. */
   remote?: { id: number; revision: number };
-  /** Desired mapped assignment and exact native close marker, when a close is in progress. */
-  close?: { status: string; assignee: string; transaction: string };
+  /** Diagnostic forward stage, with no recovery precondition. */
+  stage?: "close";
 }
 
 /** Describe a refused revision using the client's single diagnostic snapshot. */
@@ -328,11 +346,19 @@ export async function transport(method: string, url: string, body: string | unde
 }
 
 /** Build and apply one command plan using only the host-bound SDK client. */
-export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" | "export" | "sync", observer?: SyncObserver, sdkAnchors?: readonly string[]) {
+export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" | "export" | "sync", observer?: SyncObserver, sdkAnchors?: readonly string[]): Promise<SyncCommandResult> {
   const plans: Plan[] = [];
   const conflicts: Conflict[] = [];
   const diagnostics: unknown[] = [];
+  let nativeWrites: NativeWriteFence | undefined;
+  let activeItem: string | undefined;
   const dryRun = ctx.options.dryRun === true || ctx.options["dry-run"] === true;
+  /** Render native and Azure plan refusals with the same forward-only field contract. */
+  const conflictResult = (): SyncCommandResult => ({ ok: false, code: "ADO_CONFLICT", kind: "sync_conflict",
+    error: "Local sync persistence refused; conflicting current fields require a fresh plan.", exit_code: EXIT_CODE.conflict,
+    dry_run: dryRun, plans, conflicts, diagnostics,
+    sync_conflict: { code: "sync_conflict", pm_id: conflicts[0]!.pm_id,
+      fields: Object.fromEntries(Object.entries(conflicts[0]!.fields).map(([key, value]) => [key, { base: value.base ?? null, current: value.local }])) } });
   try {
     const config = readConfig(process.env);
     if (config === undefined) throw new CommandError(preflightMessage(ctx.command, missingEnv(process.env)));
@@ -364,123 +390,56 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
     const author = sdk.selectImportAuthor(ctx.global.author, settings.author_default);
     const outbox = new SyncOutbox(ctx.pm_root, author, config, client, observer, sdk);
     let snapshot = await pm.listAllComplete();
-    const nativeWrites = new NativeWriteFence(sdk, ctx.pm_root, author);
+    const writes = new NativeWriteFence(sdk, ctx.pm_root, author);
+    nativeWrites = writes;
     if (!dryRun) {
-      for (const item of snapshot.items) await nativeWrites.capture(item.id);
+      for (const item of snapshot.items) await writes.capture(item.id);
       snapshot = await pm.listAllComplete();
     }
     let { items } = snapshot;
-    let versions = new Map(items.map((item) => [item.id, item.updated_at]));
+    const versions = new Map(items.map((item) => [item.id, item.updated_at]));
     const localPlans = new Map<string, PendingSyncWrite>();
     const foreignKeys = new Map<string, Set<string>>();
     const ownedKeys = new Map<string, Set<string>>();
-    const localGoals = new Map<string, Values>();
-    const localSeen = new Map<string, Values>();
     const localRemote = new Map(items.flatMap((item) => Number.isSafeInteger(item.ado_id) && Number.isSafeInteger(item.ado_rev) && Number(item.ado_rev) > 0
       ? [[item.id, { id: Number(item.ado_id), revision: Number(item.ado_rev) }] as const] : []));
     const scope = resolutionDigest([config.orgUrl, config.project]);
-    /** Write one SDK mutation, carrying only this command's immutable history revision. */
-    const commitLocal = async (id: string, options: PmUpdateActionOptions, operation: string, transactionId: string) => {
-      await observer?.({ boundary: "local", phase: "before", operation, item: id });
-      try {
-        versions.set(id, await nativeWrites.update(id, options, transactionId));
-      } catch (error) {
-        if (error instanceof sdk.PmCliError && error.exitCode === EXIT_CODE.conflict) throw new CommandError("Local sync persistence refused; re-read both trackers and retry. Earlier Azure or pm operations may have succeeded.", EXIT_CODE.conflict);
-        throw error;
-      }
-      await observer?.({ boundary: "local", phase: "after", operation, item: id });
-      await nativeWrites.assertCurrent(id);
-    };
-    /** Persist the integration plan before its first native effect; agreement clears it atomically. */
-    const persist = async (id: string, options: PmUpdateActionOptions, operation = "update", suffix?: string) => {
-      let pending = localPlans.get(id);
-      if (pending === undefined && operation !== "agreement") {
-        const version = versions.get(id)!;
-        pending = { schema: "pm-ado/local/1", scope, version, plan: resolutionDigest([scope, id, version]),
-          wanted: structuredClone(localGoals.get(id) ?? localValues(items.find((item) => item.id === id)!, normalization)), seen: structuredClone(localSeen.get(id) ?? {}), remote: localRemote.get(id) };
-        await commitLocal(id, { field: [`ado_sync_intent=${JSON.stringify(pending)}`], message: "Prepare mapped local writes" }, "local-prepared", `ado-local-${pending.plan}`);
-        localPlans.set(id, pending);
-      }
-      const goal = localGoals.get(id);
-      const seen = localSeen.get(id);
-      if (operation !== "agreement" && pending !== undefined && goal !== undefined && (!equal(pending.wanted, goal) || seen !== undefined && !equal(pending.seen, seen) || !equal(pending.remote, localRemote.get(id)))) {
-        pending.wanted = structuredClone(goal);
-        if (seen !== undefined) pending.seen = structuredClone(seen);
-        pending.remote = localRemote.get(id);
-        await commitLocal(id, { field: [`ado_sync_intent=${JSON.stringify(pending)}`], message: "Refresh mapped local intent" }, "local-replanned",
-          `ado-sync-${pending.plan}-${sdk.deriveMutationTransactionId(JSON.stringify([versions.get(id), pending]))}`);
-      }
-      const transactionId = `ado-sync-${pending?.plan ?? "agreement"}-${suffix ?? sdk.deriveMutationTransactionId(JSON.stringify([id, versions.get(id), options]))}`;
-      await commitLocal(id, options, operation, transactionId);
-    };
-    /** Recovery ownership applies to every actual graph endpoint, independent of query selection. */
-    const guardRelationUpdate = async (id: string, options: PmUpdateActionOptions) => {
-      const relationWrite = options.parent !== undefined || options.dep !== undefined ||
-        options.unset?.some((key) => key === "parent" || key === "dependencies");
-      if (mode !== "sync" || !relationWrite) return;
-      let changed = foreignKeys.get(id)?.has("relations") === true;
-      if (!changed && !ownedKeys.get(id)?.has("relations") && items.some((item) => item.id === id)) {
-        const local = await readLocalAgreement(snapshotReader, id, config, undefined, normalization);
-        changed = !equal(local.values.relations, local.base?.relations);
-      }
-      if (changed) throw new CommandError(`Local relations changed at affected endpoint ${id}; re-read both trackers and resolve that endpoint before retrying`, EXIT_CODE.conflict);
-    };
-    /** Keep native close and mapped assignment replayable without treating native clearing as a local edit. */
-    const update = async (id: string, options: PmUpdateActionOptions) => {
-      await guardRelationUpdate(id, options);
-      if (options.status !== sdk.resolveRuntimeStatusRegistry(settings.schema).close_status) return persist(id, options);
-      const { status, closeReason, completedAt, ...scalars } = options;
-      await persist(id, scalars);
-      const pending = localPlans.get(id)!;
-      const transaction = `close-${resolutionDigest([versions.get(id), status, closeReason, scalars.assignee ?? ""])}`;
-      pending.close = { status, assignee: scalars.assignee ?? "", transaction };
-      await persist(id, { field: [`ado_sync_intent=${JSON.stringify(pending)}`], message: "Prepare mapped close assignment" }, "close-prepared");
-      await persist(id, { status, closeReason: closeReason!, completedAt, force: options.force }, "close", transaction);
-      if (pending.close.assignee !== "") await persist(id, { assignee: pending.close.assignee }, "assignment");
-    };
-    let recoveredLocal = false;
-    for (const item of items.filter((row) => row.ado_sync_intent !== undefined)) {
-      let pending: PendingSyncWrite;
-      try { pending = JSON.parse(String(item.ado_sync_intent)) as PendingSyncWrite; }
-      catch { throw new CommandError("Invalid local sync intent", EXIT_CODE.conflict); }
-      if (typeof pending !== "object" || pending === null || pending.schema !== "pm-ado/local/1" || pending.scope !== scope ||
-          typeof pending.version !== "string" || pending.plan !== resolutionDigest([scope, item.id, pending.version]) ||
-          typeof pending.wanted !== "object" || pending.wanted === null || Array.isArray(pending.wanted) ||
-          typeof pending.seen !== "object" || pending.seen === null || Array.isArray(pending.seen) ||
-          pending.remote !== undefined && (typeof pending.remote !== "object" || pending.remote === null || !Number.isSafeInteger(pending.remote.id) || pending.remote.id < 1 ||
-            !Number.isSafeInteger(pending.remote.revision) || pending.remote.revision < 1 || item.ado_id !== undefined && item.ado_id !== pending.remote.id) ||
-          pending.close !== undefined && (typeof pending.close !== "object" || pending.close === null || typeof pending.close.status !== "string" ||
-            typeof pending.close.assignee !== "string" || !/^close-[a-f0-9]{64}$/u.test(pending.close.transaction))) throw new CommandError("Invalid local sync intent", EXIT_CODE.conflict);
-      localPlans.set(item.id, pending);
+    const observed = new Map<string, number>();
+    // Remember peer edits after unacknowledged integration effects even when obsolete intents are discarded.
+    for (const item of items) {
       const history = (await sdk.readHistorySnapshot(sdk.getHistoryPath(ctx.pm_root, item.id), item.id)).entries;
-      const prepared = history.map((entry) => entry.message?.startsWith(`bulk-item-transaction ado-local-${pending.plan} `) === true).lastIndexOf(true);
-      if (prepared < 0 || history.slice(prepared + 1).some((entry) => entry.patch.some((patch) => patch.path === "/metadata/ado_sync_intent") &&
-          !entry.message?.startsWith(`bulk-item-transaction ado-sync-${pending.plan}-`))) throw new CommandError("Local sync intent lacks its SDK history proof", EXIT_CODE.conflict);
-      // Keep original plan/history coordinates opaque; compare every older semantic field in native form.
-      pending.wanted = normalizeFieldValues(pending.wanted, normalization);
-      pending.seen = normalizeFieldValues(pending.seen, normalization);
-      const latest = new Map<string, boolean>();
-      for (const entry of history.slice(prepared + 1)) for (const patch of entry.patch) {
-        const field = patch.path.split("/")[2];
-        const key = ["parent", "dependencies"].includes(field) ? "relations" : field;
-        if (Object.hasOwn(ADO_FIELD_MAP, key) || key === "relations") latest.set(key, entry.message?.startsWith(`bulk-item-transaction ado-sync-${pending.plan}-`) !== true);
+      const latest = new Map<string, boolean>(), agreed = new Map<string, string>();
+      for (const entry of history) {
+        const own = entry.message?.startsWith("bulk-item-transaction ado-sync-") === true || entry.message?.startsWith("bulk-item-transaction ado-local-") === true ||
+          entry.op === "create" && entry.message?.startsWith("Azure DevOps revision ") === true;
+        if (own && entry.op === "create") for (const key of [...Object.keys(ADO_FIELD_MAP), "relations"]) latest.set(key, false);
+        const revision = own ? entry.message?.match(/(?:^|; )Azure DevOps revision (\d+)$/u) : undefined;
+        if (revision !== undefined && revision !== null && Number.isSafeInteger(Number(revision[1]))) observed.set(item.id, Math.max(observed.get(item.id) ?? 0, Number(revision[1])));
+        for (const patch of entry.patch) {
+          if (own && patch.path === "/metadata/ado_sync_intent" && "value" in patch) {
+            try {
+              const checkpoint = JSON.parse(String(patch.value)) as PendingSyncWrite;
+              if (Number.isSafeInteger(checkpoint.remote?.id) && checkpoint.remote?.id === Number(item.ado_id) && Number.isSafeInteger(checkpoint.remote?.revision)) {
+                observed.set(item.id, Math.max(observed.get(item.id) ?? 0, checkpoint.remote!.revision));
+              }
+            } catch { /* Mutable/corrupt old intents never become a refusal; only native own observations count. */ }
+          }
+          if (patch.path === "/metadata/ado_sync_base" && "value" in patch) {
+            try {
+              const base = knownBase(JSON.parse(String(patch.value)) as Values), revisions = readBaseRevisions(base);
+              for (const key of baseFields(base)) {
+                const coordinate = JSON.stringify([base[key], revisions[key]]);
+                if (agreed.get(key) !== coordinate) { latest.delete(key); agreed.set(key, coordinate); }
+              }
+            } catch { /* Old malformed base metadata cannot authorize a write or prevent replanning. */ }
+          }
+          const field = patch.path.split("/")[2], key = ["parent", "dependencies"].includes(field) ? "relations" : field;
+          if ((Object.hasOwn(ADO_FIELD_MAP, key) || key === "relations") && (own || latest.has(key))) latest.set(key, !own);
+        }
       }
-      const foreign = new Set([...latest].filter(([, changed]) => changed).map(([key]) => key));
-      foreignKeys.set(item.id, foreign);
-      ownedKeys.set(item.id, new Set([...latest].filter(([, changed]) => !changed).map(([key]) => key)));
-      const closing = pending.close;
-      if (closing !== undefined && !foreign.has("status") && !foreign.has("assignee") && normalizeStatusValue(item.status, normalization) === normalizeStatusValue(closing.status, normalization) &&
-          normalizeAssigneeValue(item.assignee ?? "", normalization) !== normalizeAssigneeValue(closing.assignee, normalization) && history.some((entry) => entry.message?.startsWith(`bulk-item-transaction ado-sync-${pending.plan}-${closing.transaction} `))) {
-        if (dryRun) throw new CommandError("Pending native close requires SDK recovery; run sync before planning again", EXIT_CODE.conflict);
-        await persist(item.id, assignmentFields(normalizeAssigneeValue(closing.assignee, normalization)), "assignment-recovery");
-        recoveredLocal = true;
-      }
+      foreignKeys.set(item.id, new Set([...latest].filter(([, foreign]) => foreign).map(([key]) => key)));
+      ownedKeys.set(item.id, new Set([...latest].filter(([, foreign]) => !foreign).map(([key]) => key)));
     }
-    if (recoveredLocal) {
-      snapshot = await pm.listAllComplete(); items = snapshot.items;
-      versions = new Map(items.map((item) => [item.id, item.updated_at]));
-    }
-    const snapshotReader = { listAllComplete: async () => snapshot };
     const identities = new Map<number, string>();
     for (const item of items) {
       if (item.ado_id === undefined) continue;
@@ -490,6 +449,65 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
       if (!Number.isSafeInteger(id) || id < 1 || identities.has(id)) throw new CommandError("ado_id must be unique positive safe integers");
       identities.set(id, item.id);
     }
+    /** Write one SDK mutation, carrying only this command's immutable history revision. */
+    const commitLocal = async (id: string, options: PmUpdateActionOptions, operation: string, transactionId: string) => {
+      activeItem = id;
+      await observer?.({ boundary: "local", phase: "before", operation, item: id });
+      try {
+        versions.set(id, await writes.update(id, options, transactionId));
+      } catch (error) {
+        if (error instanceof sdk.PmCliError) throw new CommandError("Local sync persistence refused; re-read both trackers and retry. Earlier Azure or pm operations may have succeeded.", error.exitCode);
+        throw error;
+      }
+      await observer?.({ boundary: "local", phase: "after", operation, item: id });
+      await writes.assertCurrent(id);
+    };
+    /** Record observed revisions before effects, then write forward; checkpoints are retired on restart. */
+    const persist = async (id: string, options: PmUpdateActionOptions, operation = "update") => {
+      let pending = localPlans.get(id);
+      if (pending === undefined && operation !== "agreement") {
+        pending = { schema: "pm-ado/local/2", scope, plan: randomUUID(), remote: localRemote.get(id) };
+        await commitLocal(id, { field: [`ado_sync_intent=${JSON.stringify(pending)}`] }, "local-prepared", `ado-local-${pending.plan}`);
+        localPlans.set(id, pending);
+      }
+      if (operation !== "agreement" && pending !== undefined && !equal(pending.remote, localRemote.get(id))) {
+        pending.remote = localRemote.get(id);
+        await commitLocal(id, { field: [`ado_sync_intent=${JSON.stringify(pending)}`] }, "local-replanned", `ado-sync-${pending.plan}-${randomUUID()}`);
+      }
+      await commitLocal(id, options, operation, `ado-sync-${pending?.plan ?? "agreement"}-${randomUUID()}`);
+    };
+    /** Recovery ownership applies to every actual graph endpoint, independent of query selection. */
+    const guardRelationUpdate = async (id: string, options: PmUpdateActionOptions) => {
+      const relationWrite = options.parent !== undefined || options.dep !== undefined ||
+        options.unset?.some((key) => key === "parent" || key === "dependencies");
+      if (mode !== "sync" || !relationWrite) return;
+      activeItem = id;
+      const foreign = foreignKeys.get(id)?.has("relations") === true;
+      if (!foreign && (ownedKeys.get(id)?.has("relations") || !items.some((item) => item.id === id))) return;
+      const local = await readLocalAgreement(pm, id, config, undefined, normalization);
+      if (foreign || !equal(local.values.relations, local.base?.relations)) throw new NativeHistoryConflict(id,
+        { relations: { base: local.base?.relations ?? null, current: local.values.relations } });
+    };
+    /** Finish native close policy forward; a restart derives remaining work from fresh reads and native history. */
+    const update = async (id: string, options: PmUpdateActionOptions) => {
+      await guardRelationUpdate(id, options);
+      if (options.status !== statusRegistry.close_status) return persist(id, options);
+      const { status, closeReason, completedAt, ...scalars } = options;
+      await persist(id, scalars);
+      const pending = localPlans.get(id)!;
+      pending.stage = "close";
+      await persist(id, { field: [`ado_sync_intent=${JSON.stringify(pending)}`] }, "close-prepared");
+      await persist(id, { status, closeReason: closeReason!, completedAt, force: options.force, message: options.message }, "close");
+      if (scalars.assignee !== undefined && scalars.assignee !== "") await persist(id, { assignee: scalars.assignee, message: options.message }, "assignment");
+    };
+    /** Retire advisory metadata after input validation; never replay values or require a mutable intent proof. */
+    const retireIntents = async () => {
+      if (!dryRun) for (const item of items.filter((item) => item.ado_sync_intent !== undefined)) {
+        await commitLocal(item.id, { unset: ["ado_sync_intent"], message: "Discard obsolete Azure sync intent; replan current state" },
+          "intent-discarded", `ado-discard-${randomUUID()}`);
+      }
+    };
+    const snapshotReader = { listAllComplete: async () => snapshot };
     const selected = mode === "export" ? items.slice(0, limit) : [];
     const ids = mode === "export" ? selected.flatMap((item) => item.ado_id === undefined ? [] : [Number(item.ado_id)])
       : [...new Set(await client.queryIds(wiql, limit))].slice(0, limit);
@@ -539,7 +557,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
       const localGraph = await exportRelations(empty, config.orgUrl, identities, snapshotReader);
       const l: Values = { ...localFields!, relations: relationValues(applyRelations(empty, localGraph.operations), config, identities) };
       const storedBase = readBase(local, r, normalization);
-      const minimum = Math.max(0, ...Object.values(readBaseRevisions(storedBase)), localPlans.get(local.id)?.remote?.revision ?? 0);
+      const minimum = Math.max(0, ...Object.values(readBaseRevisions(storedBase)), observed.get(local.id) ?? 0);
       if (remote.rev < minimum) throw new CommandError("Azure returned an older revision than durable local recovery; re-read both trackers", EXIT_CODE.conflict);
       const base = mode === "import" ? undefined : storedBase;
       const effect = effects.get(local.id);
@@ -549,12 +567,18 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
       const decisions = mergeSyncValues(l, r, base, effect, normalization);
       const differing: Conflict["fields"] = {};
       for (const key of Object.keys(r)) {
-        if (mode === "import") { values[key] = r[key]; if (!equal(l[key], r[key])) plan.import_fields.push(key); }
-        else if (mode === "export") { values[key] = l[key]; if (!equal(l[key], r[key])) plan.export_fields.push(key); }
+        if (mode === "import") {
+          if (!equal(l[key], r[key]) && (foreignKeys.get(local.id)?.has(key) || !ownedKeys.get(local.id)?.has(key) && storedBase !== undefined && Object.hasOwn(storedBase, key) && !equal(l[key], storedBase[key]))) {
+            differing[key] = { base: storedBase?.[key], local: l[key], remote: r[key] };
+          } else { values[key] = r[key]; if (!equal(l[key], r[key])) plan.import_fields.push(key); }
+        }
+        else if (mode === "export") {
+          if (!equal(l[key], r[key]) && ownedKeys.get(local.id)?.has(key)) { values[key] = r[key]; plan.import_fields.push(key); }
+          else { values[key] = l[key]; if (!equal(l[key], r[key])) plan.export_fields.push(key); }
+        }
         else if (!equal(l[key], r[key]) && foreignKeys.get(local.id)?.has(key)) differing[key] = { base: base?.[key], local: l[key], remote: r[key] };
         else if (!equal(l[key], r[key]) && ownedKeys.get(local.id)?.has(key)) {
-          if (!equal(l[key], localPlans.get(local.id)!.wanted[key]) || !equal(localPlans.get(local.id)!.wanted[key], localPlans.get(local.id)!.seen[key])) differing[key] = { base: base?.[key], local: l[key], remote: r[key] };
-          else { values[key] = r[key]; plan.import_fields.push(key); }
+          values[key] = r[key]; plan.import_fields.push(key);
         }
         else if (decisions[key] === "equal") values[key] = r[key];
         else if (decisions[key] === "conflict") differing[key] = { base: base?.[key], local: l[key], remote: r[key] };
@@ -581,6 +605,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
       // Validate export mappings even in dry-run, before any write on either side.
       azureFields(values, plan.export_fields, exportStates, normalization);
     }
+    await retireIntents(); // Target, mapping and observed-revision validation precedes housekeeping writes too.
     if (mode === "sync" && conflicts.length === 0) {
       const pulled = entries.filter((entry) => entry.pullRelations && entry.remote !== undefined).map((entry) => entry.remote!);
       if (pulled.length) {
@@ -588,12 +613,10 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
         for (const { id, options } of footprint.updates) await guardRelationUpdate(id, options);
       }
     }
-    if (conflicts.length) return { ok: false, code: "ADO_CONFLICT", exit_code: EXIT_CODE.conflict, dry_run: dryRun, plans, conflicts, diagnostics };
+    if (conflicts.length) return conflictResult();
     if (!dryRun) {
       for (const entry of entries) if (entry.local !== undefined) {
-        localGoals.set(entry.local.id, entry.values);
         if (entry.remote !== undefined) {
-          localSeen.set(entry.local.id, remoteAgreement(entry.remote, entry.values, config, identities, states, exportStates, normalization));
           localRemote.set(entry.local.id, { id: entry.remote.id, revision: entry.remote.rev });
         }
       }
@@ -607,7 +630,6 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
             // Creation has no prior revision; the server allocates identity and rev 1.
             const created = await outbox.create(local!.id, option(ctx.options, "type") ?? process.env.ADO_WORK_ITEM_TYPE ?? "Task", fields, localValues(local!, normalization));
             remote = created.remote;
-            localSeen.set(local!.id, remoteAgreement(remote, values, config, identities, states, exportStates, normalization));
             localRemote.set(local!.id, { id: remote.id, revision: remote.rev });
             // Creation is not idempotent: retain its identity before any later work can fail.
             plan.ado_id = remote.id;
@@ -638,7 +660,6 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
         }
         entry.remote = { ...remote, relations: remote.relations ?? [] };
         if (local !== undefined) {
-          localSeen.set(local.id, remoteAgreement(entry.remote, values, config, identities, states, exportStates, normalization));
           localRemote.set(local.id, { id: remote.id, revision: remote.rev });
         }
         // Persist the base only after relation import succeeds below.
@@ -649,18 +670,16 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
             field: initial.field });
           await observer?.({ boundary: "local", phase: "after", operation: "create", item: item.id });
           entry.local = item;
-          localGoals.set(item.id, entry.values);
-          localSeen.set(item.id, remoteAgreement(entry.remote!, values, config, identities, states, exportStates, normalization));
           localRemote.set(item.id, { id: remote.id, revision: remote.rev });
           versions.set(item.id, item.updated_at);
-          await nativeWrites.captureCreated(item);
+          await writes.captureCreated(item);
           plan.pm_id = item.id;
           identities.set(remote.id, item.id);
         }
         plan.ado_id = remote.id;
       }
       // A 412 leaves its local item and history untouched, including inverse links.
-      if (conflicts.length) return { ok: false, code: "ADO_CONFLICT", exit_code: EXIT_CODE.conflict, dry_run: false, plans, conflicts, diagnostics };
+      if (conflicts.length) return conflictResult();
       for (const entry of entries.filter((candidate) => candidate.plan.action === "create_remote")) {
         const relationPlan = await exportRelations(entry.remote!, config.orgUrl, identities, pm);
         diagnostics.push(...relationPlan.unmapped, ...relationPlan.unmappedLocal);
@@ -673,11 +692,12 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
           }
         }
       }
-      if (conflicts.length) return { ok: false, code: "ADO_CONFLICT", exit_code: EXIT_CODE.conflict, dry_run: false, plans, conflicts, diagnostics };
+      if (conflicts.length) return conflictResult();
       const pulled = entries.filter((entry) => entry.pullRelations).map((entry) => entry.remote!);
       if (pulled.length) diagnostics.push(...(await importRelations(pulled, config.orgUrl, identities, { listAllComplete: () => pm.listAllComplete(), update })).unmapped);
       for (const entry of entries) {
         const { values, remote, local } = entry;
+        activeItem = local!.id;
         values.relations = relationValues(remote!.relations!, config, identities);
         const fields = pmFields(values, remote!, config, normalization);
         if (normalizeStatusValue(String(values.status), normalization) === normalizeStatusValue(local!.status, normalization)) delete fields.status;
@@ -697,7 +717,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
             return { revision: actual.rev, values: remoteAgreement(actual, current.values, config, readback.identities, states, exportStates, normalization) };
           },
           publish: async (base, revision) => {
-            await nativeWrites.assertCurrent(local!.id);
+            await writes.assertCurrent(local!.id);
             const field: string[] = [];
             if (readback.item.ado_sync_base !== JSON.stringify(base)) field.push(`ado_sync_base=${JSON.stringify(base)}`);
             if (revision !== undefined && readback.item.ado_rev !== revision) field.push(`ado_rev=${revision}`);
@@ -710,12 +730,18 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
           fields: Object.fromEntries(agreement.differences.map((key) => [key, { base: agreement.base[key], local: agreement.local.values[key], remote: agreement.remote.values[key] }])) });
       }
     }
-    if (conflicts.length) return { ok: false, code: "ADO_CONFLICT", exit_code: EXIT_CODE.conflict, dry_run: dryRun, plans, conflicts, diagnostics };
+    if (conflicts.length) return conflictResult();
     return { ok: true, dry_run: dryRun, plans, conflicts, diagnostics };
   } catch (error) {
+    // A timestamp/read-back refusal may precede publication; recover the same structured native evidence.
+    if (error instanceof CommandError && error.exitCode === EXIT_CODE.conflict && nativeWrites !== undefined && activeItem !== undefined) {
+      try { await nativeWrites.assertCurrent(activeItem); }
+      catch (current) { if (current instanceof NativeHistoryConflict) error = current; }
+    }
     const exitCode = error instanceof CommandError || error instanceof NativeHistoryConflict ? error.exitCode : EXIT_CODE.remote;
     return { ok: false, code: exitCode === EXIT_CODE.usage ? "ADO_USAGE" : exitCode === EXIT_CODE.conflict ? "ADO_CONFLICT" : "ADO_REMOTE",
       exit_code: exitCode, dry_run: dryRun, plans, conflicts, diagnostics,
+      ...(error instanceof NativeHistoryConflict ? { kind: error.kind, sync_conflict: { code: error.kind, pm_id: error.item, fields: error.fields } } : {}),
       error: error instanceof CommandError || error instanceof NativeHistoryConflict ? error.message : "Azure DevOps command failed; check configuration, tracker validity and connectivity" };
   }
 }

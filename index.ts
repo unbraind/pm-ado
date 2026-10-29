@@ -29,7 +29,7 @@ export { simulateMove, MoveRefusal, MOVE_LIMITS } from "./moves.ts";
 export type { MoveOptions, MoveScope, MoveRow, MoveRelation, MovePreview, MoveRefusalCode } from "./moves.ts";
 import { runContractCommand } from "./contracts.ts";
 import { runResolutionCommand, loadResolutionSdk } from "./resolution.ts";
-import { NativeWriteFence } from "./history-fence.ts";
+import { NativeWriteFence, NativeHistoryConflict } from "./history-fence.ts";
 import { dirname } from "node:path";
 export { AdoResolutionService, ResolutionRefusal, resolutionDigest, resolutionScopeReference, resolutionFields, validateResolutionPlan } from "./resolution.ts";
 export type { ResolutionPlan, ResolutionObserver, ResolutionIntent, ResolutionField, ResolutionChoice, ResolutionReceipt, ResolutionRefusalCode, ResolutionMaps } from "./resolution.ts";
@@ -229,7 +229,7 @@ export interface RelationImportUpdate {
   id: string;
   /** Native SDK options; no persistence occurs while building the plan. */
   options: PmUpdateActionOptions;
-  /** Original item retained for conditional parent compensation. */
+  /** Original item retained as the field comparison base. */
   previous: ItemMetadata;
 }
 /** Complete local write footprint of an additive remote relation import. */
@@ -356,9 +356,9 @@ export async function planRelationImport(
  * Read the complete tracker before writing; validate the entire proposed hierarchy,
  * including existing hierarchy dependencies, so remote cycles and competing parents
  * leave every item untouched. Apply parents before descendants in the validated
- * final tree, avoiding transient cycles without detaching existing parents. If a
- * write fails, restore completed parent changes in reverse order; failed recovery
- * reports the exact detached IDs from a fresh tracker read. Dependency source_kind retains exact ADO reference names,
+ * final tree, avoiding transient cycles without detaching existing parents. Failed
+ * writes stop the plan and retain completed forward changes; no rollback can
+ * overwrite a peer or restore a now-invalid hierarchy. Dependency source_kind retains exact ADO reference names,
  * including custom types and both Duplicate directions (stored as related because the
  * SDK mutation parser does not accept a duplicate kind). This is an additive import:
  * absent remote links do not erase independently maintained local links.
@@ -386,41 +386,20 @@ export async function importRelations(
     nativeWrites = new NativeWriteFence(sdk, pmRoot, sdk.selectImportAuthor(undefined, settings.author_default), (id, options) => pm.update(id, options));
     for (const item of (await pm.listAllComplete()).items) await nativeWrites.capture(item.id);
   }
-  const { items, updates, unmapped } = await planRelationImport(remote, orgUrl, identities, pm, custom);
+  const { updates, unmapped } = await planRelationImport(remote, orgUrl, identities, pm, custom);
   /** Keep opaque host adapters on their caller-owned write path; native clients carry SDK history witnesses. */
   const update = async (id: string, options: PmUpdateActionOptions) => nativeWrites === undefined ? pm.update(id, options)
     : nativeWrites.update(id, options, `ado-relations-${loadResolutionSdk().deriveMutationTransactionId(JSON.stringify([id, nativeWrites.head(id), options]))}`);
-  const completed: ItemMetadata[] = [];
   const updated = new Set<string>();
-  try {
-    // Final-tree order gives the minimal detach set: empty. Every changed
-    // ancestor has its final parent before a descendant can point back to it.
-    for (const { id, options, previous } of updates) {
-      await update(id, options);
-      if (options.parent !== undefined) completed.push(previous);
-      updated.add(id);
-    }
-  } catch (error) {
-    const failed: string[] = [];
-    for (const item of completed.reverse()) {
-      try {
-        await update(item.id, item.parent === undefined ? { unset: ["parent"] } : { parent: item.parent });
-      } catch {
-        failed.push(item.id);
-      }
-    }
-    if (failed.length > 0) {
-      const current = new Map((await pm.listAllComplete()).items.map((item) => [item.id, item.parent]));
-      const detached = items.filter((item) => item.parent !== undefined && current.get(item.id) === undefined)
-        .map((item) => item.id);
-      const failure = new CommandError(
-        `${String(error)}; parent restoration failed for: ${failed.join(", ")}; detached IDs: ${detached.join(", ") || "none"}`,
-        EXIT_CODE.conflict,
-      );
-      failure.cause = error;
-      throw failure;
-    }
-    throw error;
+  for (const { id, options, previous } of updates) {
+    const current = (await pm.listAllComplete()).items.find((item) => item.id === id);
+    const keys = [...(options.parent !== undefined ? ["parent"] : []), ...(options.dep?.length ? ["dependencies"] : [])];
+    const fields = Object.fromEntries(keys.filter((key) => !loadResolutionSdk().stableValueEquals(previous[key] ?? null, current?.[key] ?? null))
+      .map((key) => [key, { base: previous[key] ?? null, current: current?.[key] ?? null }]));
+    if (current === undefined) fields.item = { base: "present", current: null };
+    if (Object.keys(fields).length) throw new NativeHistoryConflict(id, fields);
+    await update(id, options);
+    updated.add(id);
   }
   return { updated: [...updated], unmapped };
 }

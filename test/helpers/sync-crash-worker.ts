@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { runSyncCommand } from "../../dist/sync.js";
 import type { SyncBoundary } from "../../sync-outbox.ts";
 
-const [pmRoot, mode] = process.argv.slice(2);
+const [pmRoot, mode, rawOptions = "{}"] = process.argv.slice(2);
 if (mode !== "import" && mode !== "export" && mode !== "sync") throw new Error("invalid worker mode");
 const cwd = dirname(dirname(pmRoot));
 process.chdir(cwd);
@@ -19,7 +19,7 @@ async function boundary(event: SyncBoundary): Promise<void> {
   });
 }
 const result = await runWithActiveExtensions({ cwd, path: pmRoot }, () => runSyncCommand({
-  command: `ado ${mode}`, args: [], options: {}, global: {}, pm_root: pmRoot,
+  command: `ado ${mode}`, args: [], options: JSON.parse(rawOptions) as Record<string, unknown>, global: {}, pm_root: pmRoot,
   sdk: createExtensionCommandSdk(pmRoot, pm),
 }, mode, boundary));
 process.send!({ kind: "done", result });

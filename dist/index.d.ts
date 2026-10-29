@@ -133,7 +133,7 @@ export interface RelationImportUpdate {
     id: string;
     /** Native SDK options; no persistence occurs while building the plan. */
     options: PmUpdateActionOptions;
-    /** Original item retained for conditional parent compensation. */
+    /** Original item retained as the field comparison base. */
     previous: ItemMetadata;
 }
 /** Complete local write footprint of an additive remote relation import. */
@@ -157,9 +157,9 @@ export declare function planRelationImport(remote: readonly AdoWorkItem[], orgUr
  * Read the complete tracker before writing; validate the entire proposed hierarchy,
  * including existing hierarchy dependencies, so remote cycles and competing parents
  * leave every item untouched. Apply parents before descendants in the validated
- * final tree, avoiding transient cycles without detaching existing parents. If a
- * write fails, restore completed parent changes in reverse order; failed recovery
- * reports the exact detached IDs from a fresh tracker read. Dependency source_kind retains exact ADO reference names,
+ * final tree, avoiding transient cycles without detaching existing parents. Failed
+ * writes stop the plan and retain completed forward changes; no rollback can
+ * overwrite a peer or restore a now-invalid hierarchy. Dependency source_kind retains exact ADO reference names,
  * including custom types and both Duplicate directions (stored as related because the
  * SDK mutation parser does not accept a duplicate kind). This is an additive import:
  * absent remote links do not erase independently maintained local links.

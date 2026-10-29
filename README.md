@@ -178,17 +178,39 @@ field digests. Review and add explicit `local`/`remote` choices, then use
 `pm ado resolve-apply --artifact decision.json` or `--plan <core-plan-id>`.
 Changed local document hashes or Azure revisions refuse; successful replay adds no writes.
 
-Native sync writes capture history length and the last record hash before
-inspection. After each SDK lifecycle write, the same workspace transaction
-checks the actual native record under the item lock. A same-millisecond or ABA
-peer edit returns `ADO_CONFLICT`; an append-only compensation restores this
-write's fields while preserving later peer values. Interrupted verification
-resumes before planning. This fallback is needed until
-[pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576) supplies a native
-pre-write history/hash precondition. Run
-`npm run test:native-precondition` for the fixed-clock boundary matrix.
-Prepared intents resume settlement after a post-PATCH lease or write failure.
-Saved plans retain an opaque scope reference instead of organization/project
+## Concurrency
+
+Sync is forward-only. Before each pm write it re-reads SDK-normalized target
+fields and checks the saved plan state and native history. A changed item stops
+that item and dependent work with `ADO_CONFLICT`, `kind: sync_conflict`, and
+item/field/base/current evidence. Completed writes stay durable. Neither sync
+nor relation import rolls them back, so rollback cannot overwrite a peer or
+restore an invalid parent cycle. Obsolete local intents are discarded with a
+recognized history reason; subsequent import/export/sync re-plans current state.
+A fresh import and its dry-run also refuse fields edited locally since the agreed
+base; retrying does not force a peer's status or title back to Azure's value.
+Use the reviewed resolution choices above to choose a conflicting remote value.
+Native SDK mutation refusals retain their SDK exit code.
+
+There is still a window between the final read and the native write. Ordinary
+SDK writers do not join the workspace transaction lock
+([pm-cli#1620](https://github.com/unbraind/pm-cli/issues/1620)), and there is no
+native expected-item-hash precondition
+([pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576)). A writer in that
+window may still be overwritten; post-write detection reports a conflict but
+never attempts rollback. This is not cross-process isolation. Twelve real SDK
+samples measured **34.8–194.7 ms** from the final guard to completed SDK write, an
+upper bound on guard-to-write time, not a guaranteed maximum or an
+atomicity claim. Scheduling, I/O and hooks can make the window longer.
+
+Tests guarantee no rollback overwrites a peer, SDK hierarchy validation remains
+active, no rollback creates cycles, and stale intents never require manual
+repair. The crash/peer boundary matrix runs real no-git trackers and second OS
+processes. `npm run test:native-precondition` checks fixed-clock edits before
+native dispatch; it does not certify the remaining read/write window.
+
+Resolution outbox intents resume settlement after a post-PATCH lease or write failure.
+Saved resolution plans retain an opaque scope reference instead of organization/project
 configuration.
 The [SDK, portable artifact example and refusal remedies](docs/conflict-resolution.md)
 describe the lease and cross-system recovery boundaries. Requires pm CLI

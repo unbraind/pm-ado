@@ -156,9 +156,9 @@ async function compare(baseline: string, trackers: string[]): Promise<void> {
       const before = JSON.parse(results[0]) as Record<string, unknown>;
       const after = JSON.parse(results[1]) as Record<string, unknown>;
       assert.equal(before.history_message, "Azure DevOps revision 1");
-      assert.equal(after.history_message, "Verify native Azure mutation");
+      assert.match(String(after.history_message), /^bulk-item-transaction ado-sync-\S+ apply; Azure read-back agreement$/u);
       assert.equal(before.history_new_events, 1);
-      assert.equal(after.history_new_events, 6);
+      assert.equal(after.history_new_events, 3);
       delete before.history_new_events; delete after.history_new_events;
       delete before.history_message;
       delete after.history_message;
@@ -171,9 +171,9 @@ async function compare(baseline: string, trackers: string[]): Promise<void> {
       delete local.head; // Additive native history coordinate; semantic decisions remain exact.
       assert.deepEqual(after, before, `public corpus ${index + 1} differs`);
       total += items.length;
-      console.log(`Public corpus ${index + 1}: ${items.length} items; import/export/sync dry-run and resolution plan identical after removing documented canonical/history coordinates; authoritative files unchanged; writable-copy import receipts/values/net history patches identical; candidate records three native writes plus three immutable verification events.`);
+      console.log(`Public corpus ${index + 1}: ${items.length} items; import/export/sync dry-run and resolution plan identical after removing documented canonical/history coordinates; authoritative files unchanged; writable-copy import receipts/values/net history patches identical; candidate records three forward native events and no verification/compensation events.`);
     }
-    console.log(`PASS: ${trackers.length} public corpora, ${total} real items, ${trackers.length * 7} differential comparisons; intentional differences: native history plan witness, SDK transaction/verification markers, path ordering, six audited events instead of one, and internal per-key revision/presence coordinates; synced base values and net patch identical; mutation timestamps normalized.`);
+    console.log(`PASS: ${trackers.length} public corpora, ${total} real items, ${trackers.length * 7} differential comparisons; intentional differences: native history plan witness, forward SDK audit markers, path ordering, three native events instead of one, and internal per-key revision/presence coordinates; synced base values and net patch identical; mutation timestamps normalized.`);
   } finally {
     await new Promise<void>((done) => server.close(() => done()));
     // Undo read-only fixture permissions before portable cleanup.

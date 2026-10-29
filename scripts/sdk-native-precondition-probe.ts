@@ -1,4 +1,4 @@
-/** Fixed-clock acceptance of native history verification and compensation pending pm-cli#1576. */
+/** Fixed-clock pre-dispatch refusal acceptance; no rollback, with the remaining SDK window documented. */
 import { spawnSync } from "node:child_process";
 import { appendFileSync, cpSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";

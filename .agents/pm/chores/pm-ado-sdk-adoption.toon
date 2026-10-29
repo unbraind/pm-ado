@@ -1,16 +1,16 @@
 id: pm-ado-sdk-adoption
 title: Use SDK settings-aware item reads and guarded sync persistence
-description: "Adopt the two unused SDK capabilities from the 2026-10-25 audit: settings-aware item location and guarded persistence. Lookup now uses SDK configuration and type registration. Native persistence uses SDK workspace transactions, lifecycle update, immutable history read/replay and locked verification/compensation: the owner-authorized fallback because commitItemMutations.match cannot fence on native history (pm-cli#1576). Preserve ordinary semantic output, record intentional audit/plan coordinates, and prove configured lookup, fixed-clock/ABA conflict handling, crash recovery and public-tracker differential behavior without git."
+description: "Adopt settings-aware authoritative SDK reads and guarded SDK lifecycle persistence from the 2026-10-25 audit. Authoritative lookup uses readSettings, resolveItemTypeRegistry and locateItem. Native sync is forward-only: compare current fields and native history before writes, report typed sync_conflict with field evidence, never compensate or restore old tracker state. Stale advisory intents are discarded with a recognized history reason and fresh planning uses current SDK/Azure state. Expected-history CAS and isolation from ordinary writers remain upstream pm-cli#1576 and #1620; the remaining read/write window is documented and measured. Preserve semantic output with intentional audit/plan coordinates, public-tracker differential evidence, native validation and crash/interleaving tests without git."
 type: Chore
-status: blocked
+status: in_progress
 priority: 2
 tags[2]: refactor,sdk-adoption
 created_at: "2026-10-25T16:11:56.608Z"
-updated_at: "2026-10-28T18:57:48.554Z"
+updated_at: "2026-10-29T01:49:42.634Z"
 author: codex-agent
 parent: pm-ado-g4v1
-unblock_note: Round 5 authorizes detect-after-write compensation while SDK expected-history preconditions remain unavailable
-comments[119]{created_at,author,text}:
+unblock_note: "Owner-approved forward-only policy replaces all automatic pm compensation; SDK read/write window is explicitly accepted and documented (#1576, #1620)."
+comments[131]{created_at,author,text}:
   "2026-10-25T15:50:43.902Z",codex-agent,"Orientation found no existing SDK-adoption item. Related SDK certification: pm-ado-qq1p; source features: pm-ado-4x3u and pm-ado-nc7z. Both audited SDK APIs exist in the pinned 2026.10.23 dependency. Plan: preserve authoritative raw documents, replace unguarded sync persistence with inspected-snapshot match preconditions, run non-git regression/differential/revert proofs and unchanged npm/Bun release gates."
   "2026-10-25T15:57:29.077Z",codex-agent,"Both replacements implemented. Resolution passes readSettings item_format and resolveItemTypeRegistry type_to_folder into locateItem and retains readLocatedItem whole-document hashing. Sync now uses commitItemMutations update match on inspected updated_at for link, relation and base writes. Expected revisions advance from our own immutable SDK transaction history, never from a refreshed current item. Three new real non-git regressions pass: custom nested folder/raw-document guard, local edit after Azure PATCH, and local edit before import relation/base persistence. The last two preserve the concurrent item/history bytes and return ADO_CONFLICT; remote success can remain partial."
   "2026-10-25T16:01:16.414Z",codex-agent,"Compatibility check found SDK gap tracked by pm-ado-sdk-match-close-1025: match on updated_at also runs inside update's internal terminal close after its first write has advanced the timestamp. Workaround uses one SDK transaction with a guarded scalar update then explicit close. SDK history messages necessarily become bulk-item-transaction markers instead of adapter prose; this intentional diagnostic difference is documented and differential-tested. Initial read-only differential passed over public pm-ado and pm-jira origin snapshots: 140 items, 8 exact output comparisons, unchanged authoritative bytes. Extending proof to writable copies for persistence receipts, values and history patches."
@@ -130,7 +130,19 @@ comments[119]{created_at,author,text}:
   "2026-10-28T18:54:49.348Z",codex-agent,"Evidence: standalone node test/helpers/workspace-lock-probe.ts runs four real second-process native updates in a non-git tracker and exits 4 with isolation_violations=4. This is a failing SDK capability diagnostic outside the release acceptance suite, not an expected passing safety test. Equivalent public-SDK probe gives 4/4 lost-edit cases on 2026.10.28. No lock-removal revert or successful sync/crash matrix is claimed, because the required lock fails before sync integration. Source sync.ts delta in this assessment is zero. Earlier source-head CI 40731325838 has now completed 4/4 successfully (including npm and Bun release gates); CodeQL 40731325825 is 1/1 successful. These green runs do not resolve the escalated review finding."
   "2026-10-28T18:55:54.363Z",codex-agent,"Escalation results: current-field comparisons inside locked inspect are insufficient because native SDK writers bypass the coordinator lock. Added reproducible cross-process capability diagnostic and docs; no existing tests, coverage thresholds, production code, or dependencies altered. sync.ts change this round: +0/-0; total PR versus current main remains +375/-52 (net +323), so the requested simplification is not delivered. SDK-gap evidence and exact command are linked on pm-ado-sdk-history-fence. Keep PR blocked pending supported native isolation/CAS; run CI for the evidence head without interpreting a green gate as resolving review."
   "2026-10-28T18:57:48.554Z",codex-agent,"Verification: npm run build:test, npm run typecheck and npm run docstring pass (19 files, 115 declarations); changelog generation/check and changed-content privacy/history-prefix checks pass. Standalone linked SDK isolation diagnostic remains failed with four violations (exit 4). Local pm ops health --strict-exit reports the pre-existing pm-github extension/host skew, now 2026.10.28 versus pinned host 2026.10.25; storage, integrity and history drift are clean. No toolchain or telemetry change made. Evidence commit a529c33; its CI is https://github.com/unbraind/pm-ado/actions/runs/40749765445 (pending) and CodeQL 40749765434 (pending). Claims released; adoption stays blocked. No compensation/retry fix, crash matrix or lock-removal revert success is claimed."
-files[29]{path,scope}:
+  "2026-10-28T21:17:24.320Z",codex-agent,"Forward-only redesign authorized: remove all automatic pm-side rollback and stale-intent proof refusals. Compare current target fields before each native write, report sync_conflict with item/base/current field evidence, preserve durable forward progress, and replan obsolete local intents. Retain and document the native read/write gap (pm-cli#1576 and #1620); no claim of cross-process isolation. Add cycle and intent compensation regressions, crash/peer retry matrix and behavioral revert proofs."
+  "2026-10-28T21:36:52.057Z",codex-agent,"Focused forward-only recovery checks pass 5/5, including malformed/foreign/legacy compensation intent data, close assignment restart, native claim refusal and the review intent reproduction. Initial native suite passed 50/50. Removed only tests of the deleted compensation/journal machinery; preserved prior birth/ABA/read-back models. New per-boundary matrix uses real SIGKILL plus a second CLI process editing title,parent,relation,assignee together, checks retries and graph acyclicity. Whole relation importer also stops forward without restoring completed parents."
+  "2026-10-28T21:51:40.264Z",codex-agent,"Behavioral revert proofs in disposable copies: re-enable only reverse native field restoration in NativeWriteFence.update and rebuild: two fixtures fail (X.parent is restored to A, creating the forbidden cycle; the close-prepared intent is restored to before-close). Re-enable only runSyncCommand obsolete-intent history-proof refusal and rebuild: one fixture fails with the exact former history-proof/manual-repair error. The reviewed tracker/source were never reverted. Fixed controls are rerun after the private reverts."
+  "2026-10-28T23:07:31.610Z",codex-agent,"Forward-only recovery simplified further: mutable intents are never validated or replayed; every fresh valid invocation retires them. New v2 checkpoints contain only scope, unique plan ID, observed remote revision and a diagnostic close stage. Removed old desired/seen snapshots, timestamp plan identity, intent proof checks and assignment replay. A readonly SDK-history projection remembers unacknowledged native integration effects and subsequent peer clears/retargets until each field agreement advances. Fresh Azure reads decide the remaining forward writes; immutable own observations prevent older Azure responses from reversing progress. Existing graph tests now allow only the explicitly required intent-discard audit suffix and still assert all domain fields exact plus append-only history."
+  "2026-10-28T23:12:05.820Z",codex-agent,"Final current-main differential: 14/14 comparisons on read-only public fleet corpus copies (32 ado + 108 jira items), with source fingerprints unchanged. Canonical SDK/CLI receipts, values and net native patches match origin/main. Intentional differences: native history plan coordinate, forward SDK audit markers (three events versus main one), canonical ordering and internal per-key revision/presence coordinates. No verification/compensation events remain. Supported final policy and measured last-read/native-write gap are documented in README Concurrency and docs/sdk-adoption.md."
+  "2026-10-28T23:12:53.440Z",codex-agent,"Behavioral revert proofs rebuilt disposable source copies with the pinned SDK, never the reviewed checkout. Re-enabling only reverse-field compensation makes two fixtures fail: the valid X-under-B graph is rolled back under A after peer A.parent=X (cycle), and close-prepared intent is restored to the obsolete before-close value. Reintroducing only the old native-proof recovery refusal makes the legacy compensation-history fixture fail with Local sync intent lacks its SDK history proof. Revert exits 1/1; fixed-source controls rerun after the proof. Source test oracles require peer values intact and no persisted hierarchy cycle; no tests were weakened to permit compensation."
+  "2026-10-28T23:19:36.688Z",codex-agent,"Final forward-only linked command passed 115/115 (0 failed/skipped): node --test --test-concurrency=1 --test-name-pattern=forward-only test/sync.test.ts. Boundary matrix covers import18, export14 and sync18 boundaries, each with SIGKILL and a second OS process editing title, parent, relation and assignee: 100 fault cases. Six additional before/dispatched/after native-write crash cases rerun sync/import/export successfully. Reviewer legacy compensation history, parent-birth ownership, JSON/TOON field receipts and obsolete-intent corpus remain passing. Final-source revert controls pass 3/3; public API plus unchanged published consumer pass 2/2 under Node and Bun. Typecheck, test compilation and 19 files/108 documented declarations pass. Full npm then Bun gates run serially at existing thresholds, at most two workers."
+  "2026-10-28T23:36:55.971Z",codex-agent,"The first full npm gate was stopped after four failures, then isolated directly (4/4 failed). Three asserted the obsolete force-import behavior: fresh import/dry-run must now report sync_conflict for a locally edited title or blocked status under the owner mandate. Their existing byte/history/HTTP-preservation assertions remain; new exact conflict assertions and a successful explicit reviewed remote-resolution close were added. The fourth was only the existing re-read both trackers remedy text, now preserved. Focused controls pass 4/4, with no ignored failures. README documents the deliberate stricter import/preview policy; preview and apply use the same conflict decisions. Full gates restart at unchanged thresholds."
+  "2026-10-29T00:28:16.343Z",codex-agent,"The completed renewed npm V8 run executed 923 tests: 922 passed, one failed solely because it required stale intent/history bytes to remain identical. The required cleanup now has stronger assertions: all SDK domain values exact, all existing history an exact prefix, only recognized discard events changing ado_sync_intent/updated_at, unchanged unrelated files, no Azure PATCH and successful retry after remote inverse visibility. V8 measured 100% lines/functions, 99.74% branches at unchanged thresholds; added real adversarial cases for absent/cleared parent values, corrupt own legacy checkpoints, partial inverse bases, export-first interrupted-close recovery, stale-intent explicit resolution, and a real SDK beforeMutation policy-hook refusal (no SDK method mocked). Focused additions pass; full gates restart only after linked suites and final behavioral reverts."
+  "2026-10-29T00:32:00.210Z",codex-agent,"Final expanded linked forward-only suite passes 121/121 (0 failed/skipped); native linked suite52/52. Final rebuilt disposable reverts still fail as required (compensation2, intent-proof1); fixed reviewer controls plus invalid-priority byte-preservation4/4 pass. Fresh differential14/14 over140 public items and published-consumer Node/Bun2/2 pass. New branch-targeted SDK fixtures pass17/17 plus4/4: every previously uncovered source branch has an exercised real scenario, without changing gate thresholds. The invalid priority case verifies provider preflight; the independent beforeMutation hook exercises the real SDK non-conflict refusal. Full npm/Bun gates now rerun serially against the final source/tests."
+  "2026-10-29T01:35:36.974Z",codex-agent,"Final complete V8 execution passed 934/934 tests, zero skipped/failed; unchanged branch gate refused 99.96% (100% lines/functions), so local release:check is explicitly NOT recorded as passing. Remaining error handling now delegates SDK classification directly: a native PmCliError retains its exitCode rather than hand-filtering code4 and masking other codes as remote failures. README documents the stricter native refusal. Expanded real policy tests exercise both source and built implementations: SDK claim code4 and SDK validation code2, no tracker writes; focused8/8 and all type/build/docstring checks pass. Required npm/Bun PR CI will provide the final complete release-gate evidence at unchanged100% thresholds; no duplicate local full Bun suite."
+  "2026-10-29T01:49:37.278Z",codex-agent,"Shipping evidence: linked forward-only123/123; linked real SDK source/built refusal controls8/8; linked native52/52; native precondition acceptance19/19. Final rebuilt disposable reverts fail as required (compensation2 fixtures, old intent-proof1); final fixed reviewer controls3/3 pass. Fresh current-main differential14/14 covers140 real public items with unchanged source fingerprints and identical canonical values/net patches; intentional native forward audit/base/plan coordinates only. Typecheck/build/test compilation/docstrings19 files108 declarations, production audit0 vulnerabilities, package dry run, release attestation/date and changelog gates pass. No lint script exists. Local complete V8 run934/934 passed but its pre-cleanup branch gate99.96 was NOT a release pass; final source preserves SDK exit codes and is checked by the required npm/Bun100% CI gates. CI evidence will be linked from PR46 and its checks tab. No merge/release; claims released for orchestrator review."
+files[30]{path,scope}:
   .github/workflows/ci.yml,project
   agreement.ts,project
   contracts.ts,project
@@ -146,11 +158,12 @@ files[29]{path,scope}:
   scripts/sdk-native-precondition-probe.ts,project
   sync-outbox.ts,project
   sync.ts,project
+  test/ado.test.ts,project
   test/agreement.test.ts,project
   test/contracts.test.ts,project
   test/fixtures/normalization/released-2026.10.26/provenance.json,project
   test/fixtures/public-api/current/history-fence.d.ts.txt,project
-  test/helpers/history-fence-crash-worker.ts,project
+  test/helpers/forward-write-crash-worker.ts,project
   test/helpers/sync-crash-worker.ts,project
   test/helpers/workspace-lock-probe.ts,project
   test/history-fence.test.ts,project
@@ -160,30 +173,183 @@ files[29]{path,scope}:
   test/public-api.test.ts,project
   test/refresh.test.ts,project
   test/sync.test.ts,project
-tests[23]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
-  npm run typecheck,project,codex-agent,"2026-10-25T16:11:56.608Z",local_mutation,refactor/sdk-adoption-1025
-  "node --test --test-name-pattern=\"SDK lookup|SDK sync match|terminal states import\" test/sync.test.ts",project,codex-agent,"2026-10-25T16:11:56.608Z",local_mutation,refactor/sdk-adoption-1025
-  "node --test --test-name-pattern=\"blocking review|conditional outbox PATCH replay|pending export owners|sync reconnects|new imports guard|unobserved creation\" test/sync.test.ts",project,codex-agent,"2026-10-25T20:42:24.197Z",local_mutation,refactor/sdk-adoption-1025
-  "node --test --test-name-pattern=\"successive mapped edits|SDK sync match refuses a local edit after Azure|pending PATCH bases|blocking review|two real export processes\" test/sync.test.ts",project,codex-agent,"2026-10-25T21:19:53.498Z",local_mutation,refactor/sdk-adoption-1025
-  "node --test --test-name-pattern=\"round-2|conditional outbox PATCH replay|pending PATCH bases|blocking review|successive mapped edits\" test/sync.test.ts",project,codex-agent,"2026-10-26T03:48:29.253Z",local_mutation,refactor/sdk-adoption-1025
-  "node --test --test-concurrency=2 --test-name-pattern=\"round-3 fixed|round-2 fixed|blocking review\" test/sync.test.ts",project,codex-agent,"2026-10-27T00:18:23.619Z",local_mutation,refactor/sdk-adoption-1025
-  node --test --test-concurrency=2 test/agreement.test.ts,project,codex-agent,"2026-10-27T00:18:34.333Z",local_mutation,refactor/sdk-adoption-1025
-  "node --test --test-concurrency=2 --test-name-pattern=\"creation recovery removes|pending inverse endpoint refuses|unassigned terminal|resolution refuses stale per-key\" test/sync.test.ts",project,codex-agent,"2026-10-27T03:59:48.400Z",local_mutation,refactor/sdk-adoption-1025
-  "node --test --test-concurrency=2 --test-name-pattern=\"round-4\" test/sync.test.ts",project,codex-agent,"2026-10-27T05:50:27.883Z",local_mutation,refactor/sdk-adoption-1025
-  "node --test --test-concurrency=2 --test-name-pattern=\"^round-5\" test/sync.test.ts test/normalization.test.ts test/moves.test.ts",project,codex-agent,"2026-10-27T09:57:08.194Z",local_mutation,refactor/sdk-adoption-1025
-  "node --test --test-concurrency=2 --test-name-pattern=\"^round-5\" test/sync.test.ts test/normalization.test.ts test/moves.test.ts test/contracts.test.ts",project,codex-agent,"2026-10-27T10:24:40.746Z",local_mutation,refactor/sdk-adoption-1025
-  "node --test --test-concurrency=2 --test-name-pattern=\"resolution recovery refuses changed\" test/sync.test.ts",project,codex-agent,"2026-10-27T10:53:43.718Z",local_mutation,refactor/sdk-adoption-1025
-  "node --test --test-concurrency=2 --test-name-pattern=\"round-5 unprepared|round-5 field normalizers\" test/sync.test.ts test/normalization.test.ts",project,codex-agent,"2026-10-27T11:05:59.786Z",local_mutation,refactor/sdk-adoption-1025
-  "node --test --test-concurrency=2 --test-name-pattern=\"installed no-git CLI and SDK command|round-5 read-only contract\" test/moves.test.ts test/contracts.test.ts",project,codex-agent,"2026-10-27T11:26:42.363Z",local_mutation,refactor/sdk-adoption-1025
-  node --test --test-concurrency=2 test/refresh.test.ts test/agreement.test.ts,project,codex-agent,"2026-10-27T13:43:40.529Z",local_mutation,refactor/sdk-adoption-1025
-  "npm run test:native-precondition",project,codex-agent,"2026-10-27T16:54:28.593Z",local_mutation,refactor/sdk-adoption-1025
-  node --test --test-concurrency=2 test/history-fence.test.ts,project,codex-agent,"2026-10-27T20:28:20.629Z",local_mutation,refactor/sdk-adoption-1025
-  node --test --test-concurrency=2 --experimental-test-coverage --test-coverage-include=history-fence.ts --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 test/history-fence.test.ts,project,codex-agent,"2026-10-27T20:48:07.769Z",local_mutation,refactor/sdk-adoption-1025
-  node --test --test-concurrency=1 --test-name-pattern=round-8 test/sync.test.ts test/ado.test.ts,project,codex-agent,"2026-10-27T20:57:43.225Z",local_mutation,refactor/sdk-adoption-1025
-  "npm run release:check",project,codex-agent,"2026-10-27T22:46:07.429Z",local_mutation,refactor/sdk-adoption-1025
-  "bun run release:check",project,codex-agent,"2026-10-27T22:46:07.429Z",local_mutation,refactor/sdk-adoption-1025
-  "node --test --test-concurrency=1 --test-name-pattern=\"boundary matrix import-close\" test/sync.test.ts",project,codex-agent,"2026-10-27T23:12:15.596Z",local_mutation,refactor/sdk-adoption-1025
-  node --test --test-concurrency=1 --test-name-pattern=round-9 test/sync.test.ts,project,codex-agent,"2026-10-28T15:59:36.070Z",local_mutation,refactor/sdk-adoption-1025
+tests[25]:
+  - command: npm run typecheck
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-25T16:11:56.608Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: "node --test --test-name-pattern=\"SDK lookup|SDK sync match|terminal states import\" test/sync.test.ts"
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-25T16:11:56.608Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: "node --test --test-name-pattern=\"blocking review|conditional outbox PATCH replay|pending export owners|sync reconnects|new imports guard|unobserved creation\" test/sync.test.ts"
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-25T20:42:24.197Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: "node --test --test-name-pattern=\"successive mapped edits|SDK sync match refuses a local edit after Azure|pending PATCH bases|blocking review|two real export processes\" test/sync.test.ts"
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-25T21:19:53.498Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: "node --test --test-name-pattern=\"round-2|conditional outbox PATCH replay|pending PATCH bases|blocking review|successive mapped edits\" test/sync.test.ts"
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-26T03:48:29.253Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: "node --test --test-concurrency=2 --test-name-pattern=\"round-3 fixed|round-2 fixed|blocking review\" test/sync.test.ts"
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-27T00:18:23.619Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: node --test --test-concurrency=2 test/agreement.test.ts
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-27T00:18:34.333Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: "node --test --test-concurrency=2 --test-name-pattern=\"creation recovery removes|pending inverse endpoint refuses|unassigned terminal|resolution refuses stale per-key\" test/sync.test.ts"
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-27T03:59:48.400Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: "node --test --test-concurrency=2 --test-name-pattern=\"round-4\" test/sync.test.ts"
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-27T05:50:27.883Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: "node --test --test-concurrency=2 --test-name-pattern=\"^round-5\" test/sync.test.ts test/normalization.test.ts test/moves.test.ts"
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-27T09:57:08.194Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: "node --test --test-concurrency=2 --test-name-pattern=\"^round-5\" test/sync.test.ts test/normalization.test.ts test/moves.test.ts test/contracts.test.ts"
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-27T10:24:40.746Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: "node --test --test-concurrency=2 --test-name-pattern=\"resolution recovery refuses changed\" test/sync.test.ts"
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-27T10:53:43.718Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: "node --test --test-concurrency=2 --test-name-pattern=\"round-5 unprepared|round-5 field normalizers\" test/sync.test.ts test/normalization.test.ts"
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-27T11:05:59.786Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: "node --test --test-concurrency=2 --test-name-pattern=\"installed no-git CLI and SDK command|round-5 read-only contract\" test/moves.test.ts test/contracts.test.ts"
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-27T11:26:42.363Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: node --test --test-concurrency=2 test/refresh.test.ts test/agreement.test.ts
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-27T13:43:40.529Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: "npm run test:native-precondition"
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-27T16:54:28.593Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: node --test --test-concurrency=2 test/history-fence.test.ts
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-27T20:28:20.629Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: node --test --test-concurrency=2 --experimental-test-coverage --test-coverage-include=history-fence.ts --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 test/history-fence.test.ts
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-27T20:48:07.769Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: node --test --test-concurrency=1 --test-name-pattern=round-8 test/sync.test.ts test/ado.test.ts
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-27T20:57:43.225Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: "npm run release:check"
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-27T22:46:07.429Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: "bun run release:check"
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-27T22:46:07.429Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: "node --test --test-concurrency=1 --test-name-pattern=\"boundary matrix import-close\" test/sync.test.ts"
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-27T23:12:15.596Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: node --test --test-concurrency=1 --test-name-pattern=round-9 test/sync.test.ts
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-28T15:59:36.070Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: node --test --test-concurrency=1 --test-name-pattern=forward-only test/sync.test.ts
+    scope: project
+    timeout_seconds: 1200
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-28T21:54:26.311Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: "node --test --test-concurrency=1 --test-name-pattern=\"round-8 sync preserves native claim|forward-only native validation|SDK sync match refuses a local edit|forward-only JSON\" test/sync.test.ts"
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-29T01:41:45.815Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
 docs[5]{path,scope}:
   docs/conflict-resolution.md,project
   docs/sdk-adoption.md,project

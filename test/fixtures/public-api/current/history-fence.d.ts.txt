@@ -1,4 +1,4 @@
-/** Native lifecycle writes verified and compensated through immutable SDK history. */
+/** Forward-only native lifecycle writes; conflicts never restore earlier tracker state. */
 import type * as Sdk from "@unbrained/pm-cli/sdk";
 /** Monotonic native revision; wall clocks and document equality are not revisions. */
 export interface NativeHead {
@@ -13,36 +13,49 @@ export declare function isNativeHead(value: unknown): value is NativeHead;
 export declare class NativeHistoryConflict extends Error {
     readonly exitCode = 4;
     readonly code = "ADO_CONFLICT";
-    /** Return a stable refusal without leaking item content. */
-    constructor();
+    /** Stable forward-only class alongside the compatible CLI envelope. */
+    readonly kind = "sync_conflict";
+    /** Canonical local target, when a guarded write has selected one. */
+    readonly item: string | null;
+    /** Saved and current field values; null represents an absent field. */
+    readonly fields: Record<string, {
+        base: unknown;
+        current: unknown;
+    }>;
+    /** Return a structured, forward-only conflict without rewriting either writer's work. */
+    constructor(item?: string | null, fields?: Record<string, {
+        base: unknown;
+        current: unknown;
+    }>);
 }
 /** Use the SDK's native record chain as the only local revision witness. */
 export declare function nativeHead(sdk: typeof Sdk, pmRoot: string, id: string): Promise<NativeHead>;
-/** Capture before inspecting, then carry only verified own revisions between writes. */
+/** Inspect native state before each write and detect intervening events without compensation. */
 export declare class NativeWriteFence {
     private readonly heads;
+    private readonly snapshots;
+    /** Upper bound from final revision read to the latest SDK write completing, in milliseconds. */
+    lastWriteWindowMs: number;
+    /** Bind real SDK lifecycle operations; the optional dispatch also supports host-owned adapters. */
     private readonly sdk;
     private readonly pmRoot;
     private readonly author;
     private readonly write;
-    private readonly onTransition;
-    private readonly journals;
-    private inspectedJournals;
-    /** Bind the host SDK without replacing extensions, hooks or lifecycle policy. */
-    constructor(sdk: typeof Sdk, pmRoot: string, author: string, write?: (id: string, options: Sdk.PmUpdateActionOptions) => Promise<unknown>, onTransition?: Sdk.CommitWorkspaceTransactionOptions["onTransition"]);
-    /** Recover interrupted verifications before a fresh inspection of this item. */
+    /** Bind SDK operations without replacing their hierarchy or permission validation. */
+    constructor(sdk: typeof Sdk, pmRoot: string, author: string, write?: (id: string, options: Sdk.PmUpdateActionOptions) => Promise<unknown>);
+    /** Read authoritative normalized fields through settings-aware SDK location. */
+    private document;
+    /** Capture current state for a new plan; abandoned journals never replay old writes. */
     capture(id: string): Promise<void>;
-    /** Fence a create receipt from its immutable SDK birth, rejecting every later entry before further writes. */
+    /** Bind a newly created item to its SDK birth receipt rather than adopting a later peer edit. */
     captureCreated(created: Sdk.ItemMetadata): Promise<void>;
-    /** Expose a copy for portable plans and locked preflight checks. */
+    /** Copy the portable native coordinate used by resolution plans. */
     head(id: string): NativeHead;
-    /** Refuse a read-back whose native history advanced even when no publication is needed. */
+    /** Build field evidence from saved and current SDK-normalized documents. */
+    private conflict;
+    /** Refuse advanced native history, including fixed-clock ABA, without any reverse mutation. */
     assertCurrent(id: string): Promise<void>;
-    /** Commit a native SDK update, then verify or selectively compensate inside its workspace transaction. */
+    /** Re-read changed fields, write forward once, and report races without restoring anything. */
     update(id: string, options: Sdk.PmUpdateActionOptions, transactionId: string): Promise<string>;
-    /** Bind SDK journal identity to the immutable inspected head, independent of timestamps. */
-    private journalId;
-    /** Replay the exact native marker after a crash; the SDK owns transaction journaling and lifecycle writes. */
-    private commit;
 }
 //# sourceMappingURL=history-fence.d.ts.map

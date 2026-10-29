@@ -4,13 +4,15 @@ description: "Adopt settings-aware authoritative SDK reads and guarded SDK lifec
 type: Chore
 status: in_progress
 priority: 2
-tags[2]: refactor,sdk-adoption
+tags[3]: "gh:unbraind/pm-ado#46",refactor,sdk-adoption
 created_at: "2026-10-25T16:11:56.608Z"
-updated_at: "2026-10-29T03:13:48.010Z"
+updated_at: "2026-10-29T18:25:20.062Z"
+assignee: codex-agent
+claim_principal: codex-agent
 author: codex-agent
 parent: pm-ado-g4v1
 unblock_note: "Owner-approved forward-only policy replaces all automatic pm compensation; SDK read/write window is explicitly accepted and documented (#1576, #1620)."
-comments[134]{created_at,author,text}:
+comments[140]{created_at,author,text}:
   "2026-10-25T15:50:43.902Z",codex-agent,"Orientation found no existing SDK-adoption item. Related SDK certification: pm-ado-qq1p; source features: pm-ado-4x3u and pm-ado-nc7z. Both audited SDK APIs exist in the pinned 2026.10.23 dependency. Plan: preserve authoritative raw documents, replace unguarded sync persistence with inspected-snapshot match preconditions, run non-git regression/differential/revert proofs and unchanged npm/Bun release gates."
   "2026-10-25T15:57:29.077Z",codex-agent,"Both replacements implemented. Resolution passes readSettings item_format and resolveItemTypeRegistry type_to_folder into locateItem and retains readLocatedItem whole-document hashing. Sync now uses commitItemMutations update match on inspected updated_at for link, relation and base writes. Expected revisions advance from our own immutable SDK transaction history, never from a refreshed current item. Three new real non-git regressions pass: custom nested folder/raw-document guard, local edit after Azure PATCH, and local edit before import relation/base persistence. The last two preserve the concurrent item/history bytes and return ADO_CONFLICT; remote success can remain partial."
   "2026-10-25T16:01:16.414Z",codex-agent,"Compatibility check found SDK gap tracked by pm-ado-sdk-match-close-1025: match on updated_at also runs inside update's internal terminal close after its first write has advanced the timestamp. Workaround uses one SDK transaction with a guarded scalar update then explicit close. SDK history messages necessarily become bulk-item-transaction markers instead of adapter prose; this intentional diagnostic difference is documented and differential-tested. Initial read-only differential passed over public pm-ado and pm-jira origin snapshots: 140 items, 8 exact output comparisons, unchanged authoritative bytes. Extending proof to writable copies for persistence receipts, values and history patches."
@@ -145,6 +147,12 @@ comments[134]{created_at,author,text}:
   "2026-10-29T02:01:40.322Z",codex-agent,"Implementation commit f58483ae58d9cf9e8f815f2381d25773452655f3 is pushed in PR46: https://github.com/unbraind/pm-ado/pull/46 . Implementation round net -422 lines (1602 added/2024 deleted), production native fence/relation import/sync net -80 (235 added/315 deleted). Source CI https://github.com/unbraind/pm-ado/actions/runs/40803317217 currently has 0 passed/4 running (Node22,Node26,npm release,Bun release); CodeQL https://github.com/unbraind/pm-ado/actions/runs/40803317026 passed1/1. Full release evidence is pending, not approval. This final metadata receipt requires fresh exact-head CI; the original45-minute wait cutoff remains2026-10-29 02:40 UTC and is not reset by the receipt push. Claims remain released and neither item is closed."
   "2026-10-29T02:21:51.194Z",codex-agent,"Compatibility correction before final CI: the proposed SDK exit-code cleanup changed the established empty-Azure-title refusal from ADO_REMOTE to ADO_USAGE. It was rolled back; the original SDK conflict4/provider-failure3 mapping is retained, and the existing validation test remains unchanged. The previously missed branch was a fixture problem: claiming an item with a different assignee caused a scalar merge refusal before SDK policy. Source/built fixtures now start with an already-agreed peer assignee, prove synced fields unchanged by the claim, require no merge conflicts, and require the real SDK refusal/remedy. Focused7/7 pass and both previously missed line459 branches execute (LCOV counts1 and2). Existing compatibility family12/12 and native probe19/19 pass after restoration. All forward-only compensation deletion, stale-intent retirement and reviewer proofs remain. Final npm/Bun exact-head CI will enforce all four100% thresholds at the original02:40 UTC cutoff; no local full pass is claimed."
   "2026-10-29T03:13:42.335Z",codex-agent,"Final class sweep: relation endpoint ownership was still guarded only in sync. Import and export recovery now use the SAME guard, and known affected endpoints are checked before dependent Azure calls. Six non-git scenarios cover import/export/sync x peer clear/retarget on an unselected endpoint, with repeated retry, no peer overwrite, no dependent PATCH and completed source work retained. Scalar import now uses the shared three-way decision with its saved base; absent/partial base fields cannot authorize overwriting existing local values. Source/built cold-base fixtures preserve peer title/context and apply explicit resolution successfully. Focused regression family34/34, linked new controls12/12, typecheck/build/build:test and docstring108/108 declarations pass. Reverting only the all-mode guard produces4 scenario failures (import/export); reverting only the cold-base guard produces4 source/built scenario failures. Fixed controls12/12 pass after disposable reverts; current differential14/14 still covers140 public items unchanged. Original compensation2 and old-proof1 revert receipts remain valid. Original02:40 UTC CI wait cutoff has elapsed during required fixes: push final exact head, report its CI pending without further waiting; do not treat earlier heads or canceled runs as approval."
+  "2026-10-29T17:55:37.295Z",codex-agent,"Review-round orientation: pulled remote head 5c99f44 and merged current main. Complete GraphQL reviewThreads collection is empty, with no CodeRabbit review submissions; CodeRabbit conversation artifact only reports skipped automatic review. Read reviewer issues 67, 60 and 59 and the latest orchestrator review. Revalidate the full defect classes, real non-git source/built regression cases, seeded model and unchanged npm/Bun release gates. Preserve forward-only sync and append-only history."
+  "2026-10-29T17:58:37.490Z",codex-agent,"Class audit: complete-read projections must satisfy their declared SDK metadata contract (issue 67); native fences must accept all owned lifecycle events while refusing monotonic peer advances, including explicit empty assignees (issue 60); every configured source and branch must be behaviorally exercised at unchanged thresholds (issue 59). Reviewed all package scalar normalizers, agreement and revision planners, sync modes, resolution, graph endpoint imports, contract/move/refresh SDK and CLI bridges, JSON/TOON and packed non-git consumers. Existing head already contains complete-read correction and forward-only fixes; adding an adversarial source/built native lifecycle matrix and repeating historical regression proofs before the full gates."
+  "2026-10-29T18:02:24.349Z",codex-agent,"Revert proof 67: in a disposable source copy changed only the claim assertion back from listAllComplete metadata to get.item. npm run build:test fails TS2345 as reported; restoring the complete read passes. Lifecycle property passes 5/5 (four source/built assigned/unassigned cases plus parent). A single-event-assumption control passed on the current SDK and is explicitly not claimed as a regression proof. Restoring the actual 5a853daa history-fence class instead fails both source cases because synthetic verification events reappear; fixed built cases remain controls. Fixed implementation restored before all subsequent work. Isolated-identity strict health passes; ordinary host health has an unrelated global extension version warning. No existing tracker streams were rewritten."
+  "2026-10-29T18:09:48.900Z",codex-agent,"The linked lifecycle command passes 5/5 in snapshot workspace context (pm test --run --only-last --progress --pm-context none --override-linked-pm-context --workspace-context snapshot --override-linked-workspace-context). Direct source/built restored lifecycle proof also passes 5/5. Preliminary focused sync run passed the source/built ownership subcases and terminal import, then its duplicate 512-sequence model was deliberately stopped without a verdict to avoid running that expensive model separately before both full coverage passes. Full npm release gate is now running under Node 26 with isolated Git identity, followed serially by Bun. No stopped run is counted as approval."
+  "2026-10-29T18:21:56.549Z",codex-agent,"First full npm run reached the packed-consumer setup and reported one failure before launcher subcases; stopped that broad run and started the packed test alone to obtain the exact error and retry cleanly. This incomplete run is not a release pass. Completed source/built relation, contract, move, normalization, native birth/ABA, published API consumer, refresh and lifecycle cases had no observed failures before the stop. Existing thresholds and tests remain unchanged."
+  "2026-10-29T18:25:20.055Z",codex-agent,"Isolated packed retry confirms the first real npm global install is killed at its existing 180-second child timeout, with empty output, before any launcher subcase or pm-ado behavior. Host load exceeded 47 on four cores. Tests, timeout limits and coverage thresholds are unchanged. Local full npm run is incomplete; required npm/Bun and Node 22/26 CI will provide the complete gates per the owner rule that host-load timeouts are not failures when CI passes. No gate pass is claimed yet."
 files[30]{path,scope}:
   .github/workflows/ci.yml,project
   agreement.ts,project
@@ -176,7 +184,7 @@ files[30]{path,scope}:
   test/public-api.test.ts,project
   test/refresh.test.ts,project
   test/sync.test.ts,project
-tests[26]:
+tests[27]:
   - command: npm run typecheck
     scope: project
     provenance:
@@ -358,6 +366,13 @@ tests[26]:
     provenance:
       author: codex-agent
       created_at: "2026-10-29T03:13:14.251Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: "node --test --test-concurrency=1 --test-name-pattern=\"review lifecycle property\" test/history-fence.test.ts"
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-29T17:58:46.330Z"
       source_kind: local_mutation
       source_ref: refactor/sdk-adoption-1025
 docs[5]{path,scope}:

@@ -6,8 +6,10 @@ status: open
 priority: 2
 tags[2]: "gh:unbraind/pm-ado#59","github_author:unbraind"
 created_at: "2026-10-27T16:32:18Z"
-updated_at: "2026-10-29T07:10:20.380Z"
+updated_at: "2026-10-29T18:25:46.316Z"
 author: pm-github
+comments[1]{created_at,author,text}:
+  "2026-10-29T18:25:46.309Z",codex-agent,"Coverage thresholds remain 100 percent in every configured dimension, with source inventory and assertions retained. Existing post-report behavioral additions cover the earlier contract/move/resolution/sync gaps. Current full gate must still certify all branches; local npm attempt stopped after a packed npm global installer timeout, reproduced in isolation under severe host load. Await required complete npm/Bun CI gates; no partial coverage result is called a release pass."
 github_close_reason: ""
 github_closed_at: ""
 github_created_at: "2026-10-27T16:32:18Z"

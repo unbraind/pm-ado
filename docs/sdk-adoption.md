@@ -10,6 +10,17 @@ Tracker items:
 Detailed earlier receipts and behavioral reverts remain in their append-only
 comments/history and the PR commits.
 
+The review-round lifecycle property in `test/history-fence.test.ts` exercises
+source and committed output with assigned and unassigned native items. Each
+case closes, reopens, cancels, activates and blocks the item, then verifies that
+a peer's explicit assignment clear refuses a stale write without changing the
+item or history. A native lifecycle call may append several owned events; the
+fence must validate the complete suffix rather than assume one event per call.
+The full sync suite also retains its 512-sequence two-sided preservation model,
+including interrupted remote assignment clears. Test compilation checks that
+ownership assertions use complete SDK metadata rather than a partial get
+projection. These controls run in disposable trackers without git.
+
 | Audit/review finding | SDK replacement or policy | Behavioral evidence |
 | --- | --- | --- |
 | Prefix-only authoritative lookup | `readSettings`, `resolveItemTypeRegistry`, `locateItem`, `readLocatedItem` | Custom nested folders and whole-document guards work without git; original function-only revert fails lookup regression |

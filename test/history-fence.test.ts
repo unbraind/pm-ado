@@ -6,6 +6,38 @@ import { join } from "node:path";
 import test from "node:test";
 import * as sdk from "@unbrained/pm-cli/sdk";
 import { NativeWriteFence, NativeHistoryConflict, nativeHead, isNativeHead } from "../history-fence.ts";
+import { NativeWriteFence as BuiltNativeWriteFence } from "../dist/history-fence.js";
+
+test("review lifecycle property accepts every native event in an owned transition and refuses every later peer event", async (t) => {
+  for (const [name, Fence] of [["source", NativeWriteFence], ["built", BuiltNativeWriteFence]] as const) {
+    for (const assignment of [undefined, "mapped-agent"]) await t.test(`${name}:${assignment ?? "unassigned"}`, async (sub) => {
+      const f = await fixture(sub);
+      if (assignment !== undefined) await f.pm.update(f.item.id, { assignee: assignment });
+      const fence = new Fence(sdk, f.pmRoot, "history-agent");
+      await fence.capture(f.item.id);
+      for (const status of ["closed", "open", "canceled", "in_progress", "blocked", "closed"]) {
+        const before = await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, f.item.id), f.item.id);
+        await fence.update(f.item.id, { status, closeReason: "Reviewed lifecycle transition" }, `review-lifecycle-${status}`);
+        await fence.assertCurrent(f.item.id);
+        const item = (await f.pm.listAllComplete()).items.find((item) => item.id === f.item.id)!;
+        assert.equal(item.status, status);
+        if (status === "closed") assert.equal(item.assignee, undefined, "native close clears assignment");
+        assert.deepEqual(fence.head(f.item.id), await nativeHead(sdk, f.pmRoot, f.item.id));
+        const after = await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, f.item.id), f.item.id);
+        assert.ok(after.raw!.startsWith(before.raw!), "every lifecycle event is retained");
+        assert.ok(after.entries.slice(before.entries.length).every((entry) => entry.author === "history-agent" && entry.message?.includes(`review-lifecycle-${status}`)));
+      }
+      // Reapply the mapped field after native close; an explicit peer clear is a real edit.
+      await fence.update(f.item.id, { assignee: "mapped-agent" }, "review-mapped-assignment");
+      await f.pm.update(f.item.id, { unset: ["assignee"] });
+      const peer = (await f.pm.listAllComplete()).items.find((item) => item.id === f.item.id)!;
+      const before = (await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, f.item.id), f.item.id)).raw;
+      await assert.rejects(fence.update(f.item.id, { assignee: "mapped-agent" }, "review-stale-assignment"), { kind: "sync_conflict" });
+      assert.deepEqual((await f.pm.listAllComplete()).items.find((item) => item.id === f.item.id), peer);
+      assert.equal((await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, f.item.id), f.item.id)).raw, before);
+    });
+  }
+});
 
 test("forward-only reviewer cycle fixture never restores a now-invalid parent", async (t) => {
   const f = await fixture(t);

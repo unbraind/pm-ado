@@ -186,3 +186,11 @@ remain unavailable. The SDK and CLI never mutate either tracker.
 
 See the [typed SDK example, limits and remedies](docs/sparse-refresh.md). This
 command works in a plain tracker without git and includes every configured status.
+
+## Empty prepared releases
+
+Historical changelog generation and checking explicitly use `--include-empty`.
+This preserves a truthful `No changes.` section for an already prepared version
+whose only intervening changes were tracker synchronization, such as 2026.10.29.
+The section is generated from the tracker; open work is never relabeled as
+shipped to fill it. This option does not approve publication or dispatch a release.

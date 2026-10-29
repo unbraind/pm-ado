@@ -6,12 +6,13 @@ status: in_progress
 priority: 2
 tags: []
 created_at: "2026-10-29T18:18:07.356Z"
-updated_at: "2026-10-29T18:30:41.183Z"
+updated_at: "2026-10-29T18:44:38.004Z"
 author: codex-agent
-comments[3]{created_at,author,text}:
+comments[4]{created_at,author,text}:
   "2026-10-29T18:20:20.084Z",codex-agent,"The prepared release follows only gated GitHub tracker sync PR 68; no production change or delivered item exists after v2026.10.28. Do not misattribute open work or manufacture a feature entry. Recovery explicitly opts the repository historical changelog commands into --include-empty so the pinned generator produces a truthful No changes section and its standard check remains reproducible. Version, release workflow and dependency pins remain unchanged."
   "2026-10-29T18:28:53.769Z",codex-agent,"Generated and checked through the repository commands: the only CHANGELOG delta is the exact 2026.10.29 - 2026-10-29 heading and No changes. Linked npm run changelog:check passed 1/1. Reverting only --include-empty in the two historical commands removes the section and makes that check drift; no delivered item was fabricated or closed. Full npm/Bun release gates must run in fresh CI at unchanged thresholds. The existing resume selector uses an immutable prepared SHA, so repairing main alone is not sufficient for a successful dispatch; the orchestrator must resolve that separately."
   "2026-10-29T18:30:41.179Z",codex-agent,"Correction to the preceding recovery limitation: direct source comparison shows the immutable prepared-SHA selector belongs to pm-context, not this repository. pm-ado currently has no same-version prepared-release resume selector; it checks out origin/main after release-PR merge. This notes repair alone does not implement a resume path. No workflow was changed or dispatched; publication recovery remains orchestrator-owned. The prior audit comment is retained append-only."
+  "2026-10-29T18:44:38.003Z",codex-agent,"Attribution clarification: one linked-file update inherited the harness author in an earlier shell invocation. That update was performed by codex-agent in this task. The original event is retained append-only; this comment records the intended author without rewriting history."
 files[2]{path,scope}:
   CHANGELOG.md,project
   package.json,project

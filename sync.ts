@@ -480,7 +480,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
     const guardRelationUpdate = async (id: string, options: PmUpdateActionOptions) => {
       const relationWrite = options.parent !== undefined || options.dep !== undefined ||
         options.unset?.some((key) => key === "parent" || key === "dependencies");
-      if (mode !== "sync" || !relationWrite) return;
+      if (!relationWrite) return;
       activeItem = id;
       const foreign = foreignKeys.get(id)?.has("relations") === true;
       if (!foreign && (ownedKeys.get(id)?.has("relations") || !items.some((item) => item.id === id))) return;
@@ -559,7 +559,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
       const storedBase = readBase(local, r, normalization);
       const minimum = Math.max(0, ...Object.values(readBaseRevisions(storedBase)), observed.get(local.id) ?? 0);
       if (remote.rev < minimum) throw new CommandError("Azure returned an older revision than durable local recovery; re-read both trackers", EXIT_CODE.conflict);
-      const base = mode === "import" ? undefined : storedBase;
+      const base = storedBase;
       const effect = effects.get(local.id);
       // Preserve a locally distinct status whose configured Azure representation
       // is unchanged (the default blocked and in_progress both export Active).
@@ -568,7 +568,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
       const differing: Conflict["fields"] = {};
       for (const key of Object.keys(r)) {
         if (mode === "import") {
-          if (!equal(l[key], r[key]) && (foreignKeys.get(local.id)?.has(key) || !ownedKeys.get(local.id)?.has(key) && storedBase !== undefined && Object.hasOwn(storedBase, key) && !equal(l[key], storedBase[key]))) {
+          if (!equal(l[key], r[key]) && (foreignKeys.get(local.id)?.has(key) || !ownedKeys.get(local.id)?.has(key) && decisions[key] !== "remote")) {
             differing[key] = { base: storedBase?.[key], local: l[key], remote: r[key] };
           } else { values[key] = r[key]; if (!equal(l[key], r[key])) plan.import_fields.push(key); }
         }
@@ -606,8 +606,8 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
       azureFields(values, plan.export_fields, exportStates, normalization);
     }
     await retireIntents(); // Target, mapping and observed-revision validation precedes housekeeping writes too.
-    if (mode === "sync" && conflicts.length === 0) {
-      const pulled = entries.filter((entry) => entry.pullRelations && entry.remote !== undefined).map((entry) => entry.remote!);
+    if (conflicts.length === 0) {
+      const pulled = entries.filter((entry) => entry.pullRelations && entry.remote !== undefined && (mode === "sync" || entry.local !== undefined)).map((entry) => entry.remote!);
       if (pulled.length) {
         const footprint = await planRelationImport(pulled, config.orgUrl, identities, snapshotReader, {}, true);
         for (const { id, options } of footprint.updates) await guardRelationUpdate(id, options);

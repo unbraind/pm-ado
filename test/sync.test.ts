@@ -92,7 +92,7 @@ test("round-8 sync preserves native claim refusals and unavailable SDK diagnosti
     assert.equal((await f.command("import")).ok, true);
     const item = await row(f.pm);
     await f.pm.claim(item.id, { author: "peer-agent", force: true });
-    assert.deepEqual(localValues((await f.pm.get(item.id)).item), localValues(item), "ownership metadata changes no synced field before planning");
+    assert.deepEqual(localValues((await f.pm.listAllComplete()).items.find((row) => row.id === item.id)!), localValues(item), "ownership metadata changes no synced field before planning");
     const settings = await runtimeSdk.readSettings(f.pmRoot);
     await runtimeSdk.writeSettings(f.pmRoot, { ...settings, governance: { ...settings.governance, preset: "custom", ownership_enforcement: "strict" } });
     f.items.get(1)!.fields["System.Title"] = "Refused remote change"; f.items.get(1)!.rev++;
@@ -3705,5 +3705,67 @@ test("forward-only native validation hook preserves non-conflict SDK errors with
     assert.equal(result.exit_code, 3, "preserve the provider validation receipt rather than report a peer conflict");
     assert.deepEqual(snapshot(f.pmRoot), before);
 
+  });
+});
+
+/** An owned source relation never authorizes overwriting another endpoint's later local edit. */
+test("forward-only indirect endpoints preserve pre-existing peer edits in import export and sync", async (t) => {
+  for (const mode of ["import", "export", "sync"] as const) for (const edit of ["clear", "retarget"] as const) await t.test(`${mode}:${edit}`, async (sub) => {
+    const f = await fixture(sub, [workItem(1), workItem(2), workItem(3), workItem(4)]);
+    assert.equal((await f.command("import")).ok, true);
+    const rows = (await f.pm.listAllComplete()).items;
+    const [source, peerParent, child, ancestor] = rows as [typeof rows[number], typeof rows[number], typeof rows[number], typeof rows[number]];
+    const sourceId = Number(source.ado_id), peerId = Number(peerParent.ado_id), childId = Number(child.ado_id), ancestorId = Number(ancestor.ado_id);
+    if (edit === "clear") {
+      await f.pm.update(child.id, { parent: peerParent.id });
+      f.items.get(peerId)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Forward", url: `${f.org}/_apis/wit/workItems/${childId}` }]; f.items.get(peerId)!.rev++;
+      f.items.get(childId)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Reverse", url: `${f.org}/_apis/wit/workItems/${peerId}` }]; f.items.get(childId)!.rev++;
+      assert.equal((await f.command("sync")).ok, true);
+    }
+    await f.pm.update(child.id, edit === "clear" ? { unset: ["parent"] } : { parent: peerParent.id });
+    const saved = (await f.pm.get(child.id, { depth: "full" })).item;
+    f.response("wiql", { workItems: [{ id: sourceId }] });
+    f.items.get(sourceId)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Reverse", url: `${f.org}/_apis/wit/workItems/${ancestorId}` }]; f.items.get(sourceId)!.rev++;
+    let interrupted = false;
+    await f.observed("import", (event) => {
+      if (event.boundary === "local" && event.phase === "after" && event.operation === "update" && event.item === source.id) { interrupted = true; throw new Error("Owned source relation durable"); }
+    }, { limit: 1 });
+    assert.ok(interrupted);
+    assert.equal((await f.pm.get(source.id)).item.parent, ancestor.id);
+    f.items.get(sourceId)!.relations = [...f.items.get(sourceId)!.relations!, { rel: "System.LinkTypes.Hierarchy-Forward", url: `${f.org}/_apis/wit/workItems/${childId}` }]; f.items.get(sourceId)!.rev++;
+    f.items.get(peerId)!.relations = []; f.items.get(peerId)!.rev++;
+    f.items.get(childId)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Reverse", url: `${f.org}/_apis/wit/workItems/${sourceId}` }]; f.items.get(childId)!.rev++;
+    const writes = f.requests.filter((request) => request.method === "PATCH").length;
+    for (let retry = 0; retry < 2; retry++) {
+      const result = await f.observed(mode, () => {}, { limit: 1 });
+      assert.equal(result.plans[0]?.pm_id, source.id, "the selected source must differ from the protected endpoint");
+      assert.equal(result.kind, "sync_conflict", JSON.stringify(result));
+      assert.equal(result.sync_conflict?.pm_id, child.id);
+      assert.ok(result.sync_conflict?.fields.relations);
+      assert.deepEqual((await f.pm.get(child.id, { depth: "full" })).item, saved, "indirect peer values and history coordinate survive every retry");
+      assert.equal((await f.pm.get(source.id)).item.parent, ancestor.id, "completed forward source work stays durable");
+      assert.equal(f.requests.filter((request) => request.method === "PATCH").length, writes);
+    }
+  });
+});
+
+/** Unknown legacy base fields require an explicit choice rather than overwrite authority. */
+test("forward-only import preserves local fields missing from legacy and partial bases", async (t) => {
+  for (const [name, implementation] of [["source", runSyncCommand], ["built", runBuiltSyncCommand]] as const) for (const partial of [false, true]) await t.test(`${name}:${partial}`, async (sub) => {
+    const f = await fixture(sub);
+    assert.equal((await f.command("import")).ok, true);
+    const item = await row(f.pm);
+    await f.pm.update(item.id, { title: "Peer legacy title", body: "Keep peer context" });
+    if (partial) await f.setFields(item.id, { ado_sync_base: JSON.stringify({ ado_base_partial: 1, ado_base_fields: ["relations"], relations: [] }) });
+    else await f.setFields(item.id, {}, ["ado_sync_base"]);
+    const before = snapshot(f.pmRoot);
+    const result = await f.observed("import", () => {}, {}, undefined, implementation);
+    assert.equal(result.kind, "sync_conflict", JSON.stringify(result));
+    assert.deepEqual(result.sync_conflict?.fields.title, { base: null, current: "Peer legacy title" });
+    assert.deepEqual(snapshot(f.pmRoot), before);
+    assert.ok(f.requests.every((request) => request.method !== "PATCH"));
+    const service = resolver(f);
+    assert.equal((await service.apply(choices(await service.plan(item.id), "remote"))).ok, true);
+    assert.equal((await f.pm.get(item.id, { depth: "full" })).item.body, "Keep peer context");
   });
 });

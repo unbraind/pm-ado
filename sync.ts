@@ -456,7 +456,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
       try {
         versions.set(id, await writes.update(id, options, transactionId));
       } catch (error) {
-        if (error instanceof sdk.PmCliError) throw new CommandError("Local sync persistence refused; re-read both trackers and retry. Earlier Azure or pm operations may have succeeded.", error.exitCode);
+        if (error instanceof sdk.PmCliError && error.exitCode === EXIT_CODE.conflict) throw new CommandError("Local sync persistence refused; re-read both trackers and retry. Earlier Azure or pm operations may have succeeded.", EXIT_CODE.conflict);
         throw error;
       }
       await observer?.({ boundary: "local", phase: "after", operation, item: id });

@@ -190,7 +190,6 @@ recognized history reason; subsequent import/export/sync re-plans current state.
 A fresh import and its dry-run also refuse fields edited locally since the agreed
 base; retrying does not force a peer's status or title back to Azure's value.
 Use the reviewed resolution choices above to choose a conflicting remote value.
-Native SDK mutation refusals retain their SDK exit code.
 
 There is still a window between the final read and the native write. Ordinary
 SDK writers do not join the workspace transaction lock

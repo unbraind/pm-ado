@@ -88,16 +88,19 @@ test("round-8 resolution agreement refuses a fixed-clock edit after settlement r
 
 test("round-8 sync preserves native claim refusals and unavailable SDK diagnostics", async (t) => {
   for (const [name, implementation] of [["source", runSyncCommand], ["built", runBuiltSyncCommand]] as const) await t.test(name, async (sub) => {
-    const f = await fixture(sub);
+    const f = await fixture(sub, [workItem(1, { "System.AssignedTo": "peer-agent" })]);
     assert.equal((await f.command("import")).ok, true);
     const item = await row(f.pm);
     await f.pm.claim(item.id, { author: "peer-agent", force: true });
+    assert.deepEqual(localValues((await f.pm.get(item.id)).item), localValues(item), "ownership metadata changes no synced field before planning");
     const settings = await runtimeSdk.readSettings(f.pmRoot);
     await runtimeSdk.writeSettings(f.pmRoot, { ...settings, governance: { ...settings.governance, preset: "custom", ownership_enforcement: "strict" } });
     f.items.get(1)!.fields["System.Title"] = "Refused remote change"; f.items.get(1)!.rev++;
     const before = snapshot(f.pmRoot), result = await f.observed("import", () => {}, {}, undefined, implementation);
     assert.equal(result.code, "ADO_CONFLICT", JSON.stringify(result));
-    assert.match(result.error!, /Local sync persistence refused/u);
+    assert.equal(result.exit_code, 4);
+    assert.deepEqual(result.conflicts, [], "this fixture must reach SDK policy, rather than a scalar merge refusal");
+    assert.match(result.error!, /Local sync persistence refused; re-read both trackers/u);
     assert.deepEqual(snapshot(f.pmRoot), before);
     const missing = await f.observed("import", async () => {}, {}, [], implementation);
     assert.equal(missing.code, "ADO_USAGE");
@@ -3698,8 +3701,8 @@ test("forward-only native validation hook preserves non-conflict SDK errors with
       });
     }, {}, undefined, implementation);
     assert.equal(invoked, true);
-    assert.equal(result.code, "ADO_USAGE", JSON.stringify(result));
-    assert.equal(result.exit_code, 2, "retain the native SDK refusal code");
+    assert.equal(result.code, "ADO_REMOTE", JSON.stringify(result));
+    assert.equal(result.exit_code, 3, "preserve the provider validation receipt rather than report a peer conflict");
     assert.deepEqual(snapshot(f.pmRoot), before);
 
   });

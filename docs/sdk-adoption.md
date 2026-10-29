@@ -25,7 +25,6 @@ Observed peer edits stop the item and dependent work with `ADO_CONFLICT`,
 `kind: sync_conflict`, and item/field/base/current evidence. No automatic reverse
 mutation runs after success, SDK refusal, conflict, crash or restart. SDK parent
 and permission validation remains active on every forward lifecycle operation.
-Native SDK mutation refusals retain the SDK exit code through the command receipt.
 
 A newly created local item binds to its exact SDK birth receipt, so post-create
 peer edits cannot become an owned baseline. Portable resolution plans retain

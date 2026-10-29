@@ -324,6 +324,8 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
         const localPlans = new Map();
         const foreignKeys = new Map();
         const ownedKeys = new Map();
+        const initialKeys = new Map();
+        const initialImportTargets = new Set();
         const localRemote = new Map(items.flatMap((item) => Number.isSafeInteger(item.ado_id) && Number.isSafeInteger(item.ado_rev) && Number(item.ado_rev) > 0
             ? [[item.id, { id: Number(item.ado_id), revision: Number(item.ado_rev) }]] : []));
         const scope = resolutionDigest([config.orgUrl, config.project]);
@@ -332,7 +334,18 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
         for (const item of items) {
             const history = (await sdk.readHistorySnapshot(sdk.getHistoryPath(ctx.pm_root, item.id), item.id)).entries;
             const latest = new Map(), agreed = new Map();
-            for (const entry of history) {
+            // Explicit first import may initialize untouched birth fields, never a later edit or ABA.
+            const initial = new Set();
+            if (history[0]?.op === "create") {
+                const birth = sdk.replayToItemDocument(sdk.replayHistoryToTarget(history, 0)).metadata;
+                const born = localValues(birth, normalization), current = localValues(item, normalization);
+                for (const key of Object.keys(ADO_FIELD_MAP))
+                    if (equal(born[key], current[key]))
+                        initial.add(key);
+                if (sdk.stableValueEquals(birth.parent, item.parent) && sdk.stableValueEquals(birth.dependencies, item.dependencies))
+                    initial.add("relations");
+            }
+            for (const [index, entry] of history.entries()) {
                 const own = entry.message?.startsWith("bulk-item-transaction ado-sync-") === true || entry.message?.startsWith("bulk-item-transaction ado-local-") === true ||
                     entry.op === "create" && entry.message?.startsWith("Azure DevOps revision ") === true;
                 if (own && entry.op === "create")
@@ -341,7 +354,17 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
                 const revision = own ? entry.message?.match(/(?:^|; )Azure DevOps revision (\d+)$/u) : undefined;
                 if (revision !== undefined && revision !== null && Number.isSafeInteger(Number(revision[1])))
                     observed.set(item.id, Math.max(observed.get(item.id) ?? 0, Number(revision[1])));
-                for (const patch of entry.patch) {
+                const patches = sdk.normalizeReplayPatchOps(entry.patch);
+                if (patches.some((patch) => patch.path === "/metadata")) {
+                    const before = index === 0 ? sdk.emptyImportedDocument() : sdk.replayToItemDocument(sdk.replayHistoryToTarget(history, index - 1));
+                    const after = sdk.replayToItemDocument(sdk.replayHistoryToTarget(history, index));
+                    for (const key of [...Object.keys(ADO_FIELD_MAP), "parent", "dependencies", "ado_sync_base", "ado_sync_intent"]) {
+                        if (!sdk.stableValueEquals(before.metadata[key], after.metadata[key]))
+                            patches.push(after.metadata[key] === undefined
+                                ? { op: "remove", path: `/metadata/${key}` } : { op: "add", path: `/metadata/${key}`, value: after.metadata[key] });
+                    }
+                }
+                for (const patch of patches) {
                     if (own && patch.path === "/metadata/ado_sync_intent" && "value" in patch) {
                         try {
                             const checkpoint = JSON.parse(String(patch.value));
@@ -355,6 +378,7 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
                         try {
                             const base = knownBase(JSON.parse(String(patch.value))), revisions = readBaseRevisions(base);
                             for (const key of baseFields(base)) {
+                                initial.delete(key);
                                 const coordinate = JSON.stringify([base[key], revisions[key]]);
                                 if (agreed.get(key) !== coordinate) {
                                     latest.delete(key);
@@ -365,12 +389,15 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
                         catch { /* Old malformed base metadata cannot authorize a write or prevent replanning. */ }
                     }
                     const field = patch.path.split("/")[2], key = ["parent", "dependencies"].includes(field) ? "relations" : field;
+                    if (entry !== history[0])
+                        initial.delete(key);
                     if ((Object.hasOwn(ADO_FIELD_MAP, key) || key === "relations") && (own || latest.has(key)))
                         latest.set(key, !own);
                 }
             }
             foreignKeys.set(item.id, new Set([...latest].filter(([, foreign]) => foreign).map(([key]) => key)));
             ownedKeys.set(item.id, new Set([...latest].filter(([, foreign]) => !foreign).map(([key]) => key)));
+            initialKeys.set(item.id, initial);
         }
         const identities = new Map();
         for (const item of items) {
@@ -421,7 +448,7 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
                 return;
             activeItem = id;
             const foreign = foreignKeys.get(id)?.has("relations") === true;
-            if (!foreign && (ownedKeys.get(id)?.has("relations") || !items.some((item) => item.id === id)))
+            if (!foreign && (ownedKeys.get(id)?.has("relations") || initialImportTargets.has(id) && initialKeys.get(id)?.has("relations") || !items.some((item) => item.id === id)))
                 return;
             const local = await readLocalAgreement(pm, id, config, undefined, normalization);
             if (foreign || !equal(local.values.relations, local.base?.relations))
@@ -484,6 +511,10 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
         if (mode === "sync")
             for (const local of items.filter((item) => item.ado_id === undefined && !paired.has(item.id)).slice(0, limit - pairs.length))
                 pairs.push({ local, remote: undefined });
+        if (mode === "import")
+            for (const pair of pairs)
+                if (pair.local !== undefined)
+                    initialImportTargets.add(pair.local.id);
         const entries = [];
         for (const { local, remote } of pairs) {
             if (local !== undefined && remote !== undefined && Number.isSafeInteger(local.ado_rev) && Number(local.ado_rev) > remote.rev) {
@@ -528,7 +559,7 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
             const differing = {};
             for (const key of Object.keys(r)) {
                 if (mode === "import") {
-                    if (!equal(l[key], r[key]) && (foreignKeys.get(local.id)?.has(key) || !ownedKeys.get(local.id)?.has(key) && decisions[key] !== "remote")) {
+                    if (!equal(l[key], r[key]) && (foreignKeys.get(local.id)?.has(key) || !ownedKeys.get(local.id)?.has(key) && !initialKeys.get(local.id)?.has(key) && decisions[key] !== "remote")) {
                         differing[key] = { base: storedBase?.[key], local: l[key], remote: r[key] };
                     }
                     else {

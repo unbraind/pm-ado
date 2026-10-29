@@ -21,6 +21,14 @@ including interrupted remote assignment clears. Test compilation checks that
 ownership assertions use complete SDK metadata rather than a partial get
 projection. These controls run in disposable trackers without git.
 
+An explicit first import can initialize fields positively proven unchanged
+since their native birth. Any later field patch, including an ABA change or
+assignment clear, and any recorded agreement retire that permission. Unknown
+legacy fields without birth proof still require a reviewed choice. The same
+proof governs preview and apply, and graph initialization covers only selected
+endpoints. Source/build adversarial tests exercise every mapped scalar, context
+preservation, selected and indirect graph endpoints, and legacy missing history.
+
 | Audit/review finding | SDK replacement or policy | Behavioral evidence |
 | --- | --- | --- |
 | Prefix-only authoritative lookup | `readSettings`, `resolveItemTypeRegistry`, `locateItem`, `readLocatedItem` | Custom nested folders and whole-document guards work without git; original function-only revert fails lookup regression |

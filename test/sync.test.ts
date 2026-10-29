@@ -3769,3 +3769,108 @@ test("forward-only import preserves local fields missing from legacy and partial
     assert.equal((await f.pm.get(item.id, { depth: "full" })).item.body, "Keep peer context");
   });
 });
+
+test("review initial import adopts untouched birth fields but refuses every post-birth scalar edit including clears and ABA", async (t) => {
+  const edits: Record<string, runtimeSdk.PmUpdateActionOptions> = {
+    title: { title: "Peer title" }, description: { description: "Peer description" }, status: { status: "in_progress" },
+    priority: { priority: 0 }, tags: { tags: '["peer"]' }, assignee: { unset: ["assignee"] },
+  };
+  for (const [name, implementation] of [["source", runSyncCommand], ["built", runBuiltSyncCommand]] as const) {
+    for (const edit of ["none", "body", ...Object.keys(edits), "ado_area_path", "ado_iteration_path", "aba"]) await t.test(`${name}:${edit}`, async (sub) => {
+      const f = await fixture(sub, [workItem(1, { "System.State": "Closed" })]);
+      const { item } = await f.pm.create({ type: "Task", title: "Native seed", description: "Seed text", status: "blocked",
+        priority: 1, tags: '["seed"]', assignee: "seed-agent" });
+      await f.setFields(item.id, { ado_id: 1, ado_rev: 1, ado_project: "Project", ado_org_url: f.org });
+      if (edit === "body") await f.pm.update(item.id, { body: "Retain native context" });
+      else if (edit.startsWith("ado_")) await f.setFields(item.id, { [edit]: "Peer path" });
+      else if (edit !== "none") {
+        await f.pm.update(item.id, edit === "aba" ? edits.title! : edits[edit]!);
+        if (edit === "aba") await f.pm.update(item.id, { title: item.title });
+      }
+      const before = snapshot(f.pmRoot);
+      const preview = await f.observed("import", () => {}, { dryRun: true }, undefined, implementation);
+      assert.deepEqual(snapshot(f.pmRoot), before);
+      const result = await f.observed("import", () => {}, {}, undefined, implementation);
+      assert.equal(preview.ok, result.ok, "initialization uses the same history proof in preview and apply");
+      if (edit === "none" || edit === "body") {
+        assert.equal(result.ok, true, JSON.stringify(result));
+        assert.deepEqual(localValues(await row(f.pm)), remoteValues(f.items.get(1)!, IMPORT_STATE_MAP));
+        assert.equal((await f.pm.get(item.id, { depth: "full" })).item.body, edit === "body" ? "Retain native context" : "");
+      } else {
+        assert.equal(result.kind, "sync_conflict", JSON.stringify(result));
+        assert.ok(result.sync_conflict?.fields[edit === "aba" ? "title" : edit]);
+        assert.deepEqual(snapshot(f.pmRoot), before);
+      }
+      assert.ok(f.requests.every((request) => request.method !== "PATCH"));
+    });
+  }
+});
+
+test("review initial import initializes selected birth graph endpoints and refuses unselected or edited endpoints", async (t) => {
+  for (const [name, implementation] of [["source", runSyncCommand], ["built", runBuiltSyncCommand]] as const) {
+    for (const selection of ["selected", "unselected", "peer"]) await t.test(`${name}:${selection}`, async (sub) => {
+      const f = await fixture(sub, [workItem(1), workItem(2)]);
+      const seeds: runtimeSdk.ItemMetadata[] = [];
+      for (const id of [1, 2]) {
+        const { item } = await f.pm.create({ type: "Task", title: `Native seed ${id}` });
+        await f.setFields(item.id, { ado_id: id, ado_rev: 1, ado_project: "Project", ado_org_url: f.org });
+        seeds.push(item);
+      }
+      if (selection === "peer") {
+        const { item } = await f.pm.create({ type: "Task", title: "Peer parent" });
+        await f.pm.update(seeds[1]!.id, { parent: item.id });
+      }
+      f.items.get(1)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Forward", url: `${f.org}/_apis/wit/workItems/2` }];
+      f.items.get(2)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Reverse", url: `${f.org}/_apis/wit/workItems/1` }];
+      f.response("wiql", { workItems: (selection === "unselected" ? [1] : [1, 2]).map((id) => ({ id })) });
+      const before = snapshot(f.pmRoot);
+      const preview = await f.observed("import", () => {}, { dryRun: true }, undefined, implementation);
+      assert.deepEqual(snapshot(f.pmRoot), before);
+      const result = await f.observed("import", () => {}, {}, undefined, implementation);
+      assert.equal(result.ok, preview.ok);
+      if (selection === "selected") {
+        assert.equal(result.ok, true, JSON.stringify(result));
+        assert.equal((await f.pm.get(seeds[1]!.id)).item.parent, seeds[0]!.id);
+      } else {
+        assert.equal(result.kind, "sync_conflict", JSON.stringify(result));
+        assert.equal(result.sync_conflict?.pm_id, seeds[1]!.id);
+        assert.deepEqual(snapshot(f.pmRoot), before);
+      }
+      assert.ok(f.requests.every((request) => request.method !== "PATCH"));
+    });
+  }
+});
+
+test("review initial import preserves legacy items with no native birth proof", async (t) => {
+  for (const [name, implementation] of [["source", runSyncCommand], ["built", runBuiltSyncCommand]] as const) for (const history of ["absent", "birth-root", "root", "legacy-root", "owned-root", "owned-legacy-root"]) await t.test(`${name}:${history}`, async (sub) => {
+    const f = await fixture(sub), { item } = await f.pm.create({ type: "Task", title: "Legacy template", assignee: "legacy-agent" });
+    const settings = await runtimeSdk.readSettings(f.pmRoot), id = "fixture-legacy";
+    // Construct a previously persisted item without manufacturing or removing a history stream.
+    const document = { metadata: { ...item, id, ado_id: 1, ado_rev: 1, ado_project: "Project", ado_org_url: f.org }, body: "Legacy context" };
+    writeFileSync(runtimeSdk.getItemPath(f.pmRoot, "Task", id, settings.item_format), runtimeSdk.serializeItemDocument(document, { schema: settings.schema }));
+    if (history !== "absent") {
+      const path = runtimeSdk.getHistoryPath(f.pmRoot, id), peer = { ...document, metadata: { ...document.metadata, title: "Temporary peer title" } };
+      delete peer.metadata.assignee;
+      const birth = runtimeSdk.createHistoryEntry({ nowIso: item.updated_at, author: "fixture-agent", op: "create", before: runtimeSdk.emptyImportedDocument(), after: document,
+        message: history.startsWith("owned") ? "Azure DevOps revision 1" : undefined });
+      await runtimeSdk.appendHistoryEntry(path, runtimeSdk.sealHistoryRecord({ ...birth, patch: [
+        { op: "add", path: history.includes("legacy") ? "/front_matter" : "/metadata", value: document.metadata },
+        { op: "replace", path: "/body", value: document.body }] }));
+      for (const [before, after] of history === "birth-root" ? [] : [[document, peer], [peer, document]]) {
+        const entry = runtimeSdk.createHistoryEntry({ nowIso: item.updated_at, author: "peer-agent", op: "update", before: before!, after: after! });
+        await runtimeSdk.appendHistoryEntry(path, runtimeSdk.sealHistoryRecord({ ...entry, patch: [{ op: "replace", path: history.includes("legacy") ? "/front_matter" : "/metadata", value: after!.metadata }] }));
+      }
+    }
+    const before = snapshot(f.pmRoot);
+    const result = await f.observed("import", () => {}, {}, undefined, implementation);
+    if (history === "birth-root") {
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.equal((await f.pm.get(id)).item.title, "Remote 1");
+    } else {
+      assert.equal(result.kind, "sync_conflict", JSON.stringify(result));
+      assert.equal(result.sync_conflict?.pm_id, id);
+      assert.deepEqual(snapshot(f.pmRoot), before);
+    }
+    assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 0);
+  });
+});

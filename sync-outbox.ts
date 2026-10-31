@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { ItemMetadata, LockLease } from "@unbrained/pm-cli/sdk";
 import type { Values } from "./sync.ts";
 import { loadResolutionSdk, resolutionDigest } from "./resolution.ts";
-import { AdoClient, AdoHttpError, CommandError, EXIT_CODE, RevisionConflict, type AdoConfig, type AdoWorkItem, type JsonPatchOperation } from "./index.ts";
+import { AdoClient, AdoHttpError, buildUpdatePatch, CommandError, EXIT_CODE, RevisionConflict, type AdoConfig, type AdoWorkItem, type JsonPatchOperation } from "./index.ts";
 
 /** Observable SDK/REST boundaries; observers never provide or replace storage or transport. */
 export interface SyncBoundary {
@@ -209,9 +209,9 @@ export class SyncOutbox {
   }
 
   /** Reconcile a proven prior PATCH before treating its own effect as a competing writer. */
-  async recoverEffects(remotes: readonly AdoWorkItem[], locals: readonly ItemMetadata[]): Promise<Map<string, { original: Values; accepted: AdoWorkItem; fields: Record<string, unknown>; revision: number }[]>> {
+  async recoverEffects(remotes: readonly AdoWorkItem[], locals: readonly ItemMetadata[]): Promise<Map<string, { original: Values; accepted: AdoWorkItem; fields: Record<string, unknown>; relations: JsonPatchOperation[]; revision: number }[]>> {
     const directory = join(this.pmRoot, "transactions/pm-ado-sync");
-    const recovered = new Map<string, { original: Values; accepted: AdoWorkItem; fields: Record<string, unknown>; revision: number }[]>();
+    const recovered = new Map<string, { original: Values; accepted: AdoWorkItem; fields: Record<string, unknown>; relations: JsonPatchOperation[]; revision: number }[]>();
     let names: string[];
     try { names = await readdir(directory); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return recovered; throw error; }
@@ -231,7 +231,7 @@ export class SyncOutbox {
       this.validate(intent, local.id, "patch");
       const accepted = await this.client.request("GET", `/_apis/wit/workitems/${intent.remote}/revisions/${intent.revision + 1}?api-version=7.1&$expand=relations`) as AdoWorkItem;
       if (accepted.fields["System.History"] !== `pm-ado operation ${intent.key}`) continue;
-      recovered.set(local.id, [...(recovered.get(local.id) ?? []), { original: intent.base, accepted, fields: intent.fields, revision: intent.revision }]);
+      recovered.set(local.id, [...(recovered.get(local.id) ?? []), { original: intent.base, accepted, fields: intent.fields, relations: intent.relations, revision: intent.revision }]);
     }
     return recovered;
   }
@@ -284,6 +284,7 @@ export class SyncOutbox {
 
   /** Journal links/comments/scalars before PATCH; its revision assertion makes exact replay safe. */
   async patch(item: string, remote: AdoWorkItem, fields: Record<string, unknown>, relations: readonly JsonPatchOperation[], base: Values | null = null): Promise<AdoWorkItem> {
+    buildUpdatePatch(remote.rev, fields, relations, "add"); // Validate before any durable intent or remote call.
     return this.withIntent({ item, operation: "patch", type: "", fields, base, relations: [...relations], remote: remote.id, revision: remote.rev }, async (intent, persist, replan) => {
       if (intent.response !== undefined) return intent.response;
       const marker = `pm-ado operation ${intent.key}`;

@@ -1,3 +1,4 @@
+import { listenOnLoopback } from "../test/helpers/http-fixture.ts";
 /** Compare built packages over disposable copies of public tracker snapshots. */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -116,9 +117,7 @@ async function compare(baseline: string, trackers: string[]): Promise<void> {
     else if (req.url!.includes("/workitemsbatch?")) res.end(JSON.stringify({ value: body.ids!.map((id) => remote.get(id)) }));
     else res.end(JSON.stringify(remote.get(Number(req.url!.split("?")[0].split("/").at(-1)))));
   });
-  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
-  const address = server.address();
-  assert.ok(address && typeof address !== "string");
+  const address = await listenOnLoopback(server);
   const org = `http://127.0.0.1:${address.port}/organization`;
   try {
     let total = 0;

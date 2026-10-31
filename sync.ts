@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { normalizeFieldValues, normalizeStatusValue, normalizeItemReference, normalizeScopeValue, normalizeStateMaps, type ValueNormalization } from "./normalization.ts";
 /** Command orchestration and per-field Azure DevOps reconciliation. */
-import { advanceSyncBase, readBaseRevisions, knownBase, baseFields } from "./agreement.ts";
+import { agreementMutation, advanceSyncBase, readBaseRevisions, knownBase, baseFields } from "./agreement.ts";
 import { loadResolutionSdk, resolutionDigest } from "./resolution.ts";
 import { SyncOutbox, isProtocolTag, type SyncObserver } from "./sync-outbox.ts";
 import { NativeWriteFence, NativeHistoryConflict } from "./history-fence.ts";
@@ -91,6 +91,8 @@ interface Entry {
   local?: ItemMetadata;
   /** Expanded remote snapshot when linked or imported. */
   remote?: AdoWorkItem;
+  /** Validated remote precondition shared by preview and dispatch, including recovery. */
+  revision?: number;
   /** Desired agreed canonical values. */
   values: Values;
   /** Recognized remote links to import after field operations. */
@@ -292,13 +294,20 @@ export interface OwnedEffect {
   original: Values;
   /** Accepted remote projection, whose unrelated keys are never common base. */
   accepted: Values;
-  /** Scalar keys actually included in that request. */
+  /** Field keys actually included in that request, including patched relations. */
   keys: string[];
+  /** The durable journal proves that this request patched relations, beyond a scalar snapshot. */
+  relations?: true;
   /** Revision asserted by the owned request; a later witnessed key retires this proof. */
   revision: number;
 }
 
-/** Choose each key from its witnessed base or the latest proof for that exact owned scalar. */
+/** Select only the latest request that actually touched a key and has not been superseded by agreement. */
+function fieldEffect(key: string, witnessed: Readonly<Record<string, number>>, effects: readonly OwnedEffect[]): OwnedEffect | undefined {
+  return [...effects].reverse().find((candidate) => candidate.keys.includes(key) && (key !== "relations" || candidate.relations === true) && (witnessed[key] ?? 0) <= candidate.revision);
+}
+
+/** Choose each key from its witnessed base or the latest proof for that exact owned field. */
 export function mergeSyncValues(local: Values, remote: Values, base: Values | undefined, effect?: OwnedEffect | readonly OwnedEffect[], normalization?: ValueNormalization): Record<string, "equal" | "local" | "remote" | "conflict"> {
   local = normalizeFieldValues(local, normalization); remote = normalizeFieldValues(remote, normalization);
   if (base !== undefined) base = normalizeFieldValues(knownBase(base), normalization);
@@ -306,9 +315,10 @@ export function mergeSyncValues(local: Values, remote: Values, base: Values | un
   const effects: readonly OwnedEffect[] = (effect === undefined ? [] : Array.isArray(effect) ? effect : [effect as OwnedEffect]).map((candidate) => ({ ...candidate,
     original: normalizeFieldValues(candidate.original, normalization), accepted: normalizeFieldValues(candidate.accepted, normalization) }));
   return Object.fromEntries(Object.keys(remote).map((key) => {
-    const owned = key === "relations" ? undefined : [...effects].reverse().find((candidate) => candidate.keys.includes(key) && (witnessed[key] ?? 0) <= candidate.revision);
+    const owned = fieldEffect(key, witnessed, effects);
     return [key, equal(local[key], remote[key]) ? "equal" :
-      owned !== undefined ? recoveredField(local[key], remote[key], owned.original[key], owned.accepted[key]) :
+      owned !== undefined ? key === "relations" ? equal(local[key], owned.accepted[key]) ? "remote" : "conflict"
+        : recoveredField(local[key], remote[key], owned.original[key], owned.accepted[key]) :
       threeWayFieldConflict(local[key], remote[key], base?.[key]) ? "conflict" :
       !equal(remote[key], base?.[key]) ? "remote" : "local"];
   }));
@@ -555,7 +565,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
     for (const [item, recoveries] of await outbox.recoverEffects([...remotes.values()], items)) {
       effects.set(item, [...(effects.get(item) ?? []), ...recoveries.map((recovery) => ({ original: recovery.original,
         accepted: { ...remoteValues(recovery.accepted, states, normalization), relations: relationValues(recovery.accepted.relations ?? [], config, identities) },
-        keys: Object.keys(ADO_FIELD_MAP).filter((key) => Object.hasOwn(recovery.fields, ADO_FIELD_MAP[key])), revision: recovery.revision }))]);
+        keys: [...Object.keys(ADO_FIELD_MAP).filter((key) => Object.hasOwn(recovery.fields, ADO_FIELD_MAP[key])), ...(recovery.relations.length ? ["relations"] : [])], relations: recovery.relations.length ? true as const : undefined, revision: recovery.revision }))]);
     }
     const pairs: { local: ItemMetadata | undefined; remote: AdoWorkItem | undefined }[] = mode === "export" ? selected.map((local) => ({ local, remote: remotes.get(Number(local.ado_id)) }))
       : [...remotes.values()].map((remote) => ({ remote, local: items.find((item) => item.id === identities.get(remote.id)) }));
@@ -587,6 +597,9 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
       if (remote.rev < minimum) throw new CommandError("Azure returned an older revision than durable local recovery; re-read both trackers", EXIT_CODE.conflict);
       const base = storedBase;
       const effect = effects.get(local.id);
+      const relationEffect = fieldEffect("relations", readBaseRevisions(base), effect ?? []);
+      // A proven PATCH authorizes only the graph it actually accepted, never a later local edit.
+      if (relationEffect !== undefined && equal(l.relations, relationEffect.accepted.relations)) ownedKeys.get(local.id)!.add("relations");
       // Preserve a locally distinct status whose configured Azure representation
       // is unchanged (the default blocked and in_progress both export Active).
       if (mode !== "import") r.status = remoteScalarValues(remote, base, states, exportStates, normalization).status;
@@ -622,26 +635,26 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
       entry.pullRelations = mode === "import" || plan.import_fields.includes("relations");
       entry.operations = plan.export_fields.includes("relations") ? relationPlan.operations : [];
       plan.action = plan.import_fields.length || plan.export_fields.length ? "reconcile" : "none";
-      if (plan.export_fields.length && !effects.has(local.id) && (!Number.isSafeInteger(local.ado_rev) || Number(local.ado_rev) < 1)) {
-        throw new CommandError(`Missing valid ado_rev for ${local.id}; import first`);
-      }
-      if (dryRun && mode === "export" && plan.export_fields.length && local.ado_rev !== remote.rev) {
-        conflicts.push(revisionConflict(entry, new RevisionConflict(remote.id, Number(local.ado_rev), remote), config, identities, states));
+      if (plan.export_fields.length) {
+        const asserted = mode === "sync" || effects.has(local.id) ? remote.rev : local.ado_rev;
+        if (!Number.isSafeInteger(asserted) || Number(asserted) < 1) throw new CommandError(`Missing valid ado_rev for ${local.id}; import first`);
+        entry.revision = Number(asserted);
+        if (mode === "export" && entry.revision !== remote.rev) {
+          conflicts.push(revisionConflict(entry, new RevisionConflict(remote.id, entry.revision, remote), config, identities, states));
+        }
       }
       // Validate export mappings even in dry-run, before any write on either side.
       azureFields(values, plan.export_fields, exportStates, normalization);
     }
     // Reject edits made during planning before creating neighboring items or retiring any intent.
     if (!dryRun) for (const entry of entries) if (entry.local !== undefined) await writes.assertCurrent(entry.local.id);
-    await retireIntents(); // Target, mapping and observed-revision validation precedes housekeeping writes too.
-    if (conflicts.length === 0) {
-      const pulled = entries.filter((entry) => entry.pullRelations && entry.remote !== undefined && (mode === "sync" || entry.local !== undefined)).map((entry) => entry.remote!);
-      if (pulled.length) {
-        const footprint = await planRelationImport(pulled, config.orgUrl, identities, snapshotReader, {}, true);
-        for (const { id, options } of footprint.updates) await guardRelationUpdate(id, options);
-      }
-    }
     if (conflicts.length) return conflictResult();
+    const pulled = entries.filter((entry) => entry.pullRelations && entry.remote !== undefined && (mode === "sync" || entry.local !== undefined)).map((entry) => entry.remote!);
+    if (pulled.length) {
+      const footprint = await planRelationImport(pulled, config.orgUrl, identities, snapshotReader, {}, true);
+      for (const { id, options } of footprint.updates) await guardRelationUpdate(id, options);
+    }
+    await retireIntents(); // Scalar and relation validation precedes every housekeeping write.
     if (!dryRun) {
       for (const entry of entries) if (entry.local !== undefined) {
         if (entry.remote !== undefined) {
@@ -679,7 +692,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
             } else Object.assign(values, remoteValues(remote, states, normalization));
             identities.set(remote.id, local!.id);
           } else if (plan.export_fields.length) {
-            remote = await outbox.patch(local!.id, { ...remote, rev: mode === "sync" ? remote.rev : Number(local!.ado_rev) }, azureFields(values, plan.export_fields, exportStates, normalization), entry.operations, localValues(local!, normalization));
+            remote = await outbox.patch(local!.id, { ...remote, rev: entry.revision! }, azureFields(values, plan.export_fields, exportStates, normalization), entry.operations, localValues(local!, normalization));
           }
         } catch (error) {
           if (!(error instanceof RevisionConflict)) throw error;
@@ -746,10 +759,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
           },
           publish: async (base, revision) => {
             await writes.assertCurrent(local!.id);
-            const field: string[] = [];
-            if (readback.item.ado_sync_base !== JSON.stringify(base)) field.push(`ado_sync_base=${JSON.stringify(base)}`);
-            if (revision !== undefined && readback.item.ado_rev !== revision) field.push(`ado_rev=${revision}`);
-            const unset = revision !== undefined && readback.item.ado_sync_intent !== undefined ? ["ado_sync_intent"] : undefined;
+            const { field, unset } = agreementMutation(readback.item, base, revision);
             if (field.length || unset !== undefined) await persist(local!.id, { field, unset, message: "Azure read-back agreement" }, "agreement");
             if (revision !== undefined) localPlans.delete(local!.id);
           } });

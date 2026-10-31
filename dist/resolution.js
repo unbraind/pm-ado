@@ -1,7 +1,7 @@
 import { normalizeFieldValues, normalizeStatusValue, normalizeScopeValue, normalizeStateMaps } from "./normalization.js";
 import { NativeWriteFence, nativeHead, NativeHistoryConflict, isNativeHead } from "./history-fence.js";
 /** Portable, revision-bound decisions over the existing Azure sync field map. */
-import { advanceSyncBase, readBaseRevisions } from "./agreement.js";
+import { agreementMutation, advanceSyncBase, readBaseRevisions } from "./agreement.js";
 import { createHash, createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
@@ -387,12 +387,7 @@ export class AdoResolutionService {
                 },
                 publish: async (base, revision, version) => {
                     await nativeWrites.assertCurrent(inspected.id);
-                    const field = [];
-                    if (readback.item.ado_sync_base !== JSON.stringify(base))
-                        field.push(`ado_sync_base=${JSON.stringify(base)}`);
-                    if (revision !== undefined && readback.item.ado_rev !== revision)
-                        field.push(`ado_rev=${revision}`);
-                    const unset = revision !== undefined && readback.item.ado_sync_intent !== undefined ? ["ado_sync_intent"] : undefined;
+                    const { field, unset } = agreementMutation(readback.item, base, revision);
                     if (field.length || unset !== undefined)
                         await nativeWrites.update(plan.local.id, { field, unset, message: "Azure read-back agreement" }, `ado-agreement-${this.sdk.deriveMutationTransactionId(JSON.stringify([plan.local.id, version, field]))}`);
                 } });

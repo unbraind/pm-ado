@@ -71,6 +71,7 @@ export declare class SyncOutbox {
         original: Values;
         accepted: AdoWorkItem;
         fields: Record<string, unknown>;
+        relations: JsonPatchOperation[];
         revision: number;
     }[]>>;
     /** Find the stamped object before considering creation; never silently choose between duplicate markers. */

@@ -1,3 +1,4 @@
+import type { ItemMetadata, PmUpdateActionOptions } from "@unbrained/pm-cli/sdk";
 import type { Values } from "./sync.ts";
 /** Local state read after the command's mutations, including its last agreed base. */
 export interface LocalAgreementRead {
@@ -51,4 +52,8 @@ export declare function knownBase(base: Values): Values;
 export declare function fieldAtRevision(field: string, fields: readonly string[], savedRevision: number | null, observedRevision: number, revisions?: Readonly<Record<string, number>>): boolean;
 /** Advance each key only from matching post-operation reads; acknowledge a revision only on full agreement. */
 export declare function advanceSyncBase(operations: AgreementOperations): Promise<AgreementResult>;
+/** Build only changed agreement fields; each caller retains its own native write fence. */
+export declare function agreementMutation(item: ItemMetadata, base: Values, revision: number | undefined): Pick<PmUpdateActionOptions, "unset"> & {
+    field: string[];
+};
 //# sourceMappingURL=agreement.d.ts.map

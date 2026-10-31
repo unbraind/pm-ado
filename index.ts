@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { normalizeScopeValue } from "./normalization.ts";
 // pm-ado — Azure DevOps work item sync for pm-cli.
 //
@@ -378,9 +379,10 @@ export async function importRelations(
   custom: CustomRelationMap = {},
 ): Promise<{ updated: string[]; unmapped: RelationDiagnostic[] }> {
   let nativeWrites: NativeWriteFence | undefined;
+  let sdk: ReturnType<typeof loadResolutionSdk> | undefined;
   const native = pm as typeof pm & Partial<Pick<PmClient, "config">>;
   if (native.config !== undefined) {
-    const sdk = loadResolutionSdk();
+    sdk = loadResolutionSdk();
     const pmRoot = dirname((await native.config("project", "list")).settings_path);
     const settings = await sdk.readSettings(pmRoot);
     nativeWrites = new NativeWriteFence(sdk, pmRoot, sdk.selectImportAuthor(undefined, settings.author_default), (id, options) => pm.update(id, options));
@@ -389,12 +391,12 @@ export async function importRelations(
   const { updates, unmapped } = await planRelationImport(remote, orgUrl, identities, pm, custom);
   /** Keep opaque host adapters on their caller-owned write path; native clients carry SDK history witnesses. */
   const update = async (id: string, options: PmUpdateActionOptions) => nativeWrites === undefined ? pm.update(id, options)
-    : nativeWrites.update(id, options, `ado-relations-${loadResolutionSdk().deriveMutationTransactionId(JSON.stringify([id, nativeWrites.head(id), options]))}`);
+    : nativeWrites.update(id, options, `ado-relations-${sdk!.deriveMutationTransactionId(JSON.stringify([id, nativeWrites.head(id), options]))}`);
   const updated = new Set<string>();
   for (const { id, options, previous } of updates) {
     const current = (await pm.listAllComplete()).items.find((item) => item.id === id);
     const keys = [...(options.parent !== undefined ? ["parent"] : []), ...(options.dep?.length ? ["dependencies"] : [])];
-    const fields = Object.fromEntries(keys.filter((key) => !loadResolutionSdk().stableValueEquals(previous[key] ?? null, current?.[key] ?? null))
+    const fields = Object.fromEntries(keys.filter((key) => !isDeepStrictEqual(previous[key] ?? null, current?.[key] ?? null))
       .map((key) => [key, { base: previous[key] ?? null, current: current?.[key] ?? null }]));
     if (current === undefined) fields.item = { base: "present", current: null };
     if (Object.keys(fields).length) throw new NativeHistoryConflict(id, fields);
@@ -645,6 +647,7 @@ export function buildUpdatePatch(
   fieldOperation: "add" | "replace" = "replace",
 ): JsonPatchOperation[] {
   const patch: JsonPatchOperation[] = [{ op: "test", path: "/rev", value: rev }];
+  if (!assertsRevision(patch)) throw new CommandError("revision must be a positive safe integer");
   for (const [name, value] of Object.entries(fields)) {
     patch.push({ op: fieldOperation, path: `/fields/${name}`, value });
   }
@@ -666,11 +669,11 @@ export function buildUpdatePatch(
  * of a promise in a comment.
  *
  * @param patch - The patch document about to be sent.
- * @returns True when the first operation tests `/rev`.
+ * @returns True when the first operation tests `/rev` against a positive safe integer.
  */
 export function assertsRevision(patch: readonly JsonPatchOperation[]): boolean {
   const first = patch[0];
-  return first !== undefined && first.op === "test" && first.path === "/rev";
+  return first !== undefined && first !== null && first.op === "test" && first.path === "/rev" && Number.isSafeInteger(first.value) && Number(first.value) > 0;
 }
 
 /** Credentials and target coordinates for one Azure DevOps project. */

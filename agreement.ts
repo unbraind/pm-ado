@@ -1,5 +1,6 @@
 /** Read-back witnesses for advancing only fields that both stores actually share. */
 import { CommandError, EXIT_CODE } from "./index.ts";
+import type { ItemMetadata, PmUpdateActionOptions } from "@unbrained/pm-cli/sdk";
 import type { Values } from "./sync.ts";
 
 /** Local state read after the command's mutations, including its last agreed base. */
@@ -108,4 +109,13 @@ export async function advanceSyncBase(operations: AgreementOperations): Promise<
   base.ado_agreed_revisions = JSON.stringify(revisions);
   await operations.publish(base, differences.length === 0 ? remote.revision : undefined, local.version);
   return { base, differences, local, remote };
+}
+
+/** Build only changed agreement fields; each caller retains its own native write fence. */
+export function agreementMutation(item: ItemMetadata, base: Values, revision: number | undefined): Pick<PmUpdateActionOptions, "unset"> & { field: string[] } {
+  const field: string[] = [];
+  if (item.ado_sync_base !== JSON.stringify(base)) field.push(`ado_sync_base=${JSON.stringify(base)}`);
+  if (revision !== undefined && item.ado_rev !== revision) field.push(`ado_rev=${revision}`);
+  const unset = revision !== undefined && item.ado_sync_intent !== undefined ? ["ado_sync_intent"] : undefined;
+  return { field, unset };
 }

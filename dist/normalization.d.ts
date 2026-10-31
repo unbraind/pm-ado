@@ -24,8 +24,13 @@ export interface ItemReferenceNormalization {
 }
 /** Canonical operator IDs use native SDK resolution, case, hash-marker and prefix rules. */
 export declare function normalizeItemReference(value: string, context?: ValueNormalization | ItemReferenceNormalization): string;
-/** Required text follows SDK trimming, retaining empty/invalid legacy values for read-only evaluation. */
-export declare function normalizeTitleValue(value: string, context?: ValueNormalization): string;
+/** Host-owned text normalization for metadata discovery without a package SDK module link. */
+export interface TitleReferenceNormalization {
+    /** Project the exact required text value used by the export writer. */
+    resolveTitle(value: string): string;
+}
+/** Required text shares SDK trimming; the fallback stays SDK-free for metadata-only discovery. */
+export declare function normalizeTitleValue(value: string, context?: ValueNormalization | Partial<TitleReferenceNormalization>): string;
 /** Assignment names preserve case while sharing SDK trimming and legacy scalar-clear semantics. */
 export declare function normalizeAssigneeValue(value: string, context?: ValueNormalization): string;
 /** SDK tag normalization precedes the existing locale-independent set comparison order. */

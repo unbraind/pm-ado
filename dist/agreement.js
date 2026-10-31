@@ -73,4 +73,14 @@ export async function advanceSyncBase(operations) {
     await operations.publish(base, differences.length === 0 ? remote.revision : undefined, local.version);
     return { base, differences, local, remote };
 }
+/** Build only changed agreement fields; each caller retains its own native write fence. */
+export function agreementMutation(item, base, revision) {
+    const field = [];
+    if (item.ado_sync_base !== JSON.stringify(base))
+        field.push(`ado_sync_base=${JSON.stringify(base)}`);
+    if (revision !== undefined && item.ado_rev !== revision)
+        field.push(`ado_rev=${revision}`);
+    const unset = revision !== undefined && item.ado_sync_intent !== undefined ? ["ado_sync_intent"] : undefined;
+    return { field, unset };
+}
 //# sourceMappingURL=agreement.js.map

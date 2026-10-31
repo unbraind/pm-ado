@@ -38,8 +38,16 @@ export function normalizeItemReference(value: string, context?: ValueNormalizati
   const sdk = native(context);
   return context === undefined ? sdk.normalizeRawItemId(value) : sdk.normalizeItemId(value, context.idPrefix);
 }
-/** Required text follows SDK trimming, retaining empty/invalid legacy values for read-only evaluation. */
-export function normalizeTitleValue(value: string, context?: ValueNormalization): string { return native(context).toNonEmptyImportString(value) ?? ""; }
+/** Host-owned text normalization for metadata discovery without a package SDK module link. */
+export interface TitleReferenceNormalization {
+  /** Project the exact required text value used by the export writer. */
+  resolveTitle(value: string): string;
+}
+/** Required text shares SDK trimming; the fallback stays SDK-free for metadata-only discovery. */
+export function normalizeTitleValue(value: string, context?: ValueNormalization | Partial<TitleReferenceNormalization>): string {
+  if (context !== undefined && "sdk" in context) return context.sdk.toNonEmptyImportString(value) ?? "";
+  return context?.resolveTitle?.(value) ?? (typeof value === "string" ? value.trim() : "");
+}
 /** Legacy scalar clear tokens have the same meaning as the SDK's explicit unset path. */
 function clearToken(value: string): boolean { return ["none", "null"].includes(value.trim().toLowerCase()); }
 /** Assignment names preserve case while sharing SDK trimming and legacy scalar-clear semantics. */

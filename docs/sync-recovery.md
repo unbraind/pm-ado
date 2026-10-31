@@ -60,11 +60,15 @@ responses and snapshots containing unimported remote changes never certify a
 base value. SDK normalization that leaves the stores different is therefore an
 explicit conflict rather than a false success.
 
-Recovery proof is separate: `mergeSyncValues` may recognize **only scalar keys
-actually written by the owned request**, comparing its original and accepted
-values. Unrelated accepted fields and relations never become a common base.
-An interrupted scalar PATCH with an unimported remote link therefore imports
-the link on resume; it cannot reinterpret that link as a local deletion.
+Recovery proof is separate: `mergeSyncValues` recognizes only keys actually
+written by the owned request. Scalar proof compares original and accepted
+values. Relation proof additionally requires actual relation operations in the
+durable journal: continuation requires the local graph to match the accepted
+graph; a later local graph edit refuses before housekeeping writes. A later
+per-key agreement retires that proof. Unrelated accepted fields and relations
+never become a common base. An interrupted scalar PATCH with an unimported
+remote link therefore imports the link on resume; it cannot reinterpret that
+link as a local deletion.
 
 ## Private outbox and idempotency coordinates
 
@@ -112,8 +116,9 @@ its operation marker. It returns that proven historical snapshot rather than
 adopting a later writer's current document. Historical reads request expanded
 relations. Before three-way planning, recovery reads each pending PATCH's
 proven historical result in revision order. Every proven result is retained, and the latest proof is selected independently
-for each scalar key actually sent;
-its original local projection distinguishes subsequent local edits. Neither the
+for each key actually sent. Scalar proof uses its original local projection;
+relation proof requires the journal's relation operations and an unchanged
+accepted local graph. Neither the
 accepted snapshot nor its unimported relations become the common base. This also recovers repeated local conflicts across several PATCHes
 without mistaking the adapter's own earlier effects for competing remote edits. Provider API references: [create](https://learn.microsoft.com/en-us/rest/api/azure/devops/wit/work-items/create?view=azure-devops-rest-7.1)
 and [revision lookup](https://learn.microsoft.com/en-us/rest/api/azure/devops/wit/revisions/get?view=azure-devops-rest-7.1).

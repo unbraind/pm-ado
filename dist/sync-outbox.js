@@ -2,7 +2,7 @@
 import { mkdir, readFile, chmod, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { loadResolutionSdk, resolutionDigest } from "./resolution.js";
-import { AdoHttpError, CommandError, EXIT_CODE, RevisionConflict } from "./index.js";
+import { AdoHttpError, buildUpdatePatch, CommandError, EXIT_CODE, RevisionConflict } from "./index.js";
 /** Total transition table; successful proof is never downgraded by a later failure. */
 export const OUTBOX_TRANSITIONS = {
     prepared: { dispatch: "dispatched", success: "observed", rejection: "rejected", ambiguity: "dispatched", retry: "prepared" },
@@ -181,7 +181,7 @@ export class SyncOutbox {
             const accepted = await this.client.request("GET", `/_apis/wit/workitems/${intent.remote}/revisions/${intent.revision + 1}?api-version=7.1&$expand=relations`);
             if (accepted.fields["System.History"] !== `pm-ado operation ${intent.key}`)
                 continue;
-            recovered.set(local.id, [...(recovered.get(local.id) ?? []), { original: intent.base, accepted, fields: intent.fields, revision: intent.revision }]);
+            recovered.set(local.id, [...(recovered.get(local.id) ?? []), { original: intent.base, accepted, fields: intent.fields, relations: intent.relations, revision: intent.revision }]);
         }
         return recovered;
     }
@@ -239,6 +239,7 @@ export class SyncOutbox {
     }
     /** Journal links/comments/scalars before PATCH; its revision assertion makes exact replay safe. */
     async patch(item, remote, fields, relations, base = null) {
+        buildUpdatePatch(remote.rev, fields, relations, "add"); // Validate before any durable intent or remote call.
         return this.withIntent({ item, operation: "patch", type: "", fields, base, relations: [...relations], remote: remote.id, revision: remote.rev }, async (intent, persist, replan) => {
             if (intent.response !== undefined)
                 return intent.response;

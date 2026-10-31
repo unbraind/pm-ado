@@ -1,3 +1,5 @@
+import { applyFixtureRelation } from "./helpers/relation-fixture.ts";
+import { listenOnLoopback } from "./helpers/http-fixture.ts";
 /** Real host commands against a local Azure REST subset and disposable SDK trackers. */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -14,7 +16,7 @@ import * as runtimeSdk from "@unbrained/pm-cli/sdk";
 import { PmClient, createExtensionCommandSdk, runWithActiveExtensions, resolveRuntimeStatusRegistry, readSettings } from "@unbrained/pm-cli/sdk";
 import { createExtensionTestHarness } from "@unbrained/pm-cli/sdk/testing";
 import extension, { type AdoWorkItem, type AdoRelation, type JsonPatchOperation } from "../index.ts";
-import { buildWiql, localValues, remoteValues, IMPORT_STATE_MAP, runSyncCommand, readLocalAgreement, type SyncCommandResult } from "../sync.ts";
+import { buildWiql, localValues, remoteValues, IMPORT_STATE_MAP, azureFields, ADO_FIELD_MAP, runSyncCommand, readLocalAgreement, type SyncCommandResult } from "../sync.ts";
 import { NativeWriteFence, NativeHistoryConflict } from "../history-fence.ts";
 import { runSyncCommand as runBuiltSyncCommand } from "../dist/sync.js";
 
@@ -26,9 +28,7 @@ const cli = join(repo, "node_modules/@unbrained/pm-cli/dist/cli.js");
 
 test("round-8 resolution portable and legacy plans reject fixed-clock edits including ABA", async (t) => {
   for (const legacy of [false, true]) for (const edit of ["ordinary", "aba", "noop"]) await t.test(`${legacy}:${edit}`, async (sub) => {
-    const f = await fixture(sub);
-    assert.equal((await f.command("import")).ok, true);
-    const item = await row(f.pm);
+    const { f, item } = await importedFixture(sub);
     sub.mock.timers.enable({ apis: ["Date"], now: new Date(item.updated_at) });
     try {
       f.items.get(1)!.fields["System.Title"] = "Remote decision"; f.items.get(1)!.rev++;
@@ -60,10 +60,7 @@ test("round-8 fresh legacy headless plans apply and replay without extra native 
   f.items.get(1)!.fields["System.Title"] = "Reviewed legacy change"; f.items.get(1)!.rev++;
   const plan = choices(await service.plan(item.id), "remote");
   delete plan.local.head;
-  assert.equal((await service.apply(plan)).ok, true);
-  const before = snapshot(f.pmRoot);
-  assert.equal((await service.apply(plan)).replayed, true);
-  assert.deepEqual(snapshot(f.pmRoot), before);
+  await assertAppliedReplay(f, service, plan);
 });
 
 test("round-8 resolution agreement refuses a fixed-clock edit after settlement read-back", async (t) => {
@@ -134,9 +131,7 @@ test("round-8 legacy prepared decisions without remote projections retain raw PA
 });
 
 test("round-8 missing scope coordinates and non-directory outbox storage refuse without writes", async (t) => {
-  const f = await fixture(t);
-  assert.equal((await f.command("import")).ok, true);
-  const item = await row(f.pm);
+  const { f, item } = await importedFixture(t);
   await f.setFields(item.id, {}, ["ado_project"]);
   const before = snapshot(f.pmRoot), result = await f.command("sync");
   assert.equal(result.code, "ADO_USAGE");
@@ -241,8 +236,7 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
     const next = structuredClone(current);
     const relations = [...next.relations!];
     for (const op of patch.slice(1)) {
-      if (op.path === "/relations/-") relations.push(op.value as AdoRelation);
-      else if (op.op === "remove") relations.splice(Number(op.path.split("/").at(-1)), 1);
+      if (applyFixtureRelation(relations, op)) continue;
       else {
         if (op.op === "replace") assert.ok(Object.hasOwn(next.fields, op.path.slice("/fields/".length)));
         next.fields[op.path.slice("/fields/".length)] = op.value;
@@ -258,9 +252,7 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
     if (effect === "malformed") { res.statusCode = 200; res.end("not JSON"); return; }
     send(afterPatchStatus, omitRelations ? { ...next, relations: undefined } : next);
   });
-  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
-  const address = server.address();
-  assert.ok(address && typeof address !== "string");
+  const address = await listenOnLoopback(server);
   const org = `http://127.0.0.1:${address.port}/organization`;
   const root = mkdtempSync(join(tmpdir(), "ado-command-"));
   t.after(async () => { await new Promise<void>((done) => server.close(() => done())); rmSync(root, { recursive: true, force: true }); });
@@ -348,6 +340,38 @@ function snapshot(root: string): Record<string, string> {
 /** Get a single fully projected row from the disposable tracker. */
 async function row(pm: PmClient) { return (await pm.listAllComplete()).items[0]!; }
 
+/** Certify the common successful initial import and return its complete native rows. */
+async function importedFixture(t: test.TestContext, initial?: AdoWorkItem[]) {
+  const f = await fixture(t, initial);
+  const imported = await f.command("import");
+  assert.equal(imported.ok, true, JSON.stringify(imported));
+  const rows = (await f.pm.listAllComplete()).items;
+  return { f, rows, item: rows[0]! };
+}
+
+/** Assert a refusal preserves every authoritative byte in the inspected tracker. */
+function assertUnchangedConflict(f: Awaited<ReturnType<typeof fixture>>, result: Pick<SyncCommandResult, "code">, before: ReturnType<typeof snapshot>): void {
+  assert.equal(result.code, "ADO_CONFLICT", JSON.stringify(result));
+  assert.deepEqual(snapshot(f.pmRoot), before);
+}
+
+/** Audit only newly appended housekeeping events; successful older history remains untouched. */
+function assertIntentRetirementTail(raw: string, current: string): void {
+  for (const line of current.slice(raw.length).trim().split("\n").filter(Boolean)) {
+    const event = JSON.parse(line) as { message: string; patch: { path: string }[] };
+    assert.match(event.message, /Discard obsolete Azure sync intent/u);
+    assert.ok(event.patch.every((patch) => ["/metadata/updated_at", "/metadata/ado_sync_intent"].includes(patch.path)));
+  }
+}
+
+/** Observe Azure's inverse endpoint, then certify that complete agreement retired its checkpoint. */
+async function acknowledgeInverse(f: Awaited<ReturnType<typeof fixture>>, childId: string): Promise<void> {
+  f.items.get(2)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Reverse", url: `${f.org}/_apis/wit/workItems/1` }];
+  f.items.get(2)!.rev++;
+  assert.equal((await f.command("sync")).ok, true);
+  assert.equal((await f.pm.get(childId)).item.ado_sync_intent, undefined);
+}
+
 test("first import, idempotent re-import and host JSON/TOON output", async (t) => {
   const f = await fixture(t);
   const result = await f.command("import", { areaPath: "Project\\Area", iterationPath: "Project\\Sprint", type: "Task" });
@@ -387,9 +411,7 @@ test("export creates an unlinked item and updates with the stored revision", asy
 });
 
 test("412 export conflict retains pm item and history byte-for-byte and has a real host failure code", async (t) => {
-  const f = await fixture(t);
-  assert.equal((await f.command("import")).ok, true);
-  const item = await row(f.pm);
+  const { f, item } = await importedFixture(t);
   await f.pm.update(item.id, { title: "Local writer" });
   const before = snapshot(f.pmRoot);
   f.race();
@@ -740,11 +762,15 @@ test("Azure can omit empty relation collections in successful create responses a
   assert.equal((await f.command("export")).ok, true);
   const item = await row(f.pm);
   await f.pm.update(item.id, { title: "Pending" });
-  const current = workItem(1, { "System.Title": "Remote newer" }, 2);
-  delete current.relations;
-  f.response("workitemsbatch", { value: [current] });
-  f.items.get(1)!.rev = 2;
-  assert.equal((await f.command("export")).code, "ADO_CONFLICT");
+  const before = snapshot(f.pmRoot);
+  f.afterBatch(async () => { if (f.items.get(1)!.rev === 2) delete f.items.get(1)!.relations; });
+  f.race(); // The revision changes after planning, so the conflict needs a diagnostic read.
+  const conflict = await f.command("export");
+  assertUnchangedConflict(f, conflict, before);
+  assert.equal(conflict.conflicts[0]!.stored_rev, 1);
+  assert.equal(conflict.conflicts[0]!.remote_rev, 2);
+  assert.equal(f.items.get(1)!.relations, undefined);
+  assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 1);
 });
 
 test("command hierarchy failures have stable conflict receipts", async (t) => {
@@ -890,6 +916,14 @@ function resolver(f: Awaited<ReturnType<typeof fixture>>, observer?: ResolutionO
 /** Choose each differing value explicitly, with a selectable winning snapshot. */
 function choices(plan: ResolutionPlan, take: "local" | "remote" = "local"): ResolutionPlan {
   return { ...plan, choices: plan.fields.filter((field) => field.local !== field.remote).map(({ field }) => ({ field, take })) };
+}
+
+/** Apply reviewed decisions twice and retain the exact native snapshot on replay. */
+async function assertAppliedReplay(f: Awaited<ReturnType<typeof fixture>>, service: AdoResolutionService, plan: ResolutionPlan): Promise<void> {
+  assert.equal((await service.apply(plan)).ok, true);
+  const before = snapshot(f.pmRoot);
+  assert.equal((await service.apply(plan)).replayed, true);
+  assert.deepEqual(snapshot(f.pmRoot), before);
 }
 
 test("resolution plans bind two writers, refuse incomplete decisions before writes and replay without history changes", async (t) => {
@@ -1364,9 +1398,7 @@ test("resolution recovery refuses an intent replaced by another writer between p
 
 
 test("SDK lookup resolves custom nested type folders and keeps the whole-document guard without git", async (t) => {
-  const f = await fixture(t);
-  assert.equal((await f.command("import")).ok, true);
-  const item = await row(f.pm);
+  const { f, item } = await importedFixture(t);
   await f.pm.schemaAddType("Delivery", { folder: "planning/deliveries" });
   await f.pm.update(item.id, { type: "Delivery", body: "Whole document guard includes this body." });
   const sdk = loadResolutionSdk();
@@ -1390,9 +1422,7 @@ test("SDK lookup resolves custom nested type folders and keeps the whole-documen
 });
 
 test("SDK sync match refuses a local edit after Azure PATCH without overwriting item or history", async (t) => {
-  const f = await fixture(t);
-  assert.equal((await f.command("import")).ok, true);
-  const item = await row(f.pm);
+  const { f, item } = await importedFixture(t);
   await f.pm.update(item.id, { title: "Planned export" });
   let changed: Record<string, string> = {};
   f.afterPatch(async () => {
@@ -1468,9 +1498,7 @@ test("SDK sync failures preserve valid items for invalid state mappings and unus
 
 
 test("blocking review: a local status edit between scalar import and close is never overwritten", async (t) => {
-  const f = await fixture(t);
-  assert.equal((await f.command("import")).ok, true);
-  const item = await row(f.pm);
+  const { f, item } = await importedFixture(t);
   f.items.get(1)!.fields["System.State"] = "Closed"; f.items.get(1)!.rev++;
   let edited = false;
   const result = await f.observed("import", async (event) => {
@@ -2610,9 +2638,7 @@ test("round-3 model: 512 two-sided sequences preserve edits and witness every ba
 });
 
 test("round-3 fixed: interrupted scalar PATCH never promotes an unimported remote relation", async (t) => {
-  const f = await fixture(t, [workItem(1), workItem(2)]);
-  assert.equal((await f.command("import")).ok, true);
-  const rows = (await f.pm.listAllComplete()).items;
+  const { f, rows } = await importedFixture(t, [workItem(1), workItem(2)]);
   const root = rows.find((item) => item.ado_id === 1)!, peer = rows.find((item) => item.ado_id === 2)!;
   await f.pm.update(root.id, { title: "Local scalar edit" });
   f.items.get(1)!.relations = [{ rel: "System.LinkTypes.Related", url: `${f.org}/_apis/wit/workItems/2` }];
@@ -2677,9 +2703,7 @@ test("round-3 SDK validation refusal preserves synced data and its agreed base",
 });
 
 test("round-3 scalar resolution acknowledges only agreed keys and leaves remote links for sync", async (t) => {
-  const f = await fixture(t, [workItem(1), workItem(2)]);
-  assert.equal((await f.command("import")).ok, true);
-  const rows = (await f.pm.listAllComplete()).items;
+  const { f, rows } = await importedFixture(t, [workItem(1), workItem(2)]);
   const root = rows.find((item) => item.ado_id === 1)!, peer = rows.find((item) => item.ado_id === 2)!;
   await f.pm.update(root.id, { title: "Resolved local scalar" });
   f.items.get(1)!.relations = [{ rel: "System.LinkTypes.Related", url: `${f.org}/_apis/wit/workItems/2` }];
@@ -2741,9 +2765,7 @@ test("guarded SDK commands name a removed module link while bound read-only refr
 });
 
 test("forward-only recovery discards malformed or obsolete intents and replans without manual repair", async (t) => {
-  const f = await fixture(t);
-  assert.equal((await f.command("import")).ok, true);
-  const item = await row(f.pm);
+  const { f, item } = await importedFixture(t);
   f.items.get(1)!.fields["System.Title"] = "Awaiting local apply"; f.items.get(1)!.rev++;
   let hit = false;
   await f.observed("import", (event) => {
@@ -2795,9 +2817,7 @@ test("native close recovery finishes assignment before any export can reverse it
 });
 
 test("forward-only reviewer intent fixture accepts legacy compensation history and preserves the peer on every command", async (t) => {
-  const f = await fixture(t);
-  assert.equal((await f.command("import")).ok, true);
-  const item = await row(f.pm);
+  const { f, item } = await importedFixture(t);
   f.items.get(1)!.fields["System.State"] = "Closed"; f.items.get(1)!.rev++;
   let hit = false;
   const stopped = await f.observed("import", async (event) => {
@@ -2838,9 +2858,7 @@ test("forward-only reviewer intent fixture accepts legacy compensation history a
 });
 
 test("forward-only JSON and TOON conflicts expose item/base/current evidence without git", async (t) => {
-  const f = await fixture(t);
-  assert.equal((await f.command("import")).ok, true);
-  const item = await row(f.pm);
+  const { f, item } = await importedFixture(t);
   await f.pm.update(item.id, { title: "Peer title" });
   f.items.get(1)!.fields["System.Title"] = "Remote title"; f.items.get(1)!.rev++;
   const before = snapshot(f.pmRoot), isolated = { GIT_CEILING_DIRECTORIES: tmpdir(), PATH: f.pmRoot };
@@ -2880,9 +2898,7 @@ test("forward-only post-birth retries preserve mapped peer edits after the origi
 
 test("forward-only native dispatch crash points replan with no compensation or intent repair", async (t) => {
   for (const phase of ["before", "dispatched", "after"]) for (const edit of [false, true]) await t.test(`${phase}:${edit}`, async (sub) => {
-    const f = await fixture(sub);
-    assert.equal((await f.command("import")).ok, true);
-    const item = await row(f.pm);
+    const { f, item } = await importedFixture(sub);
     f.items.get(1)!.fields["System.Description"] = "Forward native value"; f.items.get(1)!.rev++;
     let prepared = false;
     await f.observed("import", (event) => {
@@ -2971,9 +2987,7 @@ for (const mode of ["import", "export", "sync"] as const) test(`forward-only bou
 });
 
 test("inverse local relation writes retain an intent until that item's own read-back agrees", async (t) => {
-  const f = await fixture(t, [workItem(1), workItem(2)]);
-  assert.equal((await f.command("import")).ok, true);
-  const rows = (await f.pm.listAllComplete()).items;
+  const { f, rows } = await importedFixture(t, [workItem(1), workItem(2)]);
   const root = rows.find((item) => item.ado_id === 1)!, child = rows.find((item) => item.ado_id === 2)!;
   await f.setFields(child.id, {}, ["ado_rev"]);
   f.items.get(1)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Forward", url: `${f.org}/_apis/wit/workItems/2` }]; f.items.get(1)!.rev++;
@@ -2985,9 +2999,7 @@ test("inverse local relation writes retain an intent until that item's own read-
   assert.equal(pending.ado_rev, undefined);
   assert.deepEqual(JSON.parse(String(pending.ado_sync_base)).relations, []);
   // Observe Azure's inverse endpoint before acknowledging that endpoint's state.
-  f.items.get(2)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Reverse", url: `${f.org}/_apis/wit/workItems/1` }]; f.items.get(2)!.rev++;
-  assert.equal((await f.command("sync")).ok, true);
-  assert.equal((await f.pm.get(child.id)).item.ado_sync_intent, undefined);
+  await acknowledgeInverse(f, child.id);
 });
 
 test("remote reversions after a partial local import propagate or conflict without an Azure reversal", async (t) => {
@@ -3036,9 +3048,7 @@ test("durable local intent refuses an older Azure replay after interruption", as
 
 
 test("resolution refuses stale per-key agreement without an acknowledged item revision", async (t) => {
-  const f = await fixture(t);
-  assert.equal((await f.command("import")).ok, true);
-  const item = await row(f.pm);
+  const { f, item } = await importedFixture(t);
   f.items.get(1)!.rev = 2;
   f.items.get(1)!.fields["System.Title"] = "Witnessed newer title";
   assert.equal((await f.command("import")).ok, true);
@@ -3095,9 +3105,7 @@ test("creation recovery removes a server-default relation absent from the explic
 });
 
 test("pending inverse endpoint refuses unagreed local relation ownership until Azure read-back matches", async (t) => {
-  const f = await fixture(t, [workItem(1), workItem(2)]);
-  assert.equal((await f.command("import")).ok, true);
-  const rows = (await f.pm.listAllComplete()).items;
+  const { f, rows } = await importedFixture(t, [workItem(1), workItem(2)]);
   const root = rows.find((item) => item.ado_id === 1)!, child = rows.find((item) => item.ado_id === 2)!;
   f.items.get(1)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Forward", url: `${f.org}/_apis/wit/workItems/2` }];
   f.items.get(1)!.rev++;
@@ -3106,33 +3114,15 @@ test("pending inverse endpoint refuses unagreed local relation ownership until A
   assert.ok((await f.pm.get(child.id)).item.ado_sync_intent);
   f.response("wiql", { workItems: [{ id: 2 }] });
   const before = snapshot(f.pmRoot);
-  const saved = await Promise.all(rows.map(async (item) => (await f.pm.get(item.id, { depth: "full" })).item));
+  const checkpoint = (await f.pm.get(child.id)).item.ado_sync_intent;
   const resumed = await f.command("sync");
   assert.equal(resumed.code, "ADO_CONFLICT", JSON.stringify(resumed));
   assert.ok(resumed.conflicts[0]!.fields.relations);
-  for (const item of saved) {
-    const strip = (value: typeof item) => Object.fromEntries(Object.entries(value).filter(([key]) => !["updated_at", "ado_sync_intent"].includes(key)));
-    assert.deepEqual(strip((await f.pm.get(item.id, { depth: "full" })).item), strip(item));
-  }
-  const after = snapshot(f.pmRoot);
-  assert.deepEqual(Object.keys(after).sort(), Object.keys(before).sort());
-  for (const [file, raw] of Object.entries(before)) {
-    if (file.startsWith("history/")) {
-      assert.ok(after[file]!.startsWith(raw), "all existing audit bytes remain a prefix");
-      for (const line of after[file]!.slice(raw.length).trim().split("\n").filter(Boolean)) {
-        const event = JSON.parse(line) as { message: string; patch: { path: string }[] };
-        assert.match(event.message, /Discard obsolete Azure sync intent/u);
-        assert.ok(event.patch.every((patch) => ["/metadata/updated_at", "/metadata/ado_sync_intent"].includes(patch.path)));
-      }
-    } else if (!saved.some((item) => item.ado_sync_intent !== undefined && file.endsWith(`/${item.id}.toon`))) assert.equal(after[file], raw, file);
-  }
-  assert.equal((await f.pm.get(child.id)).item.ado_sync_intent, undefined);
+  assert.deepEqual(snapshot(f.pmRoot), before, "a detected conflict preserves every authoritative byte");
+  assert.equal((await f.pm.get(child.id)).item.ado_sync_intent, checkpoint);
   assert.deepEqual(f.items.get(2)!.relations, []);
   assert.ok(f.requests.every((request) => request.method !== "PATCH"));
-  f.items.get(2)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Reverse", url: `${f.org}/_apis/wit/workItems/1` }];
-  f.items.get(2)!.rev++;
-  assert.equal((await f.command("sync")).ok, true);
-  assert.equal((await f.pm.get(child.id)).item.ado_sync_intent, undefined);
+  await acknowledgeInverse(f, child.id);
 });
 
 test("round-4 graph ownership covers every affected endpoint regardless of selection or direction", async (t) => {
@@ -3168,11 +3158,7 @@ test("round-4 graph ownership covers every affected endpoint regardless of selec
         for (const [file, raw] of Object.entries(before).filter(([file]) => file.startsWith("history/"))) {
           const current = readFileSync(join(f.pmRoot, file), "utf8");
           assert.ok(current.startsWith(raw), "native audit history stays append-only");
-          for (const line of current.slice(raw.length).trim().split("\n").filter(Boolean)) {
-            const event = JSON.parse(line) as { message: string; patch: { path: string }[] };
-            assert.match(event.message, /Discard obsolete Azure sync intent/u);
-            assert.ok(event.patch.every((patch) => ["/metadata/updated_at", "/metadata/ado_sync_intent"].includes(patch.path)));
-          }
+          assertIntentRetirementTail(raw, current);
         }
       };
       for (const dryRun of [false, true]) {
@@ -3273,8 +3259,7 @@ test("round-4 agreed graph endpoints retain local edits even without a pending i
     const before = snapshot(f.pmRoot);
     for (const dryRun of [false, true]) {
       const result = await f.command("sync", { limit: 1, dryRun });
-      assert.equal(result.code, "ADO_CONFLICT", JSON.stringify(result));
-      assert.deepEqual(snapshot(f.pmRoot), before);
+      assertUnchangedConflict(f, result, before);
     }
     assert.ok(f.requests.every((request) => request.method !== "PATCH"));
   });
@@ -3339,9 +3324,7 @@ test("round-4 closed unassigned items can apply reviewed partial-base choices", 
 
 test("round-4 SDK storage refusal preserves project links and returns actionable configuration without writes", async (t) => {
   for (const storage of ["runtime-only", "authoritative-link"]) await t.test(storage, async (sub) => {
-    const f = await fixture(sub);
-    assert.equal((await f.command("import")).ok, true);
-    const item = await row(f.pm);
+    const { f, item } = await importedFixture(sub);
     f.items.get(1)!.fields["System.Title"] = "Reviewed value"; f.items.get(1)!.rev++;
     const service = resolver(f), plan = choices(await service.plan(item.id), "remote");
     const scope = join(f.pmRoot, "extensions/pm-ado/node_modules/@unbrained"); mkdirSync(scope, { recursive: true });
@@ -3367,9 +3350,7 @@ test("round-4 SDK storage refusal preserves project links and returns actionable
 
 test("round-4 canonical status aliases preserve native close semantics during import", async (t) => {
   for (const initial of ["New", "Closed"]) await t.test(initial, async (sub) => {
-    const f = await fixture(sub, [workItem(1, { "System.State": initial, "System.AssignedTo": "" })]);
-    assert.equal((await f.command("import")).ok, true);
-    const item = await row(f.pm);
+    const { f, item } = await importedFixture(sub, [workItem(1, { "System.State": initial, "System.AssignedTo": "" })]);
     f.env.ADO_STATUS_MAP = JSON.stringify({ ...IMPORT_STATE_MAP, Closed: "CLOSED" });
     f.items.get(1)!.fields["System.State"] = "Closed"; f.items.get(1)!.fields["System.Title"] = "Canonical imported title"; f.items.get(1)!.rev++;
     const imported = await f.command("import");
@@ -3383,9 +3364,7 @@ test("round-4 canonical status aliases preserve native close semantics during im
 
 test("round-4 canonical status aliases preserve native close semantics during partial resolution", async (t) => {
   for (const initial of ["New", "Closed"]) await t.test(initial, async (sub) => {
-    const f = await fixture(sub, [workItem(1, { "System.State": initial, "System.AssignedTo": "" })]);
-    assert.equal((await f.command("import")).ok, true);
-    const item = await row(f.pm);
+    const { f, item } = await importedFixture(sub, [workItem(1, { "System.State": initial, "System.AssignedTo": "" })]);
     await f.setFields(item.id, { ado_sync_base: JSON.stringify({ ado_base_partial: 1, relations: [] }) });
     f.items.get(1)!.fields["System.State"] = "Closed"; f.items.get(1)!.fields["System.Title"] = "Canonical resolved title"; f.items.get(1)!.rev++;
     const before = process.env.ADO_STATUS_MAP;
@@ -3427,9 +3406,7 @@ test("round-4 canonical status aliases survive an interrupted close and resume",
 });
 
 test("round-5 Done mapped to CLOSED applies and replays through normalized agreement", async (t) => {
-  const f = await fixture(t);
-  assert.equal((await f.command("import")).ok, true);
-  const item = await row(f.pm);
+  const { f, item } = await importedFixture(t);
   f.items.get(1)!.fields["System.State"] = "Done";
   f.items.get(1)!.fields["System.Title"] = "Reviewed Done title"; f.items.get(1)!.rev++;
   const previous = process.env.ADO_STATUS_MAP;
@@ -3447,9 +3424,7 @@ test("round-5 Done mapped to CLOSED applies and replays through normalized agree
 });
 
 test("round-5 all configured mappings and SDK-accepted status spellings choose apply and replay without remote reversal", async (t) => {
-  const f = await fixture(t);
-  assert.equal((await f.command("import")).ok, true);
-  const item = await row(f.pm);
+  const { f, item } = await importedFixture(t);
   await f.pm.schemaAddStatus("review_stage", { alias: ["Ready To Review", "ready-to-verify"], role: ["active"] });
   await f.pm.schemaAddStatus("constructor", { alias: ["Own Constructor"], role: ["active"] });
   const settings = await readSettings(f.pmRoot), registry = resolveRuntimeStatusRegistry(settings.schema);
@@ -3602,9 +3577,7 @@ test("round-5 unprepared version-2 coordinates normalize on first apply interrup
 });
 
 test("round-7 resolution refuses missing native provenance without mutating tracker state", async (t) => {
-  const f = await fixture(t);
-  assert.equal((await f.command("import")).ok, true);
-  const item = await row(f.pm);
+  const { f, item } = await importedFixture(t);
   for (const field of ["ado_org_url", "ado_project"]) {
     await f.setFields(item.id, {}, [field]);
     const before = snapshot(f.pmRoot);
@@ -3648,9 +3621,7 @@ test("forward-only close intent fixture never restores an obsolete intent over d
 
 /** Legacy checkpoint contents are advisory even during explicit conflict resolution. */
 test("forward-only resolution settles with stale sync intent and replay adds no writes", async (t) => {
-  const f = await fixture(t);
-  assert.equal((await f.command("import")).ok, true);
-  const item = await row(f.pm);
+  const { f, item } = await importedFixture(t);
   await f.setFields(item.id, { ado_sync_intent: "obsolete legacy checkpoint" });
   f.items.get(1)!.fields["System.Title"] = "Reviewed remote title"; f.items.get(1)!.rev++;
   const service = resolver(f), plan = choices(await service.plan(item.id), "remote");
@@ -3683,9 +3654,7 @@ test("forward-only unbased inverse endpoint conflicts without mutating either gr
 
 /** Invalid provider priorities must be refused before local preparation or Azure mutations. */
 test("forward-only invalid imported priority is refused before tracker or Azure mutations", async (t) => {
-  const f = await fixture(t);
-  assert.equal((await f.command("import")).ok, true);
-  const item = await row(f.pm);
+  const { f, item } = await importedFixture(t);
   f.items.get(1)!.fields["Microsoft.VSTS.Common.Priority"] = 99; f.items.get(1)!.rev++;
   const before = snapshot(f.pmRoot), prior = (await f.pm.get(item.id, { depth: "full" })).item;
   const result = await f.command("import");
@@ -3764,9 +3733,7 @@ test("forward-only indirect endpoints preserve pre-existing peer edits in import
 /** Unknown legacy base fields require an explicit choice rather than overwrite authority. */
 test("forward-only import preserves local fields missing from legacy and partial bases", async (t) => {
   for (const [name, implementation] of [["source", runSyncCommand], ["built", runBuiltSyncCommand]] as const) for (const partial of [false, true]) await t.test(`${name}:${partial}`, async (sub) => {
-    const f = await fixture(sub);
-    assert.equal((await f.command("import")).ok, true);
-    const item = await row(f.pm);
+    const { f, item } = await importedFixture(sub);
     await f.pm.update(item.id, { title: "Peer legacy title", body: "Keep peer context" });
     if (partial) await f.setFields(item.id, { ado_sync_base: JSON.stringify({ ado_base_partial: 1, ado_base_fields: ["relations"], relations: [] }) });
     else await f.setFields(item.id, {}, ["ado_sync_base"]);
@@ -3933,4 +3900,127 @@ test("review initial import preserves legacy items with no native birth proof", 
     }
     assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 0);
   });
+});
+
+/** Interrupted creation recovery must use the observed revision in both preview and export. */
+test("review-46 recovered creation exports with the observed revision before acknowledging a base", async (t) => {
+  for (const [name, implementation] of [["source", runSyncCommand], ["built", runBuiltSyncCommand]] as const) {
+    for (const checkpoint of ["missing", "stale"]) await t.test(`${name}:${checkpoint}`, async (sub) => {
+      const f = await fixture(sub, []);
+      const { item } = await f.pm.create({ type: "Task", title: "Original creation" });
+      const values = localValues(item);
+      const created = await outbox(f).create(item.id, "Task", azureFields(values, Object.keys(ADO_FIELD_MAP), STATE_MAP), values);
+      await f.setFields(item.id, { ado_id: created.remote.id, ado_project: "Project", ado_org_url: f.org,
+        ...(checkpoint === "stale" ? { ado_rev: 1 } : {}) });
+      await f.pm.update(item.id, { title: "Corrected creation context" });
+      f.items.get(created.remote.id)!.rev++;
+      f.env.GIT_CEILING_DIRECTORIES = tmpdir(); f.env.PATH = f.pmRoot;
+      const before = snapshot(f.pmRoot);
+      const preview = await f.observed("export", () => {}, { dryRun: true }, undefined, implementation);
+      assert.equal(preview.ok, true, JSON.stringify(preview));
+      assert.deepEqual(snapshot(f.pmRoot), before);
+      const result = await f.observed("export", () => {}, {}, undefined, implementation);
+      assert.equal(result.ok, true, JSON.stringify(result));
+      const patches = f.requests.filter((request) => request.method === "PATCH");
+      assert.equal(patches.length, 1);
+      assert.deepEqual((patches[0]!.body as JsonPatchOperation[])[0], { op: "test", path: "/rev", value: 2 });
+      assert.equal(f.items.size, 1);
+      assert.equal(f.items.get(created.remote.id)!.fields["System.Title"], "Corrected creation context");
+      assert.equal((await f.pm.get(item.id)).item.ado_rev, 3);
+    });
+  }
+});
+
+/** Validation at the durable outbox boundary must precede journal creation and all network calls. */
+test("review-46 invalid outbox revisions refuse without journals or remote calls", async (t) => {
+  const f = await fixture(t);
+  const { item } = await f.pm.create({ type: "Task", title: "Revision control" });
+  const before = snapshot(f.pmRoot);
+  for (const rev of [NaN, Infinity, -Infinity, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    await assert.rejects(outbox(f).patch(item.id, { ...workItem(), rev }, { "System.Title": "Refused" }, []), { exitCode: 2 });
+    assert.deepEqual(snapshot(f.pmRoot), before);
+    assert.equal(existsSync(join(f.pmRoot, "transactions/pm-ado-sync")), false);
+    assert.equal(f.requests.length, 0);
+  }
+});
+
+/** Neither housekeeping nor relation preflight may mutate a tracker after a detected conflict. */
+test("review-46 scalar revision and inverse relation conflicts retain every pending intent without writes", async (t) => {
+  for (const [name, implementation] of [["source", runSyncCommand], ["built", runBuiltSyncCommand]] as const) {
+    for (const conflict of ["scalar", "revision", "relation", "none"]) await t.test(`${name}:${conflict}`, async (sub) => {
+      const f = await fixture(sub, [workItem(1), workItem(2), workItem(3)]);
+      assert.equal((await f.command("import")).ok, true);
+      const rows = (await f.pm.listAllComplete()).items;
+      const a = rows.find((item) => item.ado_id === 1)!, b = rows.find((item) => item.ado_id === 2)!, c = rows.find((item) => item.ado_id === 3)!;
+      await f.setFields(a.id, { ado_sync_intent: JSON.stringify({ schema: "pm-ado/local/2", scope: "obsolete", plan: "retained-until-valid" }) });
+      if (conflict === "scalar") {
+        await f.pm.update(a.id, { title: "Local competing title" });
+        f.items.get(1)!.fields["System.Title"] = "Remote competing title"; f.items.get(1)!.rev++;
+      } else if (conflict === "revision") {
+        await f.pm.update(a.id, { title: "Local stale-revision export" });
+        f.items.get(1)!.rev++;
+      } else if (conflict === "relation") {
+        await f.pm.update(b.id, { parent: c.id });
+        f.items.get(1)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Forward", url: `${f.org}/_apis/wit/workItems/2` }]; f.items.get(1)!.rev++;
+        f.response("wiql", { workItems: [{ id: 1 }] });
+      }
+      f.env.GIT_CEILING_DIRECTORIES = tmpdir(); f.env.PATH = f.pmRoot;
+      const before = snapshot(f.pmRoot);
+      const mode = conflict === "revision" ? "export" : "sync";
+      const preview = await f.observed(mode, () => {}, { dryRun: true }, undefined, implementation);
+      assert.deepEqual(snapshot(f.pmRoot), before);
+      const result = await f.observed(mode, () => {}, {}, undefined, implementation);
+      assert.equal(result.ok, preview.ok);
+      if (conflict === "none") {
+        assert.equal(result.ok, true, JSON.stringify(result));
+        assert.equal((await f.pm.get(a.id)).item.ado_sync_intent, undefined);
+      } else {
+        assertUnchangedConflict(f, result, before);
+      }
+      assert.ok(f.requests.every((request) => request.method !== "PATCH"));
+    });
+  }
+});
+
+/** A proven outgoing graph is not permission to erase an edit made after the accepted PATCH. */
+test("review-46 recovered relation PATCH refuses a later local deletion before cleanup", async (t) => {
+  for (const [name, implementation] of [["source", runSyncCommand], ["built", runBuiltSyncCommand]] as const) {
+    for (const edit of ["none", "delete", "remote"] as const) await t.test(`${name}:${edit}`, async (sub) => {
+      const { f, rows } = await importedFixture(sub, [workItem(1), workItem(2)]);
+      const item = rows.find((row) => row.ado_id === 1)!, peer = rows.find((row) => row.ado_id === 2)!;
+      await f.pm.update(item.id, { parent: peer.id });
+      f.items.get(1)!.fields["System.Title"] = "Remote title"; f.items.get(1)!.rev++;
+      let hit = false;
+      await f.observed("sync", (event) => {
+        if (event.boundary === "remote" && event.phase === "after" && event.operation.startsWith("PATCH")) {
+          hit = true; throw new Error("Stop after accepted relation PATCH");
+        }
+      }, { limit: 1 }, undefined, implementation);
+      assert.equal(hit, true);
+      if (edit === "delete") await f.pm.update(item.id, { unset: ["parent"] });
+      else if (edit === "remote") {
+        f.items.get(1)!.relations = [...f.items.get(1)!.relations!, { rel: "System.LinkTypes.Related", url: `${f.org}/_apis/wit/workItems/2` }];
+        f.items.get(1)!.rev++;
+      }
+      const before = snapshot(f.pmRoot), patches = f.requests.filter((request) => request.method === "PATCH").length;
+      const preview = await f.observed("sync", () => {}, { limit: 1, dryRun: true }, undefined, implementation);
+      const result = await f.observed("sync", () => {}, { limit: 1 }, undefined, implementation);
+      assert.equal(result.ok, preview.ok);
+      if (edit === "delete") {
+        assertUnchangedConflict(f, result, before);
+        assert.ok(result.conflicts[0]!.fields.relations);
+        assert.equal((await f.pm.get(item.id)).item.parent, undefined);
+      } else {
+        assert.equal(result.ok, true, JSON.stringify(result));
+        assert.equal((await f.pm.get(item.id)).item.parent, peer.id);
+        if (edit === "remote") assert.ok((await f.pm.get(item.id)).item.dependencies!.some((edge) => edge.id === peer.id));
+      }
+      assert.equal(f.requests.filter((request) => request.method === "PATCH").length, patches);
+      if (edit === "none") {
+        await f.pm.update(item.id, { unset: ["parent"] });
+        assert.equal((await f.observed("sync", () => {}, { limit: 1 }, undefined, implementation)).ok, true);
+        assert.deepEqual(f.items.get(1)!.relations, [], "full agreement retires the earlier relation proof");
+      }
+    });
+  }
 });

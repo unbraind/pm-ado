@@ -51,6 +51,7 @@ test("round-5 field normalizers match native writes without erasing literal Unic
     assert.equal(normalizeLiteralValue(text), text);
   }
   assert.equal(normalizeTitleValue(" "), "");
+  assert.equal(normalizeTitleValue(7 as unknown as string), "", "legacy non-text runtime values retain the previous empty projection");
   assert.equal(normalizeAssigneeValue(" Name "), "Name");
   assert.deepEqual(normalizeTagValues(["Z", " z "]), ["z"]);
   assert.equal(normalizePriorityValue(" 3 ", f.context), 3);

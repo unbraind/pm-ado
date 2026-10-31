@@ -6,11 +6,13 @@ status: in_progress
 priority: 2
 tags[3]: "gh:unbraind/pm-ado#46",refactor,sdk-adoption
 created_at: "2026-10-25T16:11:56.608Z"
-updated_at: "2026-10-31T11:39:50.888Z"
+updated_at: "2026-10-31T19:48:20.431Z"
+assignee: codex-agent
+claim_principal: codex-agent
 author: codex-agent
 parent: pm-ado-g4v1
 unblock_note: "Owner-approved forward-only policy replaces all automatic pm compensation; SDK read/write window is explicitly accepted and documented (#1576, #1620)."
-comments[151]{created_at,author,text}:
+comments[165]{created_at,author,text}:
   "2026-10-25T15:50:43.902Z",codex-agent,"Orientation found no existing SDK-adoption item. Related SDK certification: pm-ado-qq1p; source features: pm-ado-4x3u and pm-ado-nc7z. Both audited SDK APIs exist in the pinned 2026.10.23 dependency. Plan: preserve authoritative raw documents, replace unguarded sync persistence with inspected-snapshot match preconditions, run non-git regression/differential/revert proofs and unchanged npm/Bun release gates."
   "2026-10-25T15:57:29.077Z",codex-agent,"Both replacements implemented. Resolution passes readSettings item_format and resolveItemTypeRegistry type_to_folder into locateItem and retains readLocatedItem whole-document hashing. Sync now uses commitItemMutations update match on inspected updated_at for link, relation and base writes. Expected revisions advance from our own immutable SDK transaction history, never from a refreshed current item. Three new real non-git regressions pass: custom nested folder/raw-document guard, local edit after Azure PATCH, and local edit before import relation/base persistence. The last two preserve the concurrent item/history bytes and return ADO_CONFLICT; remote success can remain partial."
   "2026-10-25T16:01:16.414Z",codex-agent,"Compatibility check found SDK gap tracked by pm-ado-sdk-match-close-1025: match on updated_at also runs inside update's internal terminal close after its first write has advanced the timestamp. Workaround uses one SDK transaction with a guarded scalar update then explicit close. SDK history messages necessarily become bulk-item-transaction markers instead of adapter prose; this intentional diagnostic difference is documented and differential-tested. Initial read-only differential passed over public pm-ado and pm-jira origin snapshots: 140 items, 8 exact output comparisons, unchanged authoritative bytes. Extending proof to writable copies for persistence receipts, values and history patches."
@@ -162,11 +164,26 @@ comments[151]{created_at,author,text}:
   "2026-10-31T10:04:20.080Z",codex-agent,"Complete local Bun release gate PASS with isolated HOME and Git identity on Node 26.13.0 and Bun 1.3.5: bun run release:check. Both V8 and independent statement passes run 1011/1011 tests, zero failures/cancellations/skips. Coverage is 2274/2274 statements and 100% lines, branches and functions across all 13 required sources at unchanged thresholds. Native precondition probe passes 19/19; all 108 declaration docstrings, typecheck/build, production audit (zero vulnerabilities), packed acceptance, changelog and publication-policy checks pass. npm and Bun gates ran sequentially with at most two test workers. No installer timeout was retried. The only remaining verification is CI on the pushed head; existing native atomic-CAS limitations remain tracked separately in pm-cli issues 1576 and 1620."
   "2026-10-31T10:04:20.889Z",codex-agent,"Ready for orchestrator verification: import and storage regressions are covered by real SDK trackers, native-history must-allow/must-refuse cases and disposable function-only reverts. Final code is compiled into tracked dist. Tracker items remain unclosed; releasing only this agent claim before committing code and tracker records together. Final-head CI job conclusions will be reported from the PR checks after push."
   "2026-10-31T11:39:50.887Z","harness:claude-code","Fallback codex review of dd6c7ea (CodeRabbit had not reviewed within the pipeline wait) found that docs/sync.md overclaimed: it said every local update uses commitItemMutations with an updated_at match under the item lock. In fact NativeWriteFence.update re-reads the item and its history immediately before a plain sdk.update and detects a foreign history entry afterwards. The guide now states that, links the missing SDK compare-and-swap (pm-cli#1576, #1620), and warns that an overlapping peer change can already be overwritten when ADO_CONFLICT is reported after the write. Docs only; check, docstring and changelog:check pass."
-files[30]:
+  "2026-10-31T12:43:54.697Z",codex-agent,"Resumed on clean head 0815aa5 and retained the orchestrator guarantee correction. Read all 6 review threads and all comments, with thread/comment pagination complete; 5 findings remain open and are valid. General rules and same-class audit: revision preconditions must be positive safe integers and the same value in preview/dispatch (sync revision selection, outbox patch, buildUpdatePatch and request assertion); detected conflicts and relation preflight must precede intent cleanup; required metadata checks must validate normalized outbound values (contracts and shared title normalizer); opaque relation adapters must not load SDK dependencies (importRelations and other lazy loader sites). Documentation claims must describe the actual native-history checks and remaining SDK CAS window. No review replies or resolutions will be posted."
+  "2026-10-31T13:23:05.992Z",codex-agent,"All five CodeRabbit findings verified and implemented without replies/resolutions. Major revision fix computes one positive-safe-integer precondition for dry-run and dispatch, uses observed Azure revisions for recovered ownership, and validates direct builders, raw PATCH requests and durable outbox entry before effects. Scalar conflict return and relation preflight now precede obsolete-intent retirement. Contract discovery shares title projection with export and accepts an SDK-free host resolver; legacy blank/padded/Unicode/none titles are evaluated without rewriting persisted data. Opaque relation adapters use SDK-free structural equality and native callers load their SDK once. Terminal-step documentation preserves the exact orchestrator paragraph from 0815aa5 and its accepted final-read/write window. Same-class searches found no other retirement-before-validation path or required-title check; raw projections in refresh and resolution are intentionally read-only revision guards. Shared agreement publication and fixture utilities remove repeated code. jscpd 5.4.1 reports zero clones, zero duplicated lines, 0% across the explicit complete 53-file authored TS/TSX/MTS/CTS inventory at threshold 0, min-tokens 50, min-lines 5; no authored sources excluded. Focused current regressions pass 74/74; affected-file suite passed 137/137 before the final fixture-directory extraction. Final disposable revert proofs and both full gates follow."
+  "2026-10-31T13:25:58.347Z",codex-agent,"Final behavioral revert proofs, disposable worktree only, dist rebuilt each time: restoring runSyncCommand from 0815aa5 fails the source/built recovered-creation and scalar/inverse-relation no-write cases (10 runner failures including parent groups). Restoring only the stale export dispatch revision fails all 4 source/build recovery cases (5 with parent). Reverting assertsRevision or buildUpdatePatch independently fails the malformed revision entry-point regression. Removing outbox pre-journal validation fails the no-journal refusal regression. Restoring importRelations fails all 5 SDK-free opaque-adapter controls (6 with parent). Reverting normalizeTitleValue body to SDK loading fails all 4 copied-package title cases (5 with parent). Restoring discoverProjectContract fails blank and padded required-title cases (3 with parent). Restoring every fix passes 25/25. No compiler failure is counted as a behavioral proof. Orchestrator docs guarantee paragraph remains byte-identical. Complete jscpd inventory is 53/53 authored typed sources including the legacy consumer MTS; 0 clones, 0 duplicated lines out of 15676, threshold 0, min-tokens 50/min-lines 5, no authored-source exclusions. Shared helpers preserve all fixture assertions and cleanup ordering."
+  "2026-10-31T13:49:07.075Z",codex-agent,"Full npm gate exposed a failure late in the existing 512-sequence two-sided model after the 448-sequence progress marker. Earlier 500-sequence normalization/replay model and all 12 packed installer cases passed. Waiting for the runner to emit the exact failure detail, then will repair the underlying behavior and rerun the required gates; no gate pass is claimed."
+  "2026-10-31T14:03:13.487Z",codex-agent,"The full npm first pass ran 1036 tests: 1034 passed, 2 failed. One legacy inverse-endpoint assertion required the now-forbidden conflict-time intent cleanup; strengthened it to exact authoritative-byte and intent preservation and retained the successful matching-Azure control. The independent 512-sequence model exposed a genuine recovery hole at sequence 485: accepted relation PATCH ownership was omitted from scalar-only recovery evidence, so a later local deletion could be re-imported as a remote change. Recovery now carries actual patched-relation evidence, refuses a changed local graph before cleanup, permits unchanged accepted graphs and later remote additions, and retires the proof after full agreement. Same-class audit covers journal recovery, field-effect selection, planner relation guard and request-key filtering. Source/built focused recovery and conflict matrix passes 22/22; complete authored duplication remains 0%. Expanded function-only revert proofs and complete npm/Bun gate reruns follow."
+  "2026-10-31T14:04:13.511Z",codex-agent,"Expanded disposable behavioral proofs rebuilt dist and independently reverted each reviewed boundary again. All eight earlier counterfactuals fail as expected. Removing only actual relation-operation keys from recovery fails the new source/built deletion controls; disabling only relation effect selection also fails them. Restored complete review-46 matrix passes 32/32, zero failures/skips/cancellations. Build and test compilation pass. Current jscpd exact inventory: 53/53 authored typed files, 15717 lines, 0 clones and 0 duplicated lines at unchanged threshold 0. The initial npm run is a failed gate, not an installer retry; no installer timeout occurred."
+  "2026-10-31T14:09:10.256Z",codex-agent,"Final compatibility refinement: relation recovery requires an explicit journal-operation proof marker; a scalar snapshot that merely lists relations remains insufficient, preserving the existing scalar-only oracle. Focused review/legacy controls pass 36/36; agreement and published API compatibility pass 8/8. Final expanded behavioral revert matrix again fails each independent reverted boundary and passes 32/32 after restoration. The second npm attempt was stopped after catching the old scalar-only contract; this was a code correction, not an installer retry. Recovery documentation now distinguishes actual relation operations from unrelated accepted relations. No installer timeout has occurred. Restarting complete sequential npm and Bun gates on the fixed code."
+  "2026-10-31T14:55:28.123Z",codex-agent,"Final full npm release gate PASS on Node 26.13.0, isolated HOME/Git identity and credential-free child environment, two workers: 1043/1043 in V8 and 1043/1043 in independent statement pass, zero failures/skips/cancellations. All 13 intended sources reach unchanged 100% lines, branches, functions and statements; V8 4784/4784 lines, 2327/2327 branches, 435/435 functions; statements 2282/2282. Both 500-sequence and 512-sequence models pass in both runs. Packed acceptance 12/12 and native precondition probe 19/19 pass; 108 declaration docstrings, audit zero production vulnerabilities, build/typecheck/pack/changelog/publish-attestation/release-date checks pass. No installer timeout retry was needed. Read-only isolated strict tracker health exits 0, with one advisory telemetry queue warning left untouched. Starting the complete Bun gate sequentially on the same unchanged code."
+  "2026-10-31T15:25:27.520Z",codex-agent,"Final same-class audit found and reproduced another known-conflict-before-write case: export dry-run rejected an observed stale ado_rev, while live apply discarded pending intents and appended history before PATCH returned 412. The new source/built revision cases failed before the fix (6 pass, 3 failures including parent). Both modes now use the same observed revision preflight and return before housekeeping or transport. Focused review plus scalar-only and dynamic-412 controls pass 36/36. A disposable one-line revert restoring the dryRun-only condition fails both revision cases; all 11 independent reverted boundaries fail behaviorally as expected, and the restored review matrix passes 34/34. Test compilation and complete 53-file duplication scan pass at 0%. The earlier complete npm gate (1043/1043 twice) and interrupted Bun run are superseded by this additional fix; no installer timeout or retry occurred. Restarting both full release gates on the new final code."
+  "2026-10-31T16:01:17.613Z",codex-agent,"Fresh npm suite passed 1045/1045 with zero failed/skipped/cancelled tests, including the new shared stale-revision preflight, but its unchanged branch threshold correctly refused 99.96%: the sole uncovered branch was revisionConflict's omitted-relations fallback. Early observed-revision refusal made the former metadata-omission test stop before its diagnostic read. Strengthened that real HTTP fixture to race the revision after planning and omit relations from the resulting diagnostic batch. It now checks asserted/current revisions, actual PATCH attempt, typed conflict and byte-identical local state. Focused integration set passes 36/36; a raw V8 counter confirms the exact fallback executed once. Production code is unchanged by this coverage repair; all 11 behavior-only revert proofs remain valid. Complete duplication stays 0% across 53 authored typed files, now 15727 lines. Restarting the complete npm and Bun gates without threshold/timeout/ignore changes; no installer timeout or retry has occurred."
+  "2026-10-31T16:55:01.364Z",codex-agent,"Current frozen-code npm gate: complete V8 pass succeeds 1045/1045, zero failures/skips/cancellations. All 13 required sources now have 100% V8 coverage: 4784/4784 lines, 2326/2326 branches, 435/435 functions. The real post-plan omitted-relations diagnostic case closes the single former gap without production-code changes. The independent statement pass has completed all 12 packed install shapes and is continuing through crash/concurrency tests. No installer timeout or retry has occurred. Complete npm and Bun conclusions remain pending; no new final-head CI pass is claimed."
+  "2026-10-31T17:19:44.175Z",codex-agent,"Fetched main advanced to e214b65 with release metadata closure f278c4c and package-script-only release workflow e214b65. Per the owner rule, merged origin/main without rebasing as 7082588 (SteveBot), no conflicts and no history repair or manual history merge. Core sync code, built output, regression code and the exact orchestrator guarantee are unchanged by this merge; only workflow, its test and release-notes script changed outside tracker/changelog. New main workflow tests pass 11/11; release-date and publish-attestation verifiers pass. Every changed existing main history remains a byte prefix. Duplication remains zero across all 53 authored typed files, now 15748 lines. The long npm statement run was stopped because the final branch now includes new main changes; it is superseded, with no installer retry. Restarting both complete release gates on this merged branch before committing and pushing the fixes."
+  "2026-10-31T18:37:47.276Z",codex-agent,"Merged-branch complete npm release gate PASS on Node 26.13.0 with isolated HOME/Git identity and credential-free child environment, two workers: 1047/1047 in V8 and 1047/1047 in independent statement pass, zero failures/skips/cancellations. All 13 required sources reach unchanged 100% lines, branches, functions and statements; 4784/4784 lines, 2326/2326 branches, 435/435 functions; statements 2282/2282. Both 500- and 512-sequence models pass in both runs. Packed acceptance 12/12 and native precondition probe 19/19 pass; 108 docstrings, audit zero production vulnerabilities, build/typecheck/package/changelog/publish-attestation/release-date checks pass. No installer timeout retry was needed. Starting the complete Bun gate sequentially on the same merged code; tracker items remain unclosed."
+  "2026-10-31T19:48:20.431Z",claude-orchestrator,"Orchestrator: the codex round hit its 6-hour timeout in the final Bun gate, after the npm gate passed (1047/1047, 100% coverage). Its uncommitted work was reviewed against the five CodeRabbit threads and committed by the orchestrator: (1) a revision is validated before any remote call, and recovered creations assert the observed Azure revision; (2) detected conflicts return before retireIntents and any housekeeping write; (3) discovery checks the normalized title that export sends, through a normalizer that does not load the SDK; (4) the opaque-adapter path compares with isDeepStrictEqual instead of loading the SDK; (5) docs/sync.md drops the claims of a matched status-only update and of refusing concurrent edits between any steps. The agent's revert proofs are above. Bun rerun by the orchestrator: 1042 pass; the only failures were the packed-install acceptance hitting its 900 s limit at host load 13-16, plus its cancelled sub-tests."
+files[39]:
   - path: .github/workflows/ci.yml
     scope: project
   - path: agreement.ts
     scope: project
+    note: Shared changed-field agreement projection with caller-owned fencing
   - path: contracts.ts
     scope: project
   - path: history-fence.ts
@@ -201,16 +218,40 @@ files[30]:
     scope: project
   - path: test/contracts.test.ts
     scope: project
+  - path: test/coverage-gate.test.ts
+    scope: project
+    note: Shared fixture setup and unchanged threshold cases without duplicate blocks
   - path: test/fixtures/normalization/released-2026.10.26/provenance.json
     scope: project
   - path: test/fixtures/public-api/current/history-fence.d.ts.txt
     scope: project
+  - path: test/helpers/authoritative-digest.ts
+    scope: project
+    note: Shared native fixture setup and assertion-preserving duplication cleanup
   - path: test/helpers/forward-write-crash-worker.ts
     scope: project
+    note: Shared native fixture setup and assertion-preserving duplication cleanup
+  - path: test/helpers/http-fixture.ts
+    scope: project
+    note: Shared native fixture setup and assertion-preserving duplication cleanup
+  - path: test/helpers/package-runtime.ts
+    scope: project
+    note: Shared native fixture setup and assertion-preserving duplication cleanup
+  - path: test/helpers/process-fixture.ts
+    scope: project
+    note: Shared native fixture setup and assertion-preserving duplication cleanup
+  - path: test/helpers/readonly-tracker.ts
+    scope: project
+    note: Shared native fixture setup and assertion-preserving duplication cleanup
+  - path: test/helpers/relation-fixture.ts
+    scope: project
+    note: Shared native fixture setup and assertion-preserving duplication cleanup
   - path: test/helpers/sync-crash-worker.ts
     scope: project
+    note: Shared native fixture setup and assertion-preserving duplication cleanup
   - path: test/helpers/workspace-lock-probe.ts
     scope: project
+    note: Shared native fixture setup and assertion-preserving duplication cleanup
   - path: test/history-fence.test.ts
     scope: project
   - path: test/moves.test.ts
@@ -221,12 +262,16 @@ files[30]:
     scope: project
   - path: test/public-api.test.ts
     scope: project
+  - path: test/real-data-moves.ts
+    scope: project
+  - path: test/real-data-refresh.ts
+    scope: project
   - path: test/refresh.test.ts
     scope: project
   - path: test/sync.test.ts
     scope: project
     note: Allowed imports and refused peer edits plus real storage contracts
-tests[29]:
+tests[31]:
   - command: npm run typecheck
     scope: project
     provenance:
@@ -432,6 +477,21 @@ tests[29]:
       created_at: "2026-10-31T08:21:19.678Z"
       source_kind: local_mutation
       source_ref: refactor/sdk-adoption-1025
+  - command: node --test --test-concurrency=2 --test-name-pattern=review-46 test/ado.test.ts test/contracts.test.ts test/sync.test.ts
+    scope: project
+    timeout_seconds: 180
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-31T13:26:01.780Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+  - command: "node --test --test-concurrency=2 --test-name-pattern=\"Azure can omit empty relation\" test/sync.test.ts"
+    scope: project
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-31T18:37:49.786Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
 docs[5]:
   - path: docs/conflict-resolution.md
     scope: project
@@ -444,4 +504,5 @@ docs[5]:
     scope: project
   - path: docs/sync.md
     scope: project
+    note: Accurate terminal-step guarantees preserving the orchestrator correction
 body: ""

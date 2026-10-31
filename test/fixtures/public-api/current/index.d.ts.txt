@@ -274,7 +274,7 @@ export declare function buildUpdatePatch(rev: number, fields: Readonly<Record<st
  * of a promise in a comment.
  *
  * @param patch - The patch document about to be sent.
- * @returns True when the first operation tests `/rev`.
+ * @returns True when the first operation tests `/rev` against a positive safe integer.
  */
 export declare function assertsRevision(patch: readonly JsonPatchOperation[]): boolean;
 /** Credentials and target coordinates for one Azure DevOps project. */

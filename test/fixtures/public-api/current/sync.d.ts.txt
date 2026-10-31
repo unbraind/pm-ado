@@ -116,12 +116,14 @@ export interface OwnedEffect {
     original: Values;
     /** Accepted remote projection, whose unrelated keys are never common base. */
     accepted: Values;
-    /** Scalar keys actually included in that request. */
+    /** Field keys actually included in that request, including patched relations. */
     keys: string[];
+    /** The durable journal proves that this request patched relations, beyond a scalar snapshot. */
+    relations?: true;
     /** Revision asserted by the owned request; a later witnessed key retires this proof. */
     revision: number;
 }
-/** Choose each key from its witnessed base or the latest proof for that exact owned scalar. */
+/** Choose each key from its witnessed base or the latest proof for that exact owned field. */
 export declare function mergeSyncValues(local: Values, remote: Values, base: Values | undefined, effect?: OwnedEffect | readonly OwnedEffect[], normalization?: ValueNormalization): Record<string, "equal" | "local" | "remote" | "conflict">;
 /** Execute the real REST transport; failures are converted to stable command receipts. */
 export declare function transport(method: string, url: string, body: string | undefined, headers: Readonly<Record<string, string>>): Promise<{

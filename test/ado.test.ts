@@ -1,3 +1,6 @@
+import { applyFixtureRelation } from "./helpers/relation-fixture.ts";
+import { restoreEnvironment } from "./helpers/process-fixture.ts";
+import { isolatedPackage } from "./helpers/package-runtime.ts";
 /**
  * Behavioural tests for pm-ado.
  *
@@ -117,6 +120,22 @@ function alwaysConflictService(itemId: number, currentRev: number) {
   return { transport, calls };
 }
 
+/** Classify expected command failures consistently while retaining message-specific assertions at each call site. */
+function isCommandFailure(error: unknown, exitCode: number): error is CommandError {
+  return error instanceof CommandError && error.exitCode === exitCode;
+}
+
+/** Run a real query against a recorded failure while asserting the public failure category. */
+async function assertQueryFailure(status: number): Promise<void> {
+  const { transport } = recordingTransport([{ status, body: "" }]);
+  await assert.rejects(() => new AdoClient(CONFIG, transport).queryIds("SELECT 1"), (error: unknown) => isCommandFailure(error, EXIT_CODE.remote));
+}
+
+/** Apply the shared state-update input so individual tests retain their detailed error assertions. */
+async function assertStateUpdateRefused(transport: AdoTransport, predicate: (error: unknown) => boolean): Promise<void> {
+  await assert.rejects(() => new AdoClient(CONFIG, transport).updateWorkItem(5, 7, { "System.State": "Active" }), predicate);
+}
+
 test("every update patch asserts the revision before it changes anything", () => {
   // The `test` op is what turns a lost update into a visible failure, so it has
   // to lead the document — Azure DevOps evaluates it before applying the rest.
@@ -148,8 +167,7 @@ test("a stale revision is reported as a conflict naming the item and both revisi
   await assert.rejects(
     () => client.updateWorkItem(11, 3, { "System.State": "Active" }),
     (error: unknown) => {
-      assert.ok(error instanceof CommandError);
-      assert.equal(error.exitCode, EXIT_CODE.conflict);
+      assert.ok(isCommandFailure(error, EXIT_CODE.conflict));
       assert.match(error.message, /11/u); // item id
       assert.match(error.message, /asserted rev 3/u); // asserted revision
       assert.match(error.message, /current rev is 4/u); // current revision
@@ -168,11 +186,7 @@ test("a 412 on a non-PATCH request is a remote error, not a conflict", async () 
   // transport error. The guard on `method` in the request layer keeps the
   // conflict exit code specific to PATCH, so a caller does not mistake a
   // broken read for a revision race.
-  const { transport } = recordingTransport([{ status: 412, body: "" }]);
-  await assert.rejects(
-    () => new AdoClient(CONFIG, transport).queryIds("SELECT 1"),
-    (error: unknown) => error instanceof CommandError && error.exitCode === EXIT_CODE.remote,
-  );
+  await assertQueryFailure(412);
 });
 
 test("two writers racing one work item: the loser is refused rather than overwriting the winner", async () => {
@@ -195,8 +209,7 @@ test("two writers racing one work item: the loser is refused rather than overwri
   await assert.rejects(
     () => new AdoClient(CONFIG, service.transport).updateWorkItem(5, 7, { "System.State": "Closed" }),
     (error: unknown) => {
-      assert.ok(error instanceof CommandError);
-      assert.equal(error.exitCode, EXIT_CODE.conflict);
+      assert.ok(isCommandFailure(error, EXIT_CODE.conflict));
       assert.match(error.message, /asserted rev 7/u);
       assert.match(error.message, /current rev is 8/u);
       return true;
@@ -221,11 +234,8 @@ test("a conflict surfaces the item id and both revisions after exactly one attem
   // read at and the one the service is now at — so the failure is actionable.
   // Exactly one PATCH is sent: the write is refused, never replayed.
   const { transport, calls } = alwaysConflictService(5, 99);
-  await assert.rejects(
-    () => new AdoClient(CONFIG, transport).updateWorkItem(5, 7, { "System.State": "Active" }),
-    (error: unknown) => {
-      assert.ok(error instanceof CommandError);
-      assert.equal(error.exitCode, EXIT_CODE.conflict);
+  await assertStateUpdateRefused(transport, (error: unknown) => {
+      assert.ok(isCommandFailure(error, EXIT_CODE.conflict));
       assert.match(error.message, /5/u); // item id
       assert.match(error.message, /asserted rev 7/u); // asserted revision
       assert.match(error.message, /current rev is 99/u); // current revision
@@ -244,11 +254,8 @@ test("a conflict where the item cannot be re-read surfaces the original revision
     { status: 412, body: "" }, // PATCH → 412 (conflict)
     { status: 200, body: JSON.stringify({}) }, // re-read → no items (deleted)
   ]);
-  await assert.rejects(
-    () => new AdoClient(CONFIG, transport).updateWorkItem(5, 7, { "System.State": "Active" }),
-    (error: unknown) => {
-      assert.ok(error instanceof CommandError);
-      assert.equal(error.exitCode, EXIT_CODE.conflict);
+  await assertStateUpdateRefused(transport, (error: unknown) => {
+      assert.ok(isCommandFailure(error, EXIT_CODE.conflict));
       assert.match(error.message, /5/u);
       assert.match(error.message, /rev 7/u);
       assert.match(error.message, /could not be re-read/u);
@@ -265,9 +272,7 @@ test("a transport error during the diagnostic re-read is surfaced, not masked as
     { status: 412, body: "" }, // PATCH → 412 (conflict)
     { status: 503, body: "" }, // re-read → 503 (transport error)
   ]);
-  await assert.rejects(
-    () => new AdoClient(CONFIG, transport).updateWorkItem(5, 7, { "System.State": "Active" }),
-    (error: unknown) => error instanceof CommandError && error.exitCode === EXIT_CODE.remote && /503/u.test(error.message),
+  await assertStateUpdateRefused(transport, (error: unknown) => isCommandFailure(error, EXIT_CODE.remote) && /503/u.test(error.message),
   );
 });
 
@@ -276,9 +281,7 @@ test("a non-conflict write error is not reclassified as a conflict", async () =>
   // propagate directly without triggering the diagnostic re-read, so the caller
   // sees a remote failure rather than a spurious conflict.
   const { transport, calls } = recordingTransport([{ status: 503, body: "" }]);
-  await assert.rejects(
-    () => new AdoClient(CONFIG, transport).updateWorkItem(5, 7, { "System.State": "Active" }),
-    (error: unknown) => error instanceof CommandError && error.exitCode === EXIT_CODE.remote && /503/u.test(error.message),
+  await assertStateUpdateRefused(transport, (error: unknown) => isCommandFailure(error, EXIT_CODE.remote) && /503/u.test(error.message),
   );
   // Only the failed PATCH — no re-read, no retry.
   assert.equal(calls.length, 1);
@@ -292,9 +295,7 @@ test("a thrown transport error (not a CommandError) is propagated unchanged", as
   const transport: AdoTransport = async () => {
     throw new Error("network down");
   };
-  await assert.rejects(
-    () => new AdoClient(CONFIG, transport).updateWorkItem(5, 7, { "System.State": "Active" }),
-    (error: unknown) => error instanceof Error && !(error instanceof CommandError) && /network down/u.test(error.message),
+  await assertStateUpdateRefused(transport, (error: unknown) => error instanceof Error && !(error instanceof CommandError) && /network down/u.test(error.message),
   );
 });
 
@@ -357,13 +358,13 @@ test("a non-success status and an undecodable body are distinguishable remote fa
   const { transport: failing } = recordingTransport([{ status: 503, body: "" }]);
   await assert.rejects(
     () => new AdoClient(CONFIG, failing).queryIds("SELECT 1"),
-    (error: unknown) => error instanceof CommandError && error.exitCode === EXIT_CODE.remote && /503/u.test(error.message),
+    (error: unknown) => isCommandFailure(error, EXIT_CODE.remote) && /503/u.test(error.message),
   );
 
   const { transport: garbled } = recordingTransport([{ status: 200, body: "<html>not json</html>" }]);
   await assert.rejects(
     () => new AdoClient(CONFIG, garbled).queryIds("SELECT 1"),
-    (error: unknown) => error instanceof CommandError && error.exitCode === EXIT_CODE.remote && /not JSON/u.test(error.message),
+    (error: unknown) => isCommandFailure(error, EXIT_CODE.remote) && /not JSON/u.test(error.message),
   );
 });
 
@@ -581,10 +582,7 @@ test("ado validate reports readiness without leaking the token", async () => {
     // The token value itself must appear nowhere in the payload.
     assert.equal(JSON.stringify(readyPayload).includes("super-secret"), false);
   } finally {
-    for (const key of ["ADO_ORG_URL", "ADO_PROJECT", "ADO_TOKEN"]) {
-      if (before[key] === undefined) delete process.env[key];
-      else process.env[key] = before[key];
-    }
+    restoreEnvironment(before, ["ADO_ORG_URL", "ADO_PROJECT", "ADO_TOKEN"]);
   }
 });
 
@@ -649,10 +647,7 @@ test("the registered preflight is reachable through pm's own preflight runtime",
     const decision = await active.runPreflightOverride({ command: "ado sync", options: {} } as never);
     assert.ok(decision, "the runtime must return a decision for a registered preflight");
   } finally {
-    for (const key of ["ADO_ORG_URL", "ADO_PROJECT", "ADO_TOKEN"]) {
-      if (before[key] === undefined) delete process.env[key];
-      else process.env[key] = before[key];
-    }
+    restoreEnvironment(before, ["ADO_ORG_URL", "ADO_PROJECT", "ADO_TOKEN"]);
   }
 });
 
@@ -660,11 +655,7 @@ test("an informational status is a remote failure too, not a success below the r
   // The success test is a range, not `>= 300`. A 1xx reaching this layer means
   // the request did not complete, and treating it as success would parse an
   // empty body as a work item.
-  const { transport } = recordingTransport([{ status: 100, body: "" }]);
-  await assert.rejects(
-    () => new AdoClient(CONFIG, transport).queryIds("SELECT 1"),
-    (error: unknown) => error instanceof CommandError && error.exitCode === EXIT_CODE.remote,
-  );
+  await assertQueryFailure(100);
 });
 
 test("a token of only whitespace is reported as absent, not as present", async () => {
@@ -690,12 +681,12 @@ test("a patch that does not assert a revision is refused before it reaches the n
   const client = new AdoClient(CONFIG, transport);
   await assert.rejects(
     () => client.request("PATCH", "/_apis/wit/workitems/1", [{ op: "replace", path: "/fields/System.Title", value: "x" }], PATCH_MEDIA_TYPE),
-    (error: unknown) => error instanceof CommandError && error.exitCode === EXIT_CODE.usage,
+    (error: unknown) => isCommandFailure(error, EXIT_CODE.usage),
   );
   // A non-array body is refused the same way rather than being coerced.
   await assert.rejects(
     () => client.request("PATCH", "/_apis/wit/workitems/1", { op: "test" }, PATCH_MEDIA_TYPE),
-    (error: unknown) => error instanceof CommandError && error.exitCode === EXIT_CODE.usage,
+    (error: unknown) => isCommandFailure(error, EXIT_CODE.usage),
   );
   assert.equal(calls.length, 0, "nothing may reach the network before the invariant is satisfied");
 
@@ -738,8 +729,7 @@ function relationService(initial: readonly AdoWorkItem[]) {
     const next = structuredClone(current);
     const relations = [...next.relations!];
     for (const op of patch.slice(1)) {
-      if (op.path === "/relations/-") relations.push(op.value as AdoRelation);
-      else if (op.op === "remove") relations.splice(Number(op.path.split("/").at(-1)), 1);
+      if (applyFixtureRelation(relations, op)) continue;
       else next.fields[op.path.slice("/fields/".length)] = op.value;
     }
     next.relations = relations;
@@ -1076,4 +1066,61 @@ test("missing custom configuration reports provenance instead of adding a lossy 
   assert.deepEqual(plan.unmappedLocal, [{ id: ids[0], kind: "related", target: ids[1] }]);
   await pm.update(ids[0]!, { dep: [`id=${ids[1]},kind=blocks,source_kind=System.LinkTypes.Related`] });
   assert.equal((await exportRelations(remote, CONFIG.orgUrl, identities, pm)).unmappedLocal.length, 2);
+});
+
+/** Raw PATCH callers and builders share the same positive safe-integer revision invariant. */
+test("review-46 every revision entry point refuses malformed assertions before transport", async () => {
+  for (const implementation of [{ AdoClient, buildUpdatePatch, assertsRevision }, built]) {
+    const service = statefulService(1, 1, {}), client = new implementation.AdoClient(CONFIG, service.transport);
+    for (const revision of [NaN, Infinity, -Infinity, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      assert.throws(() => implementation.buildUpdatePatch(revision, {}), { exitCode: 2 });
+      await assert.rejects(client.updateWorkItem(1, revision, {}), { exitCode: 2 });
+    }
+    for (const value of [undefined, null, "1", NaN, Infinity, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      const patch: JsonPatchOperation[] = [{ op: "test", path: "/rev", value }];
+      assert.equal(implementation.assertsRevision(patch), false);
+      await assert.rejects(client.request("PATCH", "/_apis/wit/workitems/1", patch), { exitCode: 2 });
+    }
+    for (const body of [[null], [1], ["test"]]) await assert.rejects(client.request("PATCH", "/_apis/wit/workitems/1", body), { exitCode: 2 });
+    assert.equal(service.calls.length, 0);
+    for (const revision of [1, Number.MAX_SAFE_INTEGER]) assert.equal(implementation.assertsRevision(implementation.buildUpdatePatch(revision, {})), true);
+    await client.updateWorkItem(1, 1, {});
+    assert.equal(service.calls.length, 1);
+  }
+});
+
+/** A copied package has no SDK anchor; opaque adapters still delegate to a genuine native tracker. */
+test("review-46 opaque relation adapters work without an SDK module and retain prewrite conflicts", async (t) => {
+  const copied = isolatedPackage(t, new URL("../dist", import.meta.url))("./index.js") as typeof built;
+  for (const edit of ["none", "parent", "dependencies", "delete", "reordered"]) await t.test(edit, async (sub) => {
+    const { pm, pmRoot, identities, ids } = await relationTracker(sub, 4);
+    await pm.update(ids[0]!, { dep: [`id=${ids[1]},kind=related,source_kind=System.LinkTypes.Related`] });
+    let reads = 0, writes = 0;
+    const adapter = {
+      listAllComplete: async () => {
+        if (++reads === 2) {
+          if (edit === "parent") await pm.update(ids[0]!, { parent: ids[1] });
+          if (edit === "dependencies") await pm.update(ids[0]!, { dep: [`id=${ids[3]},kind=blocks`] });
+          if (edit === "delete") await pm.delete(ids[0]!, { force: true });
+        }
+        const current = await pm.listAllComplete();
+        if (edit === "reordered" && reads === 2) for (const item of current.items) {
+          if (item.dependencies) item.dependencies = item.dependencies.map((edge) => Object.fromEntries(Object.entries(edge).reverse()) as typeof edge);
+        }
+        return current;
+      },
+      update: async (id: string, options: Parameters<PmClient["update"]>[1]) => { writes++; return pm.update(id, options); },
+    };
+    const previous = process.env; process.env = { ...previous, GIT_CEILING_DIRECTORIES: tmpdir(), PATH: pmRoot };
+    try {
+      const incoming = [{ id: 1, rev: 1, fields: {}, relations: [edge("System.LinkTypes.Hierarchy-Reverse", 4), edge("System.LinkTypes.Related", 3)] }];
+      if (edit === "none" || edit === "reordered") {
+        assert.equal((await copied.importRelations(incoming, CONFIG.orgUrl, identities, adapter)).updated.length, 1);
+        assert.equal(writes, 1); assert.equal((await pm.get(ids[0]!)).item.parent, ids[3]);
+      } else {
+        await assert.rejects(copied.importRelations(incoming, CONFIG.orgUrl, identities, adapter), { kind: "sync_conflict", item: ids[0] });
+        assert.equal(writes, 0);
+      }
+    } finally { process.env = previous; }
+  });
 });

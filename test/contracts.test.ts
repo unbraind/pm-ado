@@ -1,24 +1,24 @@
+import { authoritativeDigest as snapshot } from "./helpers/authoritative-digest.ts";
+import { listenOnLoopback } from "./helpers/http-fixture.ts";
+import { isolatedPackage, installFixtureExtension, fixtureItemPath, fixtureDirectory, packageRoot as repo } from "./helpers/package-runtime.ts";
+import { runCommand as run } from "./helpers/process-fixture.ts";
 /** REST metadata contracts, real host rendering and non-git SDK tracker checks. */
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { promisify } from "node:util";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
+import * as runtimeSdk from "@unbrained/pm-cli/sdk";
 import { PmClient, createExtensionCommandSdk } from "@unbrained/pm-cli/sdk";
 import { createExtensionTestHarness } from "@unbrained/pm-cli/sdk/testing";
 import * as built from "../dist/index.js";
-import extension, { AdoClient, CommandError, ContractRefusal, discoverProjectContract, RELATION_MAP, type AdoTransport, type ProjectContract } from "../index.ts";
-import { ADO_FIELD_MAP, transport } from "../sync.ts";
+import extension, { AdoClient, CommandError, ContractRefusal, discoverProjectContract, RELATION_MAP, STATE_MAP, type AdoTransport, type ProjectContract } from "../index.ts";
+import { ADO_FIELD_MAP, transport, azureFields, localValues } from "../sync.ts";
 import { runContractCommand } from "../contracts.ts";
 
 const config = { orgUrl: "https://dev.azure.com/example", project: "Example Project", token: "synthetic-secret" };
-const run = promisify(execFile);
-const repo = resolve(import.meta.dirname, "..");
 
 /** Build documented REST 7.1 metadata; callers change one behavior at a time. */
 function fixture() {
@@ -154,18 +154,6 @@ test("schema shape changes fail closed instead of inventing writable/required va
   ]) { const f = fixture(); change(f); await refused(discoverProjectContract(config, f.request), "invalid_schema"); }
 });
 
-/** Snapshot authoritative tracker bytes; derived host caches are not tracker mutations. */
-function snapshot(root: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const entry of readdirSync(root, { recursive: true, withFileTypes: true })) {
-    if (entry.isFile()) {
-      const path = join(entry.parentPath, entry.name);
-      if (!path.includes(`${join(root, "runtime")}/`)) result[path.slice(root.length)] = createHash("sha256").update(readFileSync(path)).digest("hex");
-    }
-  }
-  return result;
-}
-
 /** Serve synthetic metadata over actual HTTP and create a real disposable non-git tracker. */
 async function hostFixture(t: test.TestContext) {
   const f = fixture();
@@ -173,15 +161,13 @@ async function hostFixture(t: test.TestContext) {
     const response = await f.request(req.method!, `http://localhost${req.url}`, undefined, { Authorization: req.headers.authorization! });
     res.writeHead(response.status, { "Content-Type": "application/json" }); res.end(response.body);
   });
-  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
-  const address = server.address(); assert.ok(address && typeof address !== "string");
-  const root = mkdtempSync(join(tmpdir(), "ado-contract-"));
+  const address = await listenOnLoopback(server);
+  const { root, cleanup } = fixtureDirectory("ado-contract-");
   const pmRoot = join(root, ".agents/pm");
   const pm = new PmClient({ cwd: root, pmRoot, author: "fixture-agent" });
   await pm.run("init", { prefix: "fixture" });
   const item = await pm.create({ title: "Synthetic task", type: "Task" });
-  const installed = join(pmRoot, "extensions/pm-ado"); mkdirSync(installed, { recursive: true });
-  cpSync(join(repo, "dist"), join(installed, "dist"), { recursive: true }); cpSync(join(repo, "manifest.json"), join(installed, "manifest.json"));
+  installFixtureExtension(pmRoot);
   const noGit = join(root, "bin"); mkdirSync(noGit); symlinkSync(process.execPath, join(noGit, "node"));
   const env = { ...process.env, ADO_ORG_URL: `http://127.0.0.1:${address.port}/example`, ADO_TOKEN: config.token, ADO_PROJECT: "Ignored implicit project", ADO_EXPORT_STATE_MAP: "{}", ADO_STATUS_MAP: "{}", PM_NO_UPDATE_CHECK: "1", PM_AUTHOR: "fixture-agent", GIT_CEILING_DIRECTORIES: tmpdir(), PATH: noGit };
   const harness = await createExtensionTestHarness(extension, { name: "pm-ado", capabilities: ["commands", "schema", "preflight"] });
@@ -198,7 +184,7 @@ async function hostFixture(t: test.TestContext) {
     try { const result = await run(process.execPath, [join(repo, "node_modules/@unbrained/pm-cli/dist/cli.js"), "--pm-path", pmRoot, "ado", "contract", ...args], { cwd: root, env: { ...env, ...changes }, maxBuffer: 8 * 1024 * 1024 }); return { ...result, code: 0 }; }
     catch (error) { return error as { stdout: string; stderr: string; code: number }; }
   };
-  t.after(async () => { await new Promise<void>((done) => server.close(() => done())); rmSync(root, { recursive: true, force: true }); });
+  t.after(async () => { await new Promise<void>((done) => server.close(() => done())); cleanup(); });
   return { ...f, root, pmRoot, pm, item, command, cli, env };
 }
 
@@ -267,8 +253,7 @@ test("discovery refuses redirects while shared sync client transport preserves r
       followed++; res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ count: 0, value: [] }));
     } else { initial++; res.writeHead(302, { Location: "/redirected" }); res.end(); }
   });
-  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
-  const address = server.address(); assert.ok(address && typeof address !== "string");
+  const address = await listenOnLoopback(server);
   const orgUrl = `http://127.0.0.1:${address.port}`;
   t.after(async () => { await new Promise<void>((done) => server.close(() => done())); });
   const read = await new AdoClient({ ...config, orgUrl }, transport).request("GET", "/_apis/wit/fields?api-version=7.1");
@@ -332,9 +317,8 @@ test("type-filtered tracker checks skip enabled out-of-scope types but diagnose 
 
 test("complete-tracker SDK failures retain non-configuration refusal categories", async (t) => {
   const trackerFixture = await hostFixture(t);
-  const file = readdirSync(trackerFixture.pmRoot, { recursive: true, encoding: "utf8" }).find((path) => path.endsWith(`/${trackerFixture.item.item.id}.toon`));
-  assert.ok(file);
-  writeFileSync(join(trackerFixture.pmRoot, file), "invalid [tracker data");
+  const file = fixtureItemPath(trackerFixture.pmRoot, trackerFixture.item.item.id);
+  writeFileSync(file, "invalid [tracker data");
   const trackerFailure = await trackerFixture.command({ project: config.project, checkTracker: true }) as { code: string; exit_code: number; remedy: string };
   assert.equal(trackerFailure.code, "remote_failure"); assert.equal(trackerFailure.exit_code, 3);
   assert.match(trackerFailure.remedy, /complete tracker read/u); assert.equal(trackerFixture.calls.length, 0);
@@ -407,4 +391,31 @@ test("round-7 a native status added between schema and item reads remains a diag
     assert.equal((await f.pm.get(f.item.item.id)).item.status, "late_stage");
     assert.ok(f.calls.every((call) => call.method === "GET"));
   } finally { process.env = previous; process.exitCode = exit; }
+});
+
+/** Legacy stored titles must be evaluated as the real export value without an extension SDK link. */
+test("review-46 required titles share export normalization through an SDK-free discovery context", async (t) => {
+  const copied = isolatedPackage(t, join(repo, "dist"))("./index.js") as typeof built;
+  for (const title of [" \t\u00a0 ", " \tAllowed title\u00a0", "none", "Cafe\u0301"]) await t.test(JSON.stringify(title), async (sub) => {
+    const f = await hostFixture(sub);
+    await f.pm.update(f.item.item.id, { title: "Allowed title" });
+    f.typeFields.find((field) => field.referenceName === "System.Title")!.allowedValues = title.trim() ? ["Allowed title", "none", "Cafe\u0301"] : [];
+    const settings = await runtimeSdk.readSettings(f.pmRoot), id = "fixture-legacy-title";
+    const document = { metadata: { ...f.item.item, id, title }, body: "Previously persisted title fixture" };
+    writeFileSync(runtimeSdk.getItemPath(f.pmRoot, "Task", id, settings.item_format), runtimeSdk.serializeItemDocument(document, { schema: settings.schema }));
+    const legacy = (await f.pm.listAllComplete()).items.find((item) => item.id === id)!;
+    assert.equal(legacy.title, title, "the legacy read must retain the actual stored spelling");
+    const context = { sdk: runtimeSdk, schema: settings.schema, idPrefix: settings.id_prefix };
+    const sent = azureFields(localValues(legacy, context), ["title"], STATE_MAP, context)["System.Title"];
+    const compatible = typeof sent === "string" && sent.length > 0;
+    const before = snapshot(f.pmRoot);
+    const normalization = { resolveStatus: (value: string) => runtimeSdk.normalizeStatusInput(value) ?? value };
+    const discovery = await copied.discoverProjectContract(config, f.request, { items: [legacy], normalization });
+    assert.equal(discovery.compatible, compatible, JSON.stringify(discovery.issues));
+    const json = await f.cli(["--project", config.project, "--type", "Task", "--check-tracker", "--json"]);
+    assert.equal(json.code, 0, json.stderr);
+    assert.equal((JSON.parse(json.stdout) as ProjectContract).compatible, compatible);
+    assert.deepEqual(snapshot(f.pmRoot), before);
+    assert.ok(f.calls.every((call) => call.method === "GET"));
+  });
 });

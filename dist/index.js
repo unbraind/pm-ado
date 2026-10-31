@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { normalizeScopeValue } from "./normalization.js";
 import { runSyncCommand, SYNC_FLAGS } from "./sync.js";
 import { runRefreshCommand } from "./refresh.js";
@@ -259,9 +260,10 @@ export async function planRelationImport(remote, orgUrl, identities, pm, custom 
  */
 export async function importRelations(remote, orgUrl, identities, pm, custom = {}) {
     let nativeWrites;
+    let sdk;
     const native = pm;
     if (native.config !== undefined) {
-        const sdk = loadResolutionSdk();
+        sdk = loadResolutionSdk();
         const pmRoot = dirname((await native.config("project", "list")).settings_path);
         const settings = await sdk.readSettings(pmRoot);
         nativeWrites = new NativeWriteFence(sdk, pmRoot, sdk.selectImportAuthor(undefined, settings.author_default), (id, options) => pm.update(id, options));
@@ -271,12 +273,12 @@ export async function importRelations(remote, orgUrl, identities, pm, custom = {
     const { updates, unmapped } = await planRelationImport(remote, orgUrl, identities, pm, custom);
     /** Keep opaque host adapters on their caller-owned write path; native clients carry SDK history witnesses. */
     const update = async (id, options) => nativeWrites === undefined ? pm.update(id, options)
-        : nativeWrites.update(id, options, `ado-relations-${loadResolutionSdk().deriveMutationTransactionId(JSON.stringify([id, nativeWrites.head(id), options]))}`);
+        : nativeWrites.update(id, options, `ado-relations-${sdk.deriveMutationTransactionId(JSON.stringify([id, nativeWrites.head(id), options]))}`);
     const updated = new Set();
     for (const { id, options, previous } of updates) {
         const current = (await pm.listAllComplete()).items.find((item) => item.id === id);
         const keys = [...(options.parent !== undefined ? ["parent"] : []), ...(options.dep?.length ? ["dependencies"] : [])];
-        const fields = Object.fromEntries(keys.filter((key) => !loadResolutionSdk().stableValueEquals(previous[key] ?? null, current?.[key] ?? null))
+        const fields = Object.fromEntries(keys.filter((key) => !isDeepStrictEqual(previous[key] ?? null, current?.[key] ?? null))
             .map((key) => [key, { base: previous[key] ?? null, current: current?.[key] ?? null }]));
         if (current === undefined)
             fields.item = { base: "present", current: null };
@@ -511,6 +513,8 @@ export function relationTargetId(url, orgUrl) {
  */
 export function buildUpdatePatch(rev, fields, relations = [], fieldOperation = "replace") {
     const patch = [{ op: "test", path: "/rev", value: rev }];
+    if (!assertsRevision(patch))
+        throw new CommandError("revision must be a positive safe integer");
     for (const [name, value] of Object.entries(fields)) {
         patch.push({ op: fieldOperation, path: `/fields/${name}`, value });
     }
@@ -531,11 +535,11 @@ export function buildUpdatePatch(rev, fields, relations = [], fieldOperation = "
  * of a promise in a comment.
  *
  * @param patch - The patch document about to be sent.
- * @returns True when the first operation tests `/rev`.
+ * @returns True when the first operation tests `/rev` against a positive safe integer.
  */
 export function assertsRevision(patch) {
     const first = patch[0];
-    return first !== undefined && first.op === "test" && first.path === "/rev";
+    return first !== undefined && first !== null && first.op === "test" && first.path === "/rev" && Number.isSafeInteger(first.value) && Number(first.value) > 0;
 }
 /**
  * Strip trailing slashes from a URL without a regular expression.

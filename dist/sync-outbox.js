@@ -246,6 +246,11 @@ export class SyncOutbox {
             const marker = `pm-ado operation ${intent.key}`;
             if (intent.state === "dispatched") {
                 const [current] = await this.client.getWorkItems([intent.remote]);
+                // errorPolicy "omit": Azure drops an item that was deleted or became unreadable. Refuse like the create path
+                // does, keep the dispatched intent as evidence, and send no second PATCH.
+                if (current === undefined) {
+                    throw new CommandError(`Azure work item ${intent.remote} is no longer readable (deleted, or its permissions changed); the dispatched PATCH stays journaled. Restore access or resolve the remote item, then retry.`, EXIT_CODE.conflict);
+                }
                 if (current.rev > intent.revision) {
                     const historical = await this.client.request("GET", `/_apis/wit/workitems/${intent.remote}/revisions/${intent.revision + 1}?api-version=7.1&$expand=relations`);
                     if (historical.fields["System.History"] !== marker) {

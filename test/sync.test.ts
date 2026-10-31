@@ -903,7 +903,7 @@ test("planning three linked pairs reads the real SDK tracker once", async (t) =>
 });
 
 // Resolution regressions share the real SDK tracker and revision-checking HTTP fixture.
-import { AdoClient, CommandError, AdoResolutionService, ResolutionRefusal, RevisionConflict, resolutionDigest, resolutionFields, STATE_MAP, type ResolutionPlan, type ResolutionObserver } from "../index.ts";
+import { AdoClient, CommandError, EXIT_CODE, AdoResolutionService, ResolutionRefusal, RevisionConflict, resolutionDigest, resolutionFields, STATE_MAP, type ResolutionPlan, type ResolutionObserver } from "../index.ts";
 import { transport } from "../sync.ts";
 import { loadResolutionSdk, validateResolutionPlan } from "../resolution.ts";
 
@@ -2036,6 +2036,28 @@ test("pending PATCH bases ignore unrelated or unapplied records and prove only t
   writeFileSync(join(directory, "other.json"), JSON.stringify({ operation: "another operation" }));
   const recovered = await outbox(f).recoverEffects([latest], [inspected]);
   assert.equal(recovered.get(local.id)!.at(-1)!.accepted.fields["System.Title"], "Known effect");
+});
+
+test("a dispatched PATCH whose work item Azure now omits refuses as a typed conflict and keeps its intent", async (t) => {
+  // CodeRabbit on #46: getWorkItems uses errorPolicy "omit", so a deleted or newly unreadable item returns no row.
+  // Reading current.rev then threw a TypeError that surfaced as a generic ADO_REMOTE with no recovery guidance.
+  const f = await fixture(t);
+  await f.command("import");
+  const local = await row(f.pm);
+  const remote = structuredClone(f.items.get(1)!);
+  const interrupted = outbox(f, (event) => {
+    if (event.boundary === "intent" && event.phase === "after" && event.operation === "dispatched") throw new Error("Interrupted after dispatch");
+  });
+  await assert.rejects(interrupted.patch(local.id, remote, { "System.Title": "Dispatched then omitted" }, [], localValues(local)), /Interrupted after dispatch/u);
+  f.items.delete(1);
+  const patches = () => f.requests.filter((request) => request.method === "PATCH").length;
+  const before = patches();
+  await assert.rejects(outbox(f).patch(local.id, remote, { "System.Title": "Dispatched then omitted" }, [], localValues(local)),
+    (error: unknown) => error instanceof CommandError && error.exitCode === EXIT_CODE.conflict && /no longer readable/u.test(error.message));
+  assert.equal(patches(), before, "no second PATCH");
+  const directory = join(f.pmRoot, "transactions/pm-ado-sync");
+  const intents = readdirSync(directory).filter((name) => name.endsWith(".json")).map((name) => JSON.parse(readFileSync(join(directory, name), "utf8")) as { operation: string; state: string });
+  assert.ok(intents.some((intent) => intent.operation === "patch" && intent.state === "dispatched"), "the dispatched intent is kept");
 });
 
 test("two real export processes share one creation intent and never issue another create POST", async (t) => {

@@ -162,7 +162,11 @@ async function hostFixture(t: test.TestContext) {
     res.writeHead(response.status, { "Content-Type": "application/json" }); res.end(response.body);
   });
   const address = await listenOnLoopback(server);
+  // Register each cleanup as soon as its resource exists: a throw in init, create, install or the harness must
+  // not leak the directory or leave the listening server keeping the test process alive.
+  t.after(() => new Promise<void>((done) => server.close(() => done())));
   const { root, cleanup } = fixtureDirectory("ado-contract-");
+  t.after(cleanup);
   const pmRoot = join(root, ".agents/pm");
   const pm = new PmClient({ cwd: root, pmRoot, author: "fixture-agent" });
   await pm.run("init", { prefix: "fixture" });
@@ -184,7 +188,6 @@ async function hostFixture(t: test.TestContext) {
     try { const result = await run(process.execPath, [join(repo, "node_modules/@unbrained/pm-cli/dist/cli.js"), "--pm-path", pmRoot, "ado", "contract", ...args], { cwd: root, env: { ...env, ...changes }, maxBuffer: 8 * 1024 * 1024 }); return { ...result, code: 0 }; }
     catch (error) { return error as { stdout: string; stderr: string; code: number }; }
   };
-  t.after(async () => { await new Promise<void>((done) => server.close(() => done())); cleanup(); });
   return { ...f, root, pmRoot, pm, item, command, cli, env };
 }
 

@@ -10,8 +10,18 @@ locally configured token; the token and HMAC input are never stored in a Plan.
 Keep local configuration stable until settlement; token rotation invalidates
 unsettled artifacts. Version 1 artifacts are refused and must be regenerated.
 Field contents and credentials are absent. JSON and the default compact TOON
-are rendered by the host. Requires pm CLI **2026.10.23+** for expired mutation
+are rendered by the host. A field's `base: null` means that field has no witnessed
+common value, including after an interrupted first import. Known fields keep
+their digests even when other fields are unknown. Unknown is distinct from an
+agreed empty value; every differing field still needs an explicit choice.
+Partial bases support preview, saved Plans, portable artifacts, apply and replay
+in the same way as complete bases. Requires pm CLI **2026.10.23+** for expired mutation
 lease fencing; works in a plain, non-git tracker.
+
+Authoritative document lookup follows the tracker's configured item format and
+type-to-folder registry, including custom types in nested folders. The revision
+digest still covers the complete raw document read through the SDK, including
+the body and annotations.
 
 Every differing mapped field needs exactly one explicit `local` or `remote`
 choice, including one-sided changes. Equal fields require no choice. Duplicate,
@@ -53,12 +63,22 @@ const explicit = new AdoResolutionService(pmRoot, author, pm, azure, config, sdk
 ```
 
 When the SDK argument is omitted, the service imports its installed public SDK
-package. Explicit injection remains supported. No SDK is discovered from the launcher. Resolution commands are the
-only command paths needing low-level history/mutation primitives beyond the
-injected `ctx.sdk.client`. They load those lazily through the SDK link maintained
+package. Explicit injection remains supported. No SDK is discovered from the launcher. Guarded sync and resolution need low-level history/mutation primitives beyond
+the injected `ctx.sdk.client`. They load those lazily through the SDK link maintained
 by `pm install`, using a canonical module file and standard Node resolution.
 A missing link produces a typed `configuration` refusal with an installation
-remedy. Invalid command selections do not acquire this runtime. The service
+remedy. Semantic apply also requires the SDK's regular-file preview contract.
+The pinned SDK (2026.10.27) excludes managed extension runtime dependencies
+from preview, so project SDK links remain intact and reviewed apply works.
+Older hosts, including the packed 2026.10.25 acceptance host, still refuse those
+links before preparing an intent; use a global pm-ado installation to keep its
+runtime outside the project tracker on those hosts. Links and special entries
+in authoritative tracker storage still return `configuration` before an intent
+or Azure write. Restore regular tracker data and supported schema configuration
+before retrying. Compatibility evidence is tracked by
+[pm-ado-sdk-preview-runtime](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-sdk-preview-runtime.toon).
+An unchanged lifecycle state is not sent as another close during preview, so
+reviewed scalar changes to an already-closed item preserve its close evidence. Invalid command selections do not acquire this runtime. The service
 uses certified complete SDK reads, authoritative item reads, core mutation
 preview, and the audited mutation pipeline; there are no git subprocesses.
 
@@ -102,8 +122,9 @@ history event, including older applied decisions found in immutable history.
 The artifact is cloned before asynchronous work.
 
 This is scalar field resolution. Graph relations retain their dedicated sync
-adapter. Existing relation base values are preserved; a missing legacy base
-stays absent until sync can establish complete agreement. No revisions-feed
+adapter. Each key advances only after actual local and Azure reads agree;
+unknown keys stay unknown and divergent keys retain their previous witnessed
+ancestor. Scalar resolution does not acknowledge unimported relations. No revisions-feed
 reconciliation is added. Fixture acceptance does not establish live Azure
 permissions or custom organization process rules.
 
@@ -124,3 +145,42 @@ The script reads real pm rows through `listAllComplete`; the Azure side uses the
 [recorded REST 7.1 response fixture](../test/fixtures/resolutions/README.md).
 Successful applies, revision races and actual CLI rendering are measured
 separately on disposable real SDK trackers by `test/sync.test.ts`.
+
+
+## Canonical field coordinates and released artifacts
+
+Standalone SDK callers comparing tracker fields supply the native SDK/schema
+context for custom aliases, or resolve the declared SDK peer. Metadata-only
+Azure discovery needs no SDK module link because it compares literal Azure
+metadata without local tracker fields.
+New scope fingerprints trim project/organization configuration and remove
+organization trailing slashes; released markerless fingerprints stay literal.
+Explicitly injected SDK namespaces also own ID read-back normalization, without
+an implicit package module lookup.
+
+New version-2 plans identify their semantic coordinates with
+`normalization: "pm-ado/fields/1"`. One shared normalizer per field kind is used
+by plan selection, preview, writes, post-write agreement, recovery and replay.
+Status aliases use the configured SDK registry (including custom statuses),
+import-map values and export-map keys. Azure state names remain literal. For
+example, importing `Done` through `{"Done":"CLOSED"}` agrees with native
+`closed`; the default export spelling `Closed` does not force a reverse PATCH.
+Titles and assignments use SDK trimming; assignment `none`/`null` clear the
+field. Title, description and classification text retain literal `none`/`null`;
+description/classification case, Unicode and whitespace remain literal. Tags
+use SDK normalization followed by the existing code-unit comparison order.
+IDs use native SDK case, hash-marker and configured-prefix resolution. Host
+read-only commands use SDK-certified IDs/statuses without requiring a module
+link inside the tracker. Contract checks, JSON/TOON, global npm/Bun consumers
+and ordinary SDK callers share these comparisons.
+
+Raw whole-document hashes, remote snapshot hashes, revision checks, transaction
+IDs and already dispatched wire payloads remain opaque integrity coordinates.
+Plans without the new optional marker, their pending intents, and their settled
+receipts retain the released version-2 validation rules. After coordinate
+validation, native writes and agreement comparisons use canonical field values.
+The compatibility corpus was generated by the actual published 2026.10.26
+package; its provenance and unmodified native tracker histories are checked in
+under `test/fixtures/normalization/released-2026.10.26`. Unknown historical
+statuses and invalid legacy scalar values remain readable and evaluable;
+existing native validation still refuses invalid new mutations before effects.

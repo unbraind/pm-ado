@@ -7,7 +7,7 @@ export { AdoResolutionService, ResolutionRefusal, resolutionDigest, resolutionSc
 export type { ResolutionPlan, ResolutionObserver, ResolutionIntent, ResolutionField, ResolutionChoice, ResolutionReceipt, ResolutionRefusalCode, ResolutionMaps } from "./resolution.ts";
 export { discoverProjectContract, ContractRefusal } from "./contracts.ts";
 export type { ProjectContract, ContractOptions, ContractType, ContractField, ContractRelation, ContractIssue, ContractRefusalCode } from "./contracts.ts";
-import type { Dependency, PmClient } from "@unbrained/pm-cli/sdk";
+import type { Dependency, ItemMetadata, PmClient, PmUpdateActionOptions } from "@unbrained/pm-cli/sdk";
 /**
  * Semantic exit codes pm's command runtime propagates to the shell.
  *
@@ -42,6 +42,13 @@ export declare class CommandError extends Error {
      * @param exitCode - One of {@link EXIT_CODE}; defaults to a usage failure.
      */
     constructor(message: string, exitCode?: number);
+}
+/** HTTP response facts retained for provider-specific durable recovery policy. */
+export declare class AdoHttpError extends CommandError {
+    /** Status actually returned by Azure; transport failures have no such proof. */
+    readonly status: number;
+    /** Preserve the existing command receipt while exposing the response status. */
+    constructor(message: string, status: number, exitCode: number);
 }
 /** Revision refusal carrying the diagnostic snapshot without retrying a write. */
 export declare class RevisionConflict extends CommandError {
@@ -120,15 +127,39 @@ export interface RelationDiagnostic {
     /** Original edge, including its reference name and URL. */
     relation: AdoRelation;
 }
+/** One native graph update and its complete SDK before-image. */
+export interface RelationImportUpdate {
+    /** Local endpoint whose parent or dependencies will change. */
+    id: string;
+    /** Native SDK options; no persistence occurs while building the plan. */
+    options: PmUpdateActionOptions;
+    /** Original item retained as the field comparison base. */
+    previous: ItemMetadata;
+}
+/** Complete local write footprint of an additive remote relation import. */
+export interface RelationImportPlan {
+    /** Complete SDK snapshot used to validate and order the proposed hierarchy. */
+    items: readonly ItemMetadata[];
+    /** Every affected endpoint, in safe parent-before-descendant order. */
+    updates: RelationImportUpdate[];
+    /** Remote edges with no mapped local representation. */
+    unmapped: RelationDiagnostic[];
+}
+/**
+ * Plan every graph endpoint before effects, including unselected inverse endpoints.
+ * With allowUnlinkedSources, prospective parent IDs are planning-only; importRelations
+ * always replans with real SDK identities before it can mutate an item.
+ */
+export declare function planRelationImport(remote: readonly AdoWorkItem[], orgUrl: string, identities: RelationIdentities, pm: Pick<PmClient, "listAllComplete">, custom?: CustomRelationMap, allowUnlinkedSources?: boolean): Promise<RelationImportPlan>;
 /**
  * Merge a remote relation batch into real pm hierarchy and dependencies.
  *
  * Read the complete tracker before writing; validate the entire proposed hierarchy,
  * including existing hierarchy dependencies, so remote cycles and competing parents
  * leave every item untouched. Apply parents before descendants in the validated
- * final tree, avoiding transient cycles without detaching existing parents. If a
- * write fails, restore completed parent changes in reverse order; failed recovery
- * reports the exact detached IDs from a fresh tracker read. Dependency source_kind retains exact ADO reference names,
+ * final tree, avoiding transient cycles without detaching existing parents. Failed
+ * writes stop the plan and retain completed forward changes; no rollback can
+ * overwrite a peer or restore a now-invalid hierarchy. Dependency source_kind retains exact ADO reference names,
  * including custom types and both Duplicate directions (stored as related because the
  * SDK mutation parser does not accept a duplicate kind). This is an additive import:
  * absent remote links do not erase independently maintained local links.
@@ -140,7 +171,9 @@ export interface RelationDiagnostic {
  * @param custom - Explicit custom reference-name mappings.
  * @returns Changed local IDs and original edges that could not be imported.
  */
-export declare function importRelations(remote: readonly AdoWorkItem[], orgUrl: string, identities: RelationIdentities, pm: Pick<PmClient, "listAllComplete" | "update">, custom?: CustomRelationMap): Promise<{
+export declare function importRelations(remote: readonly AdoWorkItem[], orgUrl: string, identities: RelationIdentities, pm: Pick<PmClient, "listAllComplete"> & {
+    update: (id: string, options: PmUpdateActionOptions) => Promise<unknown>;
+}, custom?: CustomRelationMap): Promise<{
     updated: string[];
     unmapped: RelationDiagnostic[];
 }>;
@@ -241,7 +274,7 @@ export declare function buildUpdatePatch(rev: number, fields: Readonly<Record<st
  * of a promise in a comment.
  *
  * @param patch - The patch document about to be sent.
- * @returns True when the first operation tests `/rev`.
+ * @returns True when the first operation tests `/rev` against a positive safe integer.
  */
 export declare function assertsRevision(patch: readonly JsonPatchOperation[]): boolean;
 /** Credentials and target coordinates for one Azure DevOps project. */
@@ -473,4 +506,7 @@ declare const _default: {
     activate(api: ExtensionApi): void;
 };
 export default _default;
+export { normalizeStatusValue, normalizeItemReference, normalizeTitleValue, normalizeAssigneeValue, normalizeTagValues, normalizePriorityValue, normalizeLiteralValue, normalizeScopeValue, normalizeFieldValues, normalizeStateMaps } from "./normalization.ts";
+export type { ValueNormalization, StatusReferenceNormalization, ItemReferenceNormalization } from "./normalization.ts";
+export { baseFields, fieldAtRevision } from "./agreement.ts";
 //# sourceMappingURL=index.d.ts.map

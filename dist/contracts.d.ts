@@ -1,6 +1,7 @@
 import type { CommandHandlerContext } from "@unbrained/pm-cli/sdk/authoring";
 import type { ItemMetadata } from "@unbrained/pm-cli/sdk";
 import { type AdoConfig, type AdoTransport } from "./index.ts";
+import { type TitleReferenceNormalization, type StatusReferenceNormalization, type ValueNormalization } from "./normalization.ts";
 /** Stable refusal vocabulary for SDK callers and host-rendered CLI results. */
 export type ContractRefusalCode = "configuration" | "permission_denied" | "not_found" | "remote_failure" | "invalid_schema" | "schema_changed";
 /** An actionable failure that contains no remote response body or credentials. */
@@ -112,6 +113,8 @@ export interface ContractOptions {
     importStates?: Readonly<Record<string, string>>;
     /** Optional complete local snapshot supplied by the host SDK. */
     items?: readonly ItemMetadata[];
+    /** Native status normalization, including custom aliases and host-owned registry lookup. */
+    normalization?: ValueNormalization | (StatusReferenceNormalization & Partial<TitleReferenceNormalization>);
 }
 /**
  * Discover project WIT metadata using GET only, without an SDK mutation or git dependency.

@@ -112,8 +112,10 @@ Sync plans an import followed by an export per field, before changing either sid
 | Changed to the same value | Changed to the same value | Accept agreement |
 | Changed to different values | Changed to different values | Conflict with base/local/remote values |
 
-The base is the dedicated `ado_sync_base` snapshot from the last successful
-synchronization, not the latest edit timestamp. Without a base, matching fields
+The dedicated `ado_sync_base` stores the last actual read-back agreement for
+each key, independently of edit timestamps. Only matching post-operation SDK
+and Azure reads can advance a key; disagreement retains its prior common
+ancestor (or remains unknown in a versioned partial base). Without a base, matching fields
 bootstrap safely and differing fields conflict. Malformed base JSON fails with
 exit 2 (`ADO_USAGE`), naming the item and `ado_sync_base`.
 After reconciliation, sync asserts the current remote revision it just compared,
@@ -129,6 +131,31 @@ three-way conflicts stop the plan before writes. Operations across multiple
 items and the two stores are not a distributed transaction: earlier successful
 remote operations can remain if a later write or SDK mutation fails. The receipt
 includes the item plan; inspect both stores before retrying a partial failure.
+
+Every local sync update re-reads the item and its SDK history immediately
+before the write and compares the planned fields with the plan's base. A local
+edit after planning refuses persistence with `ADO_CONFLICT` (exit 4), keeping
+the newer item and history intact. The SDK has no compare-and-swap on update yet
+([pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576),
+[pm-cli#1620](https://github.com/unbraind/pm-cli/issues/1620)), so an ordinary
+writer can still land between that check and the write. Sync then finds the
+foreign history entry right after its own write and refuses with
+`ADO_CONFLICT`, but an overlapping field change by that writer may already be
+overwritten; inspect the item history before retrying. Re-read both trackers
+before retrying; an earlier Azure write may already have succeeded. SDK persistence conflicts, including ownership or
+lock refusals, also use this conflict receipt instead of a generic remote error.
+Sync's own link and relation writes advance its
+expected revision from their immutable transaction history. SDK transaction
+markers are recorded in update history messages. Terminal changes use a
+separate status-only SDK update after scalars, followed by a final per-key
+read-back base publication. Each step re-checks fields and native history before
+its SDK update and checks native history afterwards. The acknowledged revision
+advances only on full agreement. Agreement never advances ahead of durable close
+or unimported relations. Edits detected before a step refuse persistence; the
+final-check/write window described above still applies to every step. Azure creation and PATCH use durable
+intents and scoped operation markers; retries resolve pending export ownership
+before import pairing. See [conditional commits and recovery](sync-recovery.md)
+for the dispatch-ambiguity boundary and fault matrix.
 
 ## Preview and conflict receipts
 

@@ -156,7 +156,14 @@ preserved. No apply option is exposed. Limits are 50 items, 200 direct links and
 56 requests; JSON and TOON output omit item bodies and remote error messages.
 See the [SDK/CLI example and limits](docs/move-simulator.md).
 
+Durable creation recovery and conditional local publication are described in
+[Sync recovery](docs/sync-recovery.md), including the fail-closed ambiguous
+create-dispatch boundary.
+
 ## Without git
+
+Guarded sync requires the SDK module link created by `pm install`. Manually
+removing it produces an explicit dependency refusal; read-only refresh still works.
 
 `ado validate`, `ado contract`, `ado import`, `ado export`, `ado sync`,
 `ado move-preview`, `ado resolve-plan`, `ado resolve-apply` and `ado refresh-plan` work in
@@ -169,9 +176,41 @@ GitHub workflows need a git checkout and are separate from tracker operations.
 `pm ado resolve-plan --item <id> [--save]` returns compact base/local/remote
 field digests. Review and add explicit `local`/`remote` choices, then use
 `pm ado resolve-apply --artifact decision.json` or `--plan <core-plan-id>`.
-Stale local or Azure revisions refuse; successful replay adds no writes.
-Prepared intents resume settlement after a post-PATCH lease or write failure.
-Saved plans retain an opaque scope reference instead of organization/project
+Changed local document hashes or Azure revisions refuse; successful replay adds no writes.
+
+## Concurrency
+
+Sync is forward-only. Before each pm write it re-reads SDK-normalized target
+fields and checks the saved plan state and native history. A changed item stops
+that item and dependent work with `ADO_CONFLICT`, `kind: sync_conflict`, and
+item/field/base/current evidence. Completed writes stay durable. Neither sync
+nor relation import rolls them back, so rollback cannot overwrite a peer or
+restore an invalid parent cycle. Obsolete local intents are discarded with a
+recognized history reason; subsequent import/export/sync re-plans current state.
+A fresh import and its dry-run also refuse fields edited locally since the agreed
+base; retrying does not force a peer's status or title back to Azure's value.
+Use the reviewed resolution choices above to choose a conflicting remote value.
+An absent or partial base never authorizes overwriting an existing local field.
+
+There is still a window between the final read and the native write. Ordinary
+SDK writers do not join the workspace transaction lock
+([pm-cli#1620](https://github.com/unbraind/pm-cli/issues/1620)), and there is no
+native expected-item-hash precondition
+([pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576)). A writer in that
+window may still be overwritten; post-write detection reports a conflict but
+never attempts rollback. This is not cross-process isolation. Twelve real SDK
+samples measured **34.8–194.7 ms** from the final guard to completed SDK write, an
+upper bound on guard-to-write time, not a guaranteed maximum or an
+atomicity claim. Scheduling, I/O and hooks can make the window longer.
+
+Tests guarantee no rollback overwrites a peer, SDK hierarchy validation remains
+active, no rollback creates cycles, and stale intents never require manual
+repair. The crash/peer boundary matrix runs real no-git trackers and second OS
+processes. `npm run test:native-precondition` checks fixed-clock edits before
+native dispatch; it does not certify the remaining read/write window.
+
+Resolution outbox intents resume settlement after a post-PATCH lease or write failure.
+Saved resolution plans retain an opaque scope reference instead of organization/project
 configuration.
 The [SDK, portable artifact example and refusal remedies](docs/conflict-resolution.md)
 describe the lease and cross-system recovery boundaries. Requires pm CLI

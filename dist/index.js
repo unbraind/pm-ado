@@ -1,24 +1,14 @@
-// pm-ado — Azure DevOps work item sync for pm-cli.
-//
-// The design point of this package is that Azure DevOps is the one major
-// tracker whose write API is natively conflict-aware. Work items are updated
-// with a JSON Patch document, and that document may carry a `test` operation
-// asserting the current `System.Rev`. When another writer moved the item first
-// the service rejects the WHOLE document rather than applying part of it, so a
-// lost update becomes a visible, retryable failure instead of silent data loss.
-//
-// That is a compare-and-swap on a remote tracker, and it is the primitive pm
-// already organises itself around for multi-agent work. Every other integration
-// in this fleet performs last-write-wins updates. This one does not, so every
-// remote write here asserts a revision — there is no unchecked write path to
-// fall back to, by construction rather than by convention.
+import { isDeepStrictEqual } from "node:util";
+import { normalizeScopeValue } from "./normalization.js";
 import { runSyncCommand, SYNC_FLAGS } from "./sync.js";
 import { runRefreshCommand } from "./refresh.js";
 export { compileRefreshPlan, validateRefreshInput, refreshSaved, observeRefreshPlan, RefreshRefusal } from "./refresh.js";
 import { runMoveCommand } from "./moves.js";
 export { simulateMove, MoveRefusal, MOVE_LIMITS } from "./moves.js";
 import { runContractCommand } from "./contracts.js";
-import { runResolutionCommand } from "./resolution.js";
+import { runResolutionCommand, loadResolutionSdk } from "./resolution.js";
+import { NativeWriteFence, NativeHistoryConflict } from "./history-fence.js";
+import { dirname } from "node:path";
 export { AdoResolutionService, ResolutionRefusal, resolutionDigest, resolutionScopeReference, resolutionFields, validateResolutionPlan } from "./resolution.js";
 export { discoverProjectContract, ContractRefusal } from "./contracts.js";
 /**
@@ -58,6 +48,16 @@ export class CommandError extends Error {
         super(message);
         this.name = "CommandError";
         this.exitCode = exitCode;
+    }
+}
+/** HTTP response facts retained for provider-specific durable recovery policy. */
+export class AdoHttpError extends CommandError {
+    /** Status actually returned by Azure; transport failures have no such proof. */
+    status;
+    /** Preserve the existing command receipt while exposing the response status. */
+    constructor(message, status, exitCode) {
+        super(message, exitCode);
+        this.status = status;
     }
 }
 /** Revision refusal carrying the diagnostic snapshot without retrying a write. */
@@ -126,28 +126,19 @@ function assertRelationIdentities(identities, items) {
     }
 }
 /**
- * Merge a remote relation batch into real pm hierarchy and dependencies.
- *
- * Read the complete tracker before writing; validate the entire proposed hierarchy,
- * including existing hierarchy dependencies, so remote cycles and competing parents
- * leave every item untouched. Apply parents before descendants in the validated
- * final tree, avoiding transient cycles without detaching existing parents. If a
- * write fails, restore completed parent changes in reverse order; failed recovery
- * reports the exact detached IDs from a fresh tracker read. Dependency source_kind retains exact ADO reference names,
- * including custom types and both Duplicate directions (stored as related because the
- * SDK mutation parser does not accept a duplicate kind). This is an additive import:
- * absent remote links do not erase independently maintained local links.
- *
- * @param remote - Relation snapshots read through the batch client.
- * @param orgUrl - Organization scope used to validate every relation target.
- * @param identities - One-to-one remote-to-local identity table.
- * @param pm - Caller-owned SDK client bound to the target tracker.
- * @param custom - Explicit custom reference-name mappings.
- * @returns Changed local IDs and original edges that could not be imported.
+ * Plan every graph endpoint before effects, including unselected inverse endpoints.
+ * With allowUnlinkedSources, prospective parent IDs are planning-only; importRelations
+ * always replans with real SDK identities before it can mutate an item.
  */
-export async function importRelations(remote, orgUrl, identities, pm, custom = {}) {
+export async function planRelationImport(remote, orgUrl, identities, pm, custom = {}, allowUnlinkedSources = false) {
     const { items } = await pm.listAllComplete();
     assertRelationIdentities(identities, items);
+    const resolvedIdentities = new Map(identities);
+    // Prospective IDs belong only to this read-only plan; mutation replans after SDK creation.
+    if (allowUnlinkedSources)
+        for (const item of remote)
+            if (!resolvedIdentities.has(item.id))
+                resolvedIdentities.set(item.id, `ado-unlinked:${item.id}`);
     const parents = new Map(items.map((item) => [item.id, item.parent]));
     const proposed = new Map();
     const additions = new Map();
@@ -157,13 +148,13 @@ export async function importRelations(remote, orgUrl, identities, pm, custom = {
         .map((dep) => JSON.stringify([item.id, dep.id, storedRelationKind(dep.kind)]))));
     const unmapped = [];
     for (const item of remote) {
-        const source = identities.get(item.id);
+        const source = resolvedIdentities.get(item.id);
         if (source === undefined)
             throw new CommandError(`missing pm identity for work item ${item.id}`);
         for (const relation of item.relations ?? []) {
             const mapped = relationKind(relation.rel, custom);
             const targetId = relationTargetId(relation.url, orgUrl);
-            const target = targetId === undefined ? undefined : identities.get(targetId);
+            const target = targetId === undefined ? undefined : resolvedIdentities.get(targetId);
             if (mapped === undefined || target === undefined) {
                 unmapped.push({ itemId: item.id, relation });
                 continue;
@@ -181,7 +172,7 @@ export async function importRelations(remote, orgUrl, identities, pm, custom = {
             }
             else {
                 const key = JSON.stringify([source, target, kind, relation.rel]);
-                const nativeEquivalent = RELATION_MAP[relation.rel] === kind && native.has(JSON.stringify([source, target, kind]));
+                const nativeEquivalent = Object.hasOwn(RELATION_MAP, relation.rel) && RELATION_MAP[relation.rel] === kind && native.has(JSON.stringify([source, target, kind]));
                 if (!seen.has(key) && !nativeEquivalent) {
                     const deps = additions.get(source) ?? [];
                     deps.push(`id=${target},kind=${kind},source_kind=${relation.rel}`);
@@ -235,44 +226,66 @@ export async function importRelations(remote, orgUrl, identities, pm, custom = {
     const changedParents = new Set(items.filter((item) => proposed.has(item.id) && item.parent !== proposed.get(item.id))
         .map((item) => item.id));
     const byId = new Map(items.map((item) => [item.id, item]));
-    const completed = [];
-    const updated = new Set();
-    try {
-        // Final-tree order gives the minimal detach set: empty. Every changed
-        // ancestor has its final parent before a descendant can point back to it.
-        for (const id of queue) {
-            const item = byId.get(id);
-            if (item === undefined)
-                continue;
-            const parentChanged = changedParents.has(id);
-            const dep = additions.get(id) ?? [];
-            if (parentChanged || dep.length > 0) {
-                await pm.update(id, { ...(parentChanged ? { parent: proposed.get(id) } : {}), dep });
-                if (parentChanged)
-                    completed.push(item);
-                updated.add(id);
-            }
-        }
+    const updates = [];
+    for (const id of queue) {
+        const item = byId.get(id);
+        if (item === undefined)
+            continue;
+        const parentChanged = changedParents.has(id), dep = additions.get(id) ?? [];
+        if (parentChanged || dep.length > 0)
+            updates.push({ id, previous: item,
+                options: { ...(parentChanged ? { parent: proposed.get(id) } : {}), dep } });
     }
-    catch (error) {
-        const failed = [];
-        for (const item of completed.reverse()) {
-            try {
-                await pm.update(item.id, item.parent === undefined ? { unset: ["parent"] } : { parent: item.parent });
-            }
-            catch {
-                failed.push(item.id);
-            }
-        }
-        if (failed.length > 0) {
-            const current = new Map((await pm.listAllComplete()).items.map((item) => [item.id, item.parent]));
-            const detached = items.filter((item) => item.parent !== undefined && current.get(item.id) === undefined)
-                .map((item) => item.id);
-            const failure = new CommandError(`${String(error)}; parent restoration failed for: ${failed.join(", ")}; detached IDs: ${detached.join(", ") || "none"}`, EXIT_CODE.conflict);
-            failure.cause = error;
-            throw failure;
-        }
-        throw error;
+    return { items, updates, unmapped };
+}
+/**
+ * Merge a remote relation batch into real pm hierarchy and dependencies.
+ *
+ * Read the complete tracker before writing; validate the entire proposed hierarchy,
+ * including existing hierarchy dependencies, so remote cycles and competing parents
+ * leave every item untouched. Apply parents before descendants in the validated
+ * final tree, avoiding transient cycles without detaching existing parents. Failed
+ * writes stop the plan and retain completed forward changes; no rollback can
+ * overwrite a peer or restore a now-invalid hierarchy. Dependency source_kind retains exact ADO reference names,
+ * including custom types and both Duplicate directions (stored as related because the
+ * SDK mutation parser does not accept a duplicate kind). This is an additive import:
+ * absent remote links do not erase independently maintained local links.
+ *
+ * @param remote - Relation snapshots read through the batch client.
+ * @param orgUrl - Organization scope used to validate every relation target.
+ * @param identities - One-to-one remote-to-local identity table.
+ * @param pm - Caller-owned SDK client bound to the target tracker.
+ * @param custom - Explicit custom reference-name mappings.
+ * @returns Changed local IDs and original edges that could not be imported.
+ */
+export async function importRelations(remote, orgUrl, identities, pm, custom = {}) {
+    let nativeWrites;
+    let sdk;
+    const native = pm;
+    if (native.config !== undefined) {
+        sdk = loadResolutionSdk();
+        const pmRoot = dirname((await native.config("project", "list")).settings_path);
+        const settings = await sdk.readSettings(pmRoot);
+        nativeWrites = new NativeWriteFence(sdk, pmRoot, sdk.selectImportAuthor(undefined, settings.author_default), (id, options) => pm.update(id, options));
+        for (const item of (await pm.listAllComplete()).items)
+            await nativeWrites.capture(item.id);
+    }
+    const { updates, unmapped } = await planRelationImport(remote, orgUrl, identities, pm, custom);
+    /** Keep opaque host adapters on their caller-owned write path; native clients carry SDK history witnesses. */
+    const update = async (id, options) => nativeWrites === undefined ? pm.update(id, options)
+        : nativeWrites.update(id, options, `ado-relations-${sdk.deriveMutationTransactionId(JSON.stringify([id, nativeWrites.head(id), options]))}`);
+    const updated = new Set();
+    for (const { id, options, previous } of updates) {
+        const current = (await pm.listAllComplete()).items.find((item) => item.id === id);
+        const keys = [...(options.parent !== undefined ? ["parent"] : []), ...(options.dep?.length ? ["dependencies"] : [])];
+        const fields = Object.fromEntries(keys.filter((key) => !isDeepStrictEqual(previous[key] ?? null, current?.[key] ?? null))
+            .map((key) => [key, { base: previous[key] ?? null, current: current?.[key] ?? null }]));
+        if (current === undefined)
+            fields.item = { base: "present", current: null };
+        if (Object.keys(fields).length)
+            throw new NativeHistoryConflict(id, fields);
+        await update(id, options);
+        updated.add(id);
     }
     return { updated: [...updated], unmapped };
 }
@@ -500,6 +513,8 @@ export function relationTargetId(url, orgUrl) {
  */
 export function buildUpdatePatch(rev, fields, relations = [], fieldOperation = "replace") {
     const patch = [{ op: "test", path: "/rev", value: rev }];
+    if (!assertsRevision(patch))
+        throw new CommandError("revision must be a positive safe integer");
     for (const [name, value] of Object.entries(fields)) {
         patch.push({ op: fieldOperation, path: `/fields/${name}`, value });
     }
@@ -520,11 +535,11 @@ export function buildUpdatePatch(rev, fields, relations = [], fieldOperation = "
  * of a promise in a comment.
  *
  * @param patch - The patch document about to be sent.
- * @returns True when the first operation tests `/rev`.
+ * @returns True when the first operation tests `/rev` against a positive safe integer.
  */
 export function assertsRevision(patch) {
     const first = patch[0];
-    return first !== undefined && first.op === "test" && first.path === "/rev";
+    return first !== undefined && first !== null && first.op === "test" && first.path === "/rev" && Number.isSafeInteger(first.value) && Number(first.value) > 0;
 }
 /**
  * Strip trailing slashes from a URL without a regular expression.
@@ -558,12 +573,12 @@ export function stripTrailingSlashes(value) {
  * @returns The configuration, or `undefined` when any part is missing.
  */
 export function readConfig(env) {
-    const orgUrl = env.ADO_ORG_URL?.trim();
-    const project = env.ADO_PROJECT?.trim();
+    const orgUrl = env.ADO_ORG_URL === undefined ? undefined : normalizeScopeValue(env.ADO_ORG_URL, true);
+    const project = env.ADO_PROJECT === undefined ? undefined : normalizeScopeValue(env.ADO_PROJECT);
     const token = env.ADO_TOKEN?.trim();
     if (!orgUrl || !project || !token)
         return undefined;
-    return { orgUrl: stripTrailingSlashes(orgUrl), project, token };
+    return { orgUrl, project, token };
 }
 /** The names of the environment variables {@link readConfig} requires. */
 export const REQUIRED_ENV = ["ADO_ORG_URL", "ADO_PROJECT", "ADO_TOKEN"];
@@ -636,10 +651,10 @@ export class AdoClient {
             // The guard on `method` keeps a 412 arriving on a non-PATCH call (a batch
             // read, a WIQL query) classified as a transport error rather than a
             // conflict — a 412 on a GET is not a revision assertion failure.
-            throw new CommandError(`the work item changed since it was read, so the update was refused (${url})`, EXIT_CODE.conflict);
+            throw new AdoHttpError(`the work item changed since it was read, so the update was refused (${url})`, response.status, EXIT_CODE.conflict);
         }
         if (response.status < 200 || response.status >= 300) {
-            throw new CommandError(`Azure DevOps returned ${response.status} for ${method} ${url}`, EXIT_CODE.remote);
+            throw new AdoHttpError(`Azure DevOps returned ${response.status} for ${method} ${url}`, response.status, EXIT_CODE.remote);
         }
         try {
             return JSON.parse(response.body);
@@ -886,7 +901,7 @@ export default defineExtension({
             { name: "ado_url", type: "string", optional: true },
             { name: "ado_rev", type: "number", optional: true },
             { name: "ado_project", type: "string", optional: true },
-            ...["ado_org_url", "ado_type", "ado_area_path", "ado_iteration_path", "ado_sync_base", "ado_resolution_receipt", "ado_resolution_intent"].map((name) => ({ name, type: "string", optional: true })),
+            ...["ado_org_url", "ado_type", "ado_area_path", "ado_iteration_path", "ado_sync_base", "ado_resolution_receipt", "ado_resolution_intent", "ado_sync_intent"].map((name) => ({ name, type: "string", optional: true })),
         ]);
         // preflight — abort a network-bound command before any store read or remote
         // call when credentials are absent. Scoped to this package's own command
@@ -983,4 +998,6 @@ export default defineExtension({
         });
     },
 });
+export { normalizeStatusValue, normalizeItemReference, normalizeTitleValue, normalizeAssigneeValue, normalizeTagValues, normalizePriorityValue, normalizeLiteralValue, normalizeScopeValue, normalizeFieldValues, normalizeStateMaps } from "./normalization.js";
+export { baseFields, fieldAtRevision } from "./agreement.js";
 //# sourceMappingURL=index.js.map

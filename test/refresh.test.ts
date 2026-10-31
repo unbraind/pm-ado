@@ -1,11 +1,20 @@
 /** Strict refresh compiler contracts and SDK read-only acceptance. */
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { createServer } from "node:http";
+import { symlinkSync } from "node:fs";
+import { resolve } from "node:path";
+import { resolutionFields, resolutionDigest, STATE_MAP } from "../index.ts";
+import { mergeSyncValues, IMPORT_STATE_MAP } from "../sync.ts";
 import test from "node:test";
 import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PmClient } from "@unbrained/pm-cli/sdk";
+import { PmClient, commitItemMutations } from "@unbrained/pm-cli/sdk";
 import { createExtensionTestHarness } from "@unbrained/pm-cli/sdk/testing";
+import { advanceSyncBase, baseFields, fieldAtRevision } from "../agreement.ts";
+import { localValues, readBase } from "../sync.ts";
 import { runRefreshCommand } from "../refresh.ts";
 import extension, { AdoClient, compileRefreshPlan, observeRefreshPlan, refreshSaved, RefreshRefusal, validateRefreshInput,
   type AdoConfig, type AdoTransport, type RefreshInput, type RefreshField, type RefreshPlan } from "../index.ts";
@@ -267,4 +276,119 @@ test("unexpected host context failure is sanitized as a typed command refusal", 
     const result = await runRefreshCommand({} as Parameters<typeof runRefreshCommand>[0]);
     assert.equal(result.ok, false); assert.equal("code" in result && result.code, "remote_failure");
   } finally { process.exitCode = exit; }
+});
+
+
+test("round-6 matching revision never caches a legacy partial base with no field set", async (t) => {
+  const f = await fixture(t), cwd = process.cwd(); process.chdir(f.root);
+  try { await f.pm.update(f.id, { field: ['ado_sync_base={"ado_base_partial":1,"relations":[]}'] }); }
+  finally { process.chdir(cwd); }
+  const before = (await f.pm.listAllComplete()).items;
+  const plan = await observeRefreshPlan(f.pm, config, f.request, ["title", "relations"]);
+  assert.deepEqual(plan.hydrate, [{ ids: [1], fields: ["System.Rev", "System.Title"], errorPolicy: "omit", $expand: "relations" }]);
+  assert.ok(plan.accounting.every((row) => row.cached === 0 && row.read === 1));
+  assert.deepEqual((await f.pm.listAllComplete()).items, before);
+  process.chdir(f.root);
+  try {
+    await f.pm.create({ title: "Missing organization", type: "Task", field: ["ado_id=2", `ado_project=${config.project}`] });
+    await f.pm.create({ title: "Missing project", type: "Task", field: ["ado_id=3", `ado_org_url=${config.orgUrl}`] });
+  } finally { process.chdir(cwd); }
+  const skipped = await observeRefreshPlan(f.pm, config, f.request, ["title"]);
+  assert.equal(skipped.skipped!.find((row) => row.reason === "foreign_scope")!.count, 2);
+  assert.equal(skipped.accounting[0]!.read, 1);
+});
+
+
+test("round-6 random persisted field sets and revisions hydrate exactly the missing requested fields", async (t) => {
+  const f = await fixture(t), item = (await f.pm.listAllComplete()).items[0]!;
+  const values = { ...localValues(item, false), relations: [] };
+  let seed = 0x6a27cafe, cases = 0;
+  const random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed; };
+  for (let step = 0; step < 2048; step++) {
+    const present = needs.filter(() => ((random() >>> 16) & 1) !== 0), requested = needs.filter(() => ((random() >>> 16) & 1) !== 0);
+    if (!requested.length) requested.push(needs[step % needs.length]!);
+    const revision = 1 + random() % 5, observed = 1 + random() % 5;
+    const revisions = Object.fromEntries(present.filter(() => random() % 3 !== 0).map((key) => [key, 1 + random() % 5]));
+    const legacy = step % 7 === 0, dated = step % 3 !== 0;
+    // Unlisted physical values must never manufacture presence.
+    const physical = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, (legacy || !present.includes(key as RefreshField)) && step % 5 === 0 ? 7 : value]));
+    const base = { ...physical, ado_base_partial: 1, ...(legacy ? {} : { ado_base_fields: present }), ...(dated ? { ado_agreed_revisions: JSON.stringify(revisions) } : {}) };
+    const saved = refreshSaved([{ ...item, ado_rev: revision, ado_sync_base: JSON.stringify(base) }], config);
+    const plan = compileRefreshPlan({ saved, needs: requested, observed: [{ id: 1, revision: observed }] });
+    const missing = requested.filter((key) => legacy || observed < revision || !present.includes(key) || (dated ? revisions[key] !== observed : revision !== observed));
+    assert.deepEqual(plan.hydrate, missing.length ? [{ ids: [1], fields: ["System.Rev", ...missing.filter((key) => key !== "relations").map((key) => ({ title: "System.Title", description: "System.Description", status: "System.State", priority: "Microsoft.VSTS.Common.Priority", tags: "System.Tags", assignee: "System.AssignedTo", ado_area_path: "System.AreaPath", ado_iteration_path: "System.IterationPath" })[key]).sort()], errorPolicy: "omit", ...(missing.includes("relations") ? { $expand: "relations" } : {}) }] : []);
+    for (const row of plan.accounting) assert.equal(row.read, Number(missing.includes(row.field)));
+    for (const row of plan.accounting) assert.equal(row.cached, Number(!missing.includes(row.field)));
+    const reversed = { ...base, ...(legacy ? {} : { ado_base_fields: [...present].reverse() }) };
+    assert.deepEqual(refreshSaved([{ ...item, ado_rev: revision, ado_sync_base: JSON.stringify(reversed) }], config), saved);
+    cases++;
+  }
+  assert.equal(cases, 2048); t.diagnostic("seed 0x6a27cafe: 2048 presence/request/revision cases, including legacy unknown sets and stale per-key witnesses");
+  for (const raw of ["{", "null", "[]", '{"title":0}']) {
+    const saved = refreshSaved([{ ...item, ado_sync_base: JSON.stringify({ ...values, ado_base_fields: ["title"], ado_agreed_revisions: raw }) }], config);
+    assert.equal(compileRefreshPlan({ saved, needs: ["title"], observed: [{ id: 1, revision: 3 }] }).accounting[0]!.read, 1);
+  }
+  for (const revisions of [null, [], { title: 0 }, { constructor: 3 }]) refuses({ saved: [{ id: 1, revision: 3, base: ["title"], revisions }], observed: [{ id: 1, revision: 3 }], needs: ["title"] });
+  assert.equal(fieldAtRevision("title", ["title"], 3, 3, {}), false);
+  assert.equal(fieldAtRevision("title", ["title"], 4, 3, { title: 3 }), false);
+  assert.equal(fieldAtRevision("constructor", ["constructor"], 3, 3, {}), false);
+  assert.deepEqual(baseFields({ ado_base_fields: ["missing", "title", "title", 7], title: "known" } as unknown as ReturnType<typeof localValues>), ["title"]);
+  assert.deepEqual(baseFields({ ado_base_partial: 1, title: "old", ado_base_fields: "malformed" }), []);
+  assert.deepEqual(baseFields({ ado_base_fields: ["relations"], relations: "malformed" }), []);
+  assert.deepEqual(baseFields({ ado_base_fields: ["relations"], relations: [7] } as unknown as ReturnType<typeof localValues>), []);
+});
+
+test("round-6 native agreement publication persists the exact field set consumed by refresh", async (t) => {
+  const f = await fixture(t); let previous: ReturnType<typeof readBase>;
+  for (let step = 0; step < 18; step++) {
+    const item = (await f.pm.listAllComplete()).items[0]!, values = { ...localValues(item, false), relations: [] };
+    const observed = 4 + step, equal = needs.filter((_key, index) => (step + index) % 3 === 0);
+    const remote = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, equal.includes(key as RefreshField) ? value : Array.isArray(value) ? ["different"] : typeof value === "number" ? 4 : "different"]));
+    const result = await advanceSyncBase({ expectedVersion: item.updated_at, minimumRemoteRevision: 1,
+      readLocal: async () => ({ version: item.updated_at, values, base: previous, acknowledgedRevision: Number(item.ado_rev) }),
+      readRemote: async () => ({ values: remote, revision: observed }),
+      publish: async (base, revision, version) => {
+        await commitItemMutations({ pmRoot: f.pmRoot, author: "fixture-agent", transactionId: `presence-${step}`, mutations: [{ op: "update", id: item.id, match: { key: "updated_at", value: version }, options: { field: [`ado_sync_base=${JSON.stringify(base)}`, ...(revision === undefined ? [] : [`ado_rev=${revision}`])] } }] });
+      } });
+    const persisted = (await f.pm.listAllComplete()).items[0]!;
+    assert.deepEqual(JSON.parse(String(persisted.ado_sync_base)).ado_base_fields, [...new Set([...baseFields(previous), ...equal])].sort());
+    const plan = compileRefreshPlan({ saved: refreshSaved([persisted], config), needs, observed: [{ id: 1, revision: observed }] });
+    for (const row of plan.accounting) assert.equal(row.cached, Number(equal.includes(row.field)));
+    previous = result.base;
+  }
+});
+
+
+test("round-6 SDK and copied CLI JSON TOON read-back share exact base presence", async (t) => {
+  const f = await fixture(t);
+  const run = promisify(execFile), cwd = process.cwd();
+  const values = { ...localValues((await f.pm.listAllComplete()).items[0]!, false), relations: [] };
+  const remote = { id: 1, rev: 3, fields: { "System.State": "New", "System.Title": "Remote" }, relations: [] };
+  for (const declared of [undefined, [], ["title"]]) {
+    const base = { ...values, title: "Remote", ado_base_partial: 1, ...(declared === undefined ? {} : { ado_base_fields: declared }) };
+    const item = { ...(await f.pm.listAllComplete()).items[0]!, ado_sync_base: JSON.stringify(base) };
+    const fields = resolutionFields(item, remote, { imports: IMPORT_STATE_MAP, exports: STATE_MAP });
+    assert.equal(fields.find((row) => row.field === "title")!.base, declared?.length ? resolutionDigest("Remote") : null);
+    assert.equal(mergeSyncValues({ title: "Local" }, { title: "Remote" }, base).title, declared?.length ? "local" : "conflict");
+  }
+  process.chdir(f.root);
+  try { await f.pm.update(f.id, { field: [`ado_sync_base=${JSON.stringify({ ...values, ado_base_partial: 1, ado_base_fields: ["status"], ado_agreed_revisions: '{"status":3,"title":3}' })}`] }); }
+  finally { process.chdir(cwd); }
+  const server = createServer((_req, res) => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ value: [{ id: 1, rev: 3, fields: {} }] })); });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done)); t.after(() => new Promise<void>((done) => server.close(() => done())));
+  const address = server.address(); assert.ok(address && typeof address !== "string");
+  const org = `http://127.0.0.1:${address.port}/example`;
+  process.chdir(f.root); try { await f.pm.update(f.id, { field: [`ado_org_url=${org}`] }); } finally { process.chdir(cwd); }
+  const before = (await f.pm.listAllComplete()).items;
+  const bin = join(f.root, "no-git-bin"); mkdirSync(bin); symlinkSync(process.execPath, join(bin, "node"));
+  const env = { ...process.env, PATH: bin, ADO_ORG_URL: org, ADO_PROJECT: "Example", ADO_TOKEN: "synthetic-token", PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1", GIT_CEILING_DIRECTORIES: tmpdir() };
+  const cli = resolve(import.meta.dirname, "../node_modules/@unbrained/pm-cli/dist/cli.js");
+  const args = [cli, "--pm-path", f.pmRoot, "ado", "refresh-plan", "--fields", "title,status,relations"];
+  const json = JSON.parse((await run(process.execPath, [...args, "--json"], { cwd: f.root, env })).stdout) as RefreshPlan;
+  assert.deepEqual(json.accounting.find((row) => row.field === "title"), { field: "title", cached: 0, read: 1, unavailable: 0, pending: 0 });
+  assert.equal(json.accounting.find((row) => row.field === "status")!.cached, 1);
+  assert.equal(json.accounting.find((row) => row.field === "relations")!.read, 1);
+  const toon = (await run(process.execPath, [...args, "--output-format", "toon"], { cwd: f.root, env })).stdout;
+  assert.match(toon, /title,0,1,0,0/u); assert.match(toon, /status,1,0,0,0/u);
+  assert.deepEqual((await f.pm.listAllComplete()).items, before);
 });

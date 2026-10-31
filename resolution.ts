@@ -1,4 +1,7 @@
+import { normalizeFieldValues, normalizeStatusValue, normalizeScopeValue, normalizeStateMaps, type ValueNormalization } from "./normalization.ts";
+import { NativeWriteFence, nativeHead, NativeHistoryConflict, isNativeHead, type NativeHead } from "./history-fence.ts";
 /** Portable, revision-bound decisions over the existing Azure sync field map. */
+import { agreementMutation, advanceSyncBase, readBaseRevisions } from "./agreement.ts";
 import { createHash, createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
@@ -6,7 +9,7 @@ import { createRequire } from "node:module";
 import type * as Sdk from "@unbrained/pm-cli/sdk";
 import type { CommandHandlerContext } from "@unbrained/pm-cli/sdk/authoring";
 import { AdoClient, CommandError, RevisionConflict, STATE_MAP, readConfig, type AdoConfig, type AdoWorkItem, type JsonPatchOperation, buildUpdatePatch, PATCH_MEDIA_TYPE } from "./index.ts";
-import { ADO_FIELD_MAP, IMPORT_STATE_MAP, azureFields, localValues, readBase, remoteValues, stateMap, transport, threeWayFieldConflict, type Values } from "./sync.ts";
+import { ADO_FIELD_MAP, IMPORT_STATE_MAP, azureFields, localValues, readBase, remoteValues, stateMap, transport, threeWayFieldConflict, readLocalAgreement, remoteAgreement, remoteScalarValues, type Values } from "./sync.ts";
 
 /** Stable refusals agents can branch on without parsing error prose. */
 export type ResolutionRefusalCode = "invalid_plan" | "invalid_choices" | "stale_local" | "stale_remote" | "scope" | "configuration" | "apply_failed" | "ado_partial_apply";
@@ -29,7 +32,12 @@ export class ResolutionRefusal extends Error {
   /** Preserve semantic refusals and map REST races without exposing service bodies. */
   static from(error: unknown): ResolutionRefusal {
     if (error instanceof ResolutionRefusal) return error;
+    if (error instanceof NativeHistoryConflict) return new ResolutionRefusal("stale_local", "Native history advanced. Re-read both trackers and generate a fresh plan.");
     if (error instanceof CommandError && error.exitCode === 2) return new ResolutionRefusal("configuration", "Check configured state maps and field values before generating a new plan.");
+    if (typeof error === "object" && error !== null && "code" in error &&
+        ["transaction_preview_non_regular_file", "transaction_preview_external_schema"].includes(String(error.code))) {
+      return new ResolutionRefusal("configuration", "SDK semantic preview refuses non-regular tracker storage or external schema. Restore regular authoritative tracker files and supported schema configuration before retrying. Keep SDK links intact; older hosts may require a global pm-ado installation with its runtime outside this tracker.");
+    }
     if (typeof error === "object" && error !== null && "code" in error &&
         ["MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND"].includes(String(error.code))) {
       return new ResolutionRefusal("configuration", "Install pm-ado with pm install so the host links its SDK; standalone callers must inject their SDK into AdoResolutionService.");
@@ -49,7 +57,7 @@ export interface ResolutionChoice {
 export interface ResolutionField {
   /** Canonical field name. */
   field: string;
-  /** Digest of the last shared value, or null for a legacy missing base. */
+  /** Digest of the last shared value, or null when this key has no witnessed base. */
   base: string | null;
   /** Digest of the observed pm value. */
   local: string;
@@ -62,10 +70,12 @@ export interface ResolutionField {
 export interface ResolutionPlan {
   /** Versioned package decision contract, independent of core Plan storage. */
   schema: "pm-ado/resolution/2";
+  /** New plans bind normalized semantic fields; absent on supported legacy version-2 artifacts. */
+  normalization?: "pm-ado/fields/1";
   /** Opaque credential-keyed scope reference; configuration is never persisted. */
   scope: { ref: string };
   /** Exact local identity and canonical whole-document revision digest. */
-  local: { id: string; revision: string };
+  local: { id: string; revision: string; head?: NativeHead };
   /** Azure identity, revision and full REST snapshot digest. */
   remote: { id: number; revision: number; digest: string };
   /** Digests for every mapped scalar field; no implicit field winner. */
@@ -115,13 +125,15 @@ export interface ResolutionIntent {
   patch: JsonPatchOperation[];
   /** Reviewed canonical outcome, retained only on the target item. */
   values: Values;
-  /** Existing complete sync base; null preserves legacy absence. */
+  /** Original remote field coordinates; older pending intents omit this witness and retain their exact wire validation. */
+  remote_values?: Values;
+  /** Existing per-key sync base; null preserves legacy absence. */
   base: Values | null;
 }
 
 /** Bind organization and project without storing either value or a dictionary-testable plain hash. */
-export function resolutionScopeReference(config: AdoConfig): string {
-  return createHmac("sha256", config.token).update(JSON.stringify([config.orgUrl, config.project])).digest("hex");
+export function resolutionScopeReference(config: AdoConfig, literal = false): string {
+  return createHmac("sha256", config.token).update(JSON.stringify(literal ? [config.orgUrl, config.project] : [normalizeScopeValue(config.orgUrl, true), normalizeScopeValue(config.project)])).digest("hex");
 }
 
 /** Hash recursively sorted JSON so artifact property order has no semantics. */
@@ -147,8 +159,9 @@ export function validateResolutionPlan(input: unknown): asserts input is Resolut
   if (typeof input !== "object" || input === null) throw new ResolutionRefusal("invalid_plan", "Generate a new plan with ado resolve-plan.");
   const p = input as Partial<ResolutionPlan>;
   const hash = (value: unknown) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
-  if (p.schema !== "pm-ado/resolution/2" || !hash(p.scope?.ref) || Object.keys(p.scope!).length !== 1 ||
+  if (p.schema !== "pm-ado/resolution/2" || p.normalization !== undefined && p.normalization !== "pm-ado/fields/1" || !hash(p.scope?.ref) || Object.keys(p.scope!).length !== 1 ||
       typeof p.local?.id !== "string" || !hash(p.local.revision) || !Number.isSafeInteger(p.remote?.id) || Number(p.remote?.id) < 1 ||
+      p.local.head !== undefined && !isNativeHead(p.local.head) ||
       !Number.isSafeInteger(p.remote?.revision) || Number(p.remote?.revision) < 1 || !hash(p.remote?.digest) || !hash(p.mapping) ||
       !Array.isArray(p.fields) || p.fields.length !== Object.keys(ADO_FIELD_MAP).length ||
       p.fields.some((f) => typeof f !== "object" || f === null || !Object.hasOwn(ADO_FIELD_MAP, f.field) || !hash(f.local) || !hash(f.remote) ||
@@ -171,12 +184,11 @@ export interface ResolutionMaps {
 }
 
 /** Build digests from the same field projections and three-way base used by sync. */
-export function resolutionFields(item: Sdk.ItemMetadata, remote: AdoWorkItem, maps: ResolutionMaps): ResolutionField[] {
-  const local = localValues(item);
-  const incoming = remoteValues(remote, maps.imports);
-  const base = readBase(item, { ...incoming, relations: [] });
-  if (base !== undefined && maps.exports[String(base.status)] === remote.fields["System.State"]) incoming.status = base.status;
-  return Object.keys(ADO_FIELD_MAP).map((field) => ({ field, base: base === undefined ? null : resolutionDigest(base[field]),
+export function resolutionFields(item: Sdk.ItemMetadata, remote: AdoWorkItem, maps: ResolutionMaps, normalization?: ValueNormalization | false): ResolutionField[] {
+  const local = localValues(item, normalization);
+  const base = readBase(item, { ...remoteValues(remote, maps.imports, normalization), relations: [] }, normalization);
+  const incoming = remoteScalarValues(remote, base, maps.imports, maps.exports, normalization);
+  return Object.keys(ADO_FIELD_MAP).map((field) => ({ field, base: base === undefined || !Object.hasOwn(base, field) ? null : resolutionDigest(base[field]),
     local: resolutionDigest(local[field]), remote: resolutionDigest(incoming[field]),
     conflict: threeWayFieldConflict(local[field], incoming[field], base?.[field]) }));
 }
@@ -199,20 +211,24 @@ export class AdoResolutionService {
   }
 
   /** Load authoritative item bytes with the same SDK normalization used by the mutation lock. */
-  private async document(id: string) {
+  private async document(id: string, beforeRead?: (id: string) => Promise<void>) {
     const settings = await this.sdk.readSettings(this.pmRoot);
-    const located = await this.sdk.locateItem(this.pmRoot, id, settings.id_prefix);
+    const located = await this.sdk.locateItem(this.pmRoot, id, settings.id_prefix, settings.item_format,
+      this.sdk.resolveItemTypeRegistry(settings, this.sdk.getActiveExtensionRegistrations()).type_to_folder);
     if (located === null) throw new ResolutionRefusal("scope", "Select an existing linked pm item and generate a fresh plan.");
+    await beforeRead?.(located.id);
     const { document } = await this.sdk.readLocatedItem(located, { schema: settings.schema });
     return document;
   }
 
   /** Check identity and scope on every read, including when applying a portable artifact. */
   private scope(item: Sdk.ItemMetadata, remote: AdoWorkItem): void {
-    if (item.ado_org_url !== this.config.orgUrl || item.ado_project !== this.config.project || item.ado_id !== remote.id ||
+    if (normalizeScopeValue(String(item.ado_org_url ?? ""), true) !== normalizeScopeValue(this.config.orgUrl, true) || normalizeScopeValue(String(item.ado_project ?? "")) !== normalizeScopeValue(this.config.project) || item.ado_id !== remote.id ||
         !Number.isSafeInteger(remote.rev) || remote.rev < 1) {
       throw new ResolutionRefusal("scope", "Use the original organization, project and linked identities; import first if provenance is missing.");
     }
+    const base = readBase(item, { ...localValues(item, false), relations: [] }, false); // Revision-only inspection preserves legacy validation and injected SDK ownership.
+    if (remote.rev < Math.max(Number(item.ado_rev ?? 0), 0, ...Object.values(readBaseRevisions(base)))) throw new ResolutionRefusal("stale_remote", "Azure returned an older revision than witnessed agreement; re-read the current work item.");
   }
 
   /** Require one hydrated REST work item rather than accepting an omitted batch row. */
@@ -234,18 +250,19 @@ export class AdoResolutionService {
   async plan(id: string): Promise<ResolutionPlan> {
     try {
       const { items } = await this.pm.listAllComplete();
-      const document = await this.document(id);
+      let inspectedHead: NativeHead | undefined;
+      const document = await this.document(id, async (canonicalId) => { inspectedHead = await nativeHead(this.sdk, this.pmRoot, canonicalId); });
       const item = document.metadata;
       if (items.filter((row) => row.ado_id === item.ado_id).length !== 1 || !Number.isSafeInteger(item.ado_id) || Number(item.ado_id) < 1) {
         throw new ResolutionRefusal("scope", "Import and establish one unique local link for this Azure work item before planning.");
       }
       const remote = await this.remote(Number(item.ado_id));
       this.scope(item, remote);
-      const maps = this.maps();
-      return { schema: "pm-ado/resolution/2", scope: { ref: resolutionScopeReference(this.config) },
-        local: { id: item.id, revision: resolutionDigest(document) },
+      const maps = this.maps(), settings = await this.sdk.readSettings(this.pmRoot), normalization = this.normalization(settings);
+      return { normalization: "pm-ado/fields/1", schema: "pm-ado/resolution/2", scope: { ref: resolutionScopeReference(this.config) },
+        local: { id: item.id, revision: resolutionDigest(document), head: inspectedHead },
         remote: { id: remote.id, revision: remote.rev, digest: resolutionDigest(remote) },
-        fields: resolutionFields(item, remote, maps), mapping: resolutionDigest(maps), choices: [] };
+        fields: resolutionFields(item, remote, maps, normalization), mapping: resolutionDigest(normalizeStateMaps(maps, normalization)), choices: [] };
     } catch (error) { throw ResolutionRefusal.from(error); }
   }
 
@@ -269,14 +286,16 @@ export class AdoResolutionService {
   }
 
   /** Rebuild the exact guarded wire document from reviewed values, including an ownership marker. */
-  private patch(plan: ResolutionPlan, values: Values, maps: ResolutionMaps, decision: string): JsonPatchOperation[] {
-    const exports = plan.fields.filter((field) => resolutionDigest(values[field.field]) !== field.remote).map((field) => field.field).sort();
+  private patch(plan: ResolutionPlan, values: Values, maps: ResolutionMaps, decision: string, normalization: ValueNormalization, remote?: Values): JsonPatchOperation[] {
+    const canonical = normalizeFieldValues(values, normalization), incoming = remote === undefined ? undefined : normalizeFieldValues(remote, normalization);
+    const exports = plan.fields.filter((field) => incoming === undefined ? resolutionDigest(values[field.field]) !== field.remote :
+      resolutionDigest(canonical[field.field]) !== resolutionDigest(incoming[field.field])).map((field) => field.field).sort();
     return exports.length === 0 ? [] : buildUpdatePatch(plan.remote.revision,
-      { ...azureFields(values, exports, maps.exports), "System.History": `pm-ado resolution ${decision}` }, [], "add");
+      { ...azureFields(incoming === undefined ? values : canonical, exports, maps.exports, incoming === undefined ? false : normalization), "System.History": `pm-ado resolution ${decision}` }, [], "add");
   }
 
   /** Reject corrupted or substituted recovery data before using its stored PATCH. */
-  private intent(raw: unknown, plan: ResolutionPlan, decision: string, maps: ResolutionMaps): ResolutionIntent {
+  private intent(raw: unknown, plan: ResolutionPlan, decision: string, maps: ResolutionMaps, normalization: ValueNormalization): ResolutionIntent {
     let recoveryId = decision;
     let expected: number | null = null;
     try {
@@ -289,13 +308,19 @@ export class AdoResolutionService {
           typeof intent.values !== "object" || intent.values === null ||
           plan.fields.some((field) => resolutionDigest(intent.values[field.field]) !==
             (plan.choices.find((choice) => choice.field === field.field)?.take === "local" ? field.local : field.remote)) ||
-          resolutionDigest(intent.patch) !== resolutionDigest(this.patch(plan, intent.values, maps, decision)) ||
+          plan.normalization !== undefined && intent.remote_values === undefined ||
+          intent.remote_values !== undefined && (typeof intent.remote_values !== "object" || intent.remote_values === null ||
+            plan.fields.some((field) => resolutionDigest(intent.remote_values![field.field]) !== field.remote)) ||
+          resolutionDigest(intent.patch) !== resolutionDigest(this.patch(plan, intent.values, maps, decision, normalization, intent.remote_values)) ||
           intent.expected_remote_revision !== plan.remote.revision + (intent.patch.length === 0 ? 0 : 1)) {
         throw this.partial(recoveryId, expected);
       }
       return intent;
     } catch { throw this.partial(recoveryId, expected); }
   }
+
+  /** Share the host SDK schema and prefix across all field projections, writes and read-backs. */
+  private normalization(settings: Sdk.PmSettings): ValueNormalization { return { sdk: this.sdk, schema: settings.schema, idPrefix: settings.id_prefix }; }
 
   /** Audit intent before the remote side effect; ordinary stale plans still make no item writes. */
   private async prepare(plan: ResolutionPlan, decision: string, maps: ResolutionMaps, settings: Sdk.PmSettings): Promise<ResolutionIntent | null> {
@@ -306,31 +331,41 @@ export class AdoResolutionService {
         const item = document.metadata;
         if (await this.settled(item, decision)) return { changedFields: [] };
         if (item.ado_resolution_intent !== undefined) {
-          prepared = this.intent(item.ado_resolution_intent, plan, decision, maps);
+          prepared = this.intent(item.ado_resolution_intent, plan, decision, maps, this.normalization(settings));
           return { changedFields: [] };
         }
         if (resolutionDigest(document) !== plan.local.revision) throw new ResolutionRefusal("stale_local", "A local writer changed the item. Generate a new plan and review its choices.");
+        const currentHead = await nativeHead(this.sdk, this.pmRoot, item.id);
+        if (plan.local.head !== undefined && resolutionDigest(currentHead) !== resolutionDigest(plan.local.head)) throw new NativeHistoryConflict();
+        if (plan.local.head === undefined) {
+          const history = (await this.sdk.readHistorySnapshot(this.sdk.getHistoryPath(this.pmRoot, item.id), item.id)).entries;
+          const inspected = history.findIndex((_entry, index) => resolutionDigest(this.sdk.replayToItemDocument(this.sdk.replayHistoryToTarget(history, index))) === plan.local.revision);
+          if (inspected !== history.length - 1) throw new NativeHistoryConflict();
+        }
         const remote = await this.remote(plan.remote.id);
         this.scope(item, remote);
         if (remote.rev !== plan.remote.revision || resolutionDigest(remote) !== plan.remote.digest) {
           throw new ResolutionRefusal("stale_remote", "An Azure writer changed the item. Generate a new plan and review its choices.");
         }
-        if (resolutionDigest(resolutionFields(item, remote, maps).sort((a, b) => a.field.localeCompare(b.field))) !== resolutionDigest(plan.fields)) {
+        if (resolutionDigest(resolutionFields(item, remote, maps, plan.normalization === undefined ? false : this.normalization(settings)).sort((a, b) => a.field.localeCompare(b.field))) !== resolutionDigest(plan.fields)) {
           throw new ResolutionRefusal("invalid_plan", "Snapshot field digests were edited; generate a fresh plan.");
         }
-        const local = localValues(item);
-        const values = remoteValues(remote, maps.imports);
-        const base = readBase(item, { ...values, relations: [] });
-        if (base !== undefined && maps.exports[String(base.status)] === remote.fields["System.State"]) values.status = base.status;
+        const normalization = this.normalization(settings), coordinates = plan.normalization === undefined ? false : normalization;
+        const local = localValues(item, coordinates);
+        const base = readBase(item, { ...remoteValues(remote, maps.imports, coordinates), relations: [] }, coordinates);
+        const incoming = remoteScalarValues(remote, base, maps.imports, maps.exports, coordinates);
+        const values = { ...incoming };
         for (const choice of plan.choices) if (choice.take === "local") values[choice.field] = local[choice.field];
+        const canonical = normalizeFieldValues(values, normalization), nativeStatus = normalizeStatusValue(String(values.status), normalization);
         await this.sdk.previewItemMutations({ pmRoot: this.pmRoot, transactionId: `ado-${decision}`, author: this.author,
-          mutations: [{ op: "update", id: item.id, options: { title: String(values.title), description: String(values.description),
-            status: String(values.status), priority: Number(values.priority), tags: JSON.stringify(values.tags),
-            ...(values.assignee === "" ? { unset: ["assignee"] } : { assignee: String(values.assignee) }), closeReason: "Azure conflict resolution" } }] });
-        const patch = this.patch(plan, values, maps, decision);
+          mutations: [{ op: "update", id: item.id, options: { title: String(canonical.title), description: String(canonical.description),
+            ...(nativeStatus === item.status ? {} : { status: nativeStatus, closeReason: "Azure conflict resolution" }),
+            priority: Number(canonical.priority), tags: JSON.stringify(canonical.tags),
+            ...(canonical.assignee === "" ? { unset: ["assignee"] } : { assignee: String(canonical.assignee) }) } }] });
+        const patch = this.patch(plan, values, maps, decision, normalization, incoming);
         prepared = { plan_id: decision, local_revision: plan.local.revision, guard: this.guard(document),
           remote_id: remote.id, remote_revision: remote.rev, remote_digest: plan.remote.digest,
-          expected_remote_revision: remote.rev + (patch.length === 0 ? 0 : 1), patch, values, base: base ?? null };
+          expected_remote_revision: remote.rev + (patch.length === 0 ? 0 : 1), patch, values, remote_values: incoming, base: base ?? null };
         item.ado_resolution_intent = JSON.stringify(prepared);
         return { changedFields: ["ado_resolution_intent"] };
       } });
@@ -338,18 +373,17 @@ export class AdoResolutionService {
   }
 
   /** Prove a prepared PATCH was applied, including its unique marker and complete mapped result. */
-  private applied(intent: ResolutionIntent, remote: AdoWorkItem, maps: ResolutionMaps): boolean {
+  private applied(intent: ResolutionIntent, remote: AdoWorkItem, maps: ResolutionMaps, normalization: ValueNormalization): boolean {
     if (remote.rev !== intent.expected_remote_revision) return false;
     if (intent.patch.length === 0) return resolutionDigest(remote) === intent.remote_digest;
-    const values = remoteValues(remote, maps.imports);
-    if (maps.exports[String(intent.values.status)] === remote.fields["System.State"]) values.status = intent.values.status;
-    return String(remote.fields["System.History"]).includes(`pm-ado resolution ${intent.plan_id}`) && resolutionDigest(values) === resolutionDigest(intent.values);
+    const values = remoteScalarValues(remote, intent.values, maps.imports, maps.exports, normalization);
+    return String(remote.fields["System.History"]).includes(`pm-ado resolution ${intent.plan_id}`) && resolutionDigest(values) === resolutionDigest(normalizeFieldValues(intent.values, normalization));
   }
 
   /** Commit mapped values, lifecycle evidence and the settled receipt as one fenced SDK mutation. */
-  private async settle(plan: ResolutionPlan, decision: string, intent: ResolutionIntent, maps: ResolutionMaps, settings: Sdk.PmSettings): Promise<boolean> {
+  private async settle(plan: ResolutionPlan, decision: string, intent: ResolutionIntent, maps: ResolutionMaps, settings: Sdk.PmSettings): Promise<{ replayed: boolean; version: string }> {
     let replayed = false;
-    await this.sdk.mutateItemWithHistoryContext({ pmRoot: this.pmRoot, settings, id: plan.local.id, author: this.author,
+    const settled = await this.sdk.mutateItemWithHistoryContext({ pmRoot: this.pmRoot, settings, id: plan.local.id, author: this.author,
       op: "update", skipNoop: true, message: `Settle Azure resolution ${decision}`, historyContext: { ado_resolution: decision },
       mutate: async (document) => {
         const item = document.metadata;
@@ -359,16 +393,17 @@ export class AdoResolutionService {
             history.entries.at(-1)?.context?.ado_resolution_prepare !== decision) throw this.partial(decision, intent.expected_remote_revision);
         let remote = await this.remote(intent.remote_id);
         this.scope(item, remote);
-        if (!this.applied(intent, remote, maps)) {
+        if (!this.applied(intent, remote, maps, this.normalization(settings))) {
           if (remote.rev !== intent.remote_revision || resolutionDigest(remote) !== intent.remote_digest) throw this.partial(decision, intent.expected_remote_revision);
           // The exact wire body is already durable in the item's prepare history.
           await this.client.request("PATCH", `/_apis/wit/workitems/${intent.remote_id}?api-version=7.1&$expand=relations`, intent.patch, PATCH_MEDIA_TYPE);
           remote = await this.remote(intent.remote_id);
-          if (!this.applied(intent, remote, maps)) throw this.partial(decision, intent.expected_remote_revision);
+          if (!this.applied(intent, remote, maps, this.normalization(settings))) throw this.partial(decision, intent.expected_remote_revision);
         }
-        const previousStatus = item.status;
-        const values = intent.values;
+        const previousStatus = normalizeStatusValue(item.status, this.normalization(settings));
+        const values = normalizeFieldValues(intent.values, this.normalization(settings));
         for (const key of Object.keys(ADO_FIELD_MAP)) item[key] = values[key];
+        item.status = normalizeStatusValue(String(values.status), this.normalization(settings));
         if (values.assignee === "") delete item.assignee;
         const statuses = this.sdk.resolveRuntimeStatusRegistry(settings.schema);
         const lifecycleFields: string[] = [];
@@ -382,13 +417,11 @@ export class AdoResolutionService {
             }
           }
         }
-        item.ado_rev = remote.rev;
-        if (intent.base !== null) item.ado_sync_base = JSON.stringify({ ...intent.base, ...values });
         item.ado_resolution_receipt = decision;
         delete item.ado_resolution_intent;
-        return { changedFields: [...lifecycleFields, ...Object.keys(ADO_FIELD_MAP), "ado_rev", "ado_sync_base", "ado_resolution_receipt", "ado_resolution_intent"] };
+        return { changedFields: [...lifecycleFields, ...Object.keys(ADO_FIELD_MAP), "ado_resolution_receipt", "ado_resolution_intent"] };
       } });
-    return replayed;
+    return { replayed, version: settled.item.updated_at };
   }
 
   /** Prepare durably, then resume or settle under core item leases without replaying a successful PATCH. */
@@ -399,26 +432,47 @@ export class AdoResolutionService {
       const plan = structuredClone(input);
       plan.fields.sort((a, b) => a.field.localeCompare(b.field));
       plan.choices.sort((a, b) => a.field.localeCompare(b.field));
+      const maps = this.maps(), settings = await this.sdk.readSettings(this.pmRoot), normalization = this.normalization(settings);
+      const inspected = (await this.document(plan.local.id)).metadata;
+      if (plan.normalization !== undefined) plan.local.id = inspected.id;
       const decision = resolutionDigest(plan);
-      const maps = this.maps();
-      if (plan.scope.ref !== resolutionScopeReference(this.config) || plan.mapping !== resolutionDigest(maps)) {
+      if (plan.scope.ref !== resolutionScopeReference(this.config, plan.normalization === undefined) || plan.mapping !== resolutionDigest(plan.normalization === undefined ? maps : normalizeStateMaps(maps, normalization))) {
         throw new ResolutionRefusal("scope", "Restore the original local configuration and token, or regenerate the plan before any intent is prepared.");
       }
-      const settings = await this.sdk.readSettings(this.pmRoot);
-      const pending = (await this.document(plan.local.id)).metadata.ado_resolution_intent;
-      if (pending !== undefined) recovery = this.intent(pending, plan, decision, maps);
+      const pending = inspected.ado_resolution_intent;
+      let expectedVersion = inspected.updated_at;
+      if (pending !== undefined) recovery = this.intent(pending, plan, decision, maps, normalization);
       const intent = await this.prepare(plan, decision, maps, settings);
       recovery = intent;
       let replayed = true;
       if (intent !== null) {
         try {
           await this.observer?.({ phase: "prepared", decision });
-          replayed = await this.settle(plan, decision, intent, maps, settings);
+          const result = await this.settle(plan, decision, intent, maps, settings);
+          replayed = result.replayed; expectedVersion = result.version;
         }
         catch { throw this.partial(decision, intent.expected_remote_revision); }
       }
+      let readback: Awaited<ReturnType<typeof readLocalAgreement>>;
+      const nativeWrites = new NativeWriteFence(this.sdk, this.pmRoot, this.author);
+      await nativeWrites.capture(inspected.id);
+      const agreement = await advanceSyncBase({ expectedVersion, minimumRemoteRevision: intent?.expected_remote_revision ?? plan.remote.revision,
+        readLocal: async () => { readback = await readLocalAgreement(this.pm, inspected.id, this.config, expectedVersion, normalization); return readback; },
+        readRemote: async (local) => {
+          const remote = await this.remote(plan.remote.id);
+          this.scope(readback.item, remote);
+          return { revision: remote.rev, values: remoteAgreement(remote, local.values, this.config, readback.identities, maps.imports, maps.exports, normalization) };
+        },
+        publish: async (base, revision, version) => {
+          await nativeWrites.assertCurrent(inspected.id);
+          const { field, unset } = agreementMutation(readback.item, base, revision);
+          if (field.length || unset !== undefined) await nativeWrites.update(plan.local.id, { field, unset, message: "Azure read-back agreement" },
+            `ado-agreement-${this.sdk.deriveMutationTransactionId(JSON.stringify([plan.local.id, version, field]))}`);
+        } });
+      if (agreement.differences.length) throw this.partial(decision, agreement.remote.revision);
       return { ok: true, decision, replayed, pm_id: plan.local.id };
     } catch (error) {
+      if (error instanceof NativeHistoryConflict) throw ResolutionRefusal.from(error);
       if (recovery !== null && !(error instanceof ResolutionRefusal)) throw this.partial(recovery.plan_id, recovery.expected_remote_revision);
       throw ResolutionRefusal.from(error);
     }

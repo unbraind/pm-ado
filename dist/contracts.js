@@ -1,6 +1,7 @@
 /** Read-only Azure project metadata discovery; this module never plans or applies writes. */
 import { createHash } from "node:crypto";
 import { CommandError, EXIT_CODE, RELATION_MAP, STATE_MAP, stripTrailingSlashes } from "./index.js";
+import { normalizeTitleValue, normalizeStatusValue, normalizeStateMaps, normalizeScopeValue } from "./normalization.js";
 import { ADO_FIELD_MAP, IMPORT_STATE_MAP, azureFields, localValues, stateMap } from "./sync.js";
 /** An actionable failure that contains no remote response body or credentials. */
 export class ContractRefusal extends Error {
@@ -71,6 +72,7 @@ function canonical(value) {
  * A schema fingerprint covers selected remote metadata, excluding tracker contents and maps.
  */
 export async function discoverProjectContract(config, request, options = {}) {
+    config = { ...config, orgUrl: normalizeScopeValue(config.orgUrl, true), project: normalizeScopeValue(config.project) };
     let org;
     try {
         org = new URL(config.orgUrl);
@@ -161,8 +163,11 @@ export async function discoverProjectContract(config, request, options = {}) {
         else
             issues.push({ code, target, count: 1, remedy });
     };
-    const exportStates = options.exportStates ?? STATE_MAP;
-    const importStates = options.importStates ?? IMPORT_STATE_MAP;
+    const maps = { imports: options.importStates ?? IMPORT_STATE_MAP, exports: options.exportStates ?? STATE_MAP };
+    // Remote-only discovery compares literal Azure states and has no PM registry dependency.
+    const hasLocalValues = (options.items?.length ?? 0) + (options.localStatuses?.length ?? 0) > 0;
+    const { imports: importStates, exports: exportStates } = hasLocalValues ? normalizeStateMaps(maps, options.normalization) : maps;
+    const localStatuses = options.localStatuses?.map((status) => normalizeStatusValue(status, options.normalization));
     for (const type of types) {
         if (type.disabled)
             issue("item_type", type.name, "Select an enabled Azure work item type.");
@@ -187,7 +192,7 @@ export async function discoverProjectContract(config, request, options = {}) {
             if (!type.states.includes(state))
                 issue("export_state", `${type.name}/${status}`, "Configure ADO_EXPORT_STATE_MAP with a state exposed by this type.");
         for (const state of type.states)
-            if (!Object.hasOwn(importStates, state) || (options.localStatuses !== undefined && !options.localStatuses.includes(importStates[state])))
+            if (!Object.hasOwn(importStates, state) || (localStatuses !== undefined && !localStatuses.includes(importStates[state])))
                 issue("import_state", `${type.name}/${state}`, "Configure ADO_STATUS_MAP for this Azure state using a status in the local SDK schema.");
     }
     for (const ref of Object.keys(RELATION_MAP)) {
@@ -208,11 +213,12 @@ export async function discoverProjectContract(config, request, options = {}) {
             issue("item_type", typeName, "Select or map an enabled Azure type for these tracker items.");
             continue;
         }
-        if (!Object.hasOwn(exportStates, item.status)) {
+        const status = normalizeStatusValue(item.status, options.normalization);
+        if (!Object.hasOwn(exportStates, status)) {
             issue("export_state", `${typeName}/${item.status}`, "Configure ADO_EXPORT_STATE_MAP for this local status.");
             continue;
         }
-        const values = azureFields(localValues(item), Object.keys(ADO_FIELD_MAP), exportStates);
+        const values = azureFields({ ...localValues(item, false), status, title: normalizeTitleValue(item.title, options.normalization) }, Object.keys(ADO_FIELD_MAP), exportStates, false);
         for (const field of type.fields) {
             if (!Object.hasOwn(values, field.ref))
                 continue;
@@ -245,7 +251,20 @@ export async function runContractCommand(ctx) {
         if (checkTracker && pm === undefined)
             throw new ContractRefusal("configuration", "Use a host-bound pm SDK to read the complete tracker, or omit --check-tracker.", EXIT_CODE.usage);
         const localSchema = checkTracker ? await pm.schema("list") : undefined;
-        return await discoverProjectContract({ orgUrl: process.env.ADO_ORG_URL.trim(), project: project.trim(), token: process.env.ADO_TOKEN.trim() }, contractTransport, { type, expectedFingerprint: expected, localStatuses: localSchema ? [...localSchema.statuses.builtin, ...localSchema.statuses.custom].map((status) => status.id) : undefined, exportStates: stateMap(process.env.ADO_EXPORT_STATE_MAP, STATE_MAP), importStates: stateMap(process.env.ADO_STATUS_MAP, IMPORT_STATE_MAP),
+        const exports = stateMap(process.env.ADO_EXPORT_STATE_MAP, STATE_MAP), imports = stateMap(process.env.ADO_STATUS_MAP, IMPORT_STATE_MAP);
+        const canonical = new Map();
+        if (localSchema)
+            for (const value of new Set([...Object.keys(exports), ...Object.values(imports), ...localSchema.statuses.builtin.map((status) => status.id), ...localSchema.statuses.custom.map((status) => status.id)])) {
+                try {
+                    canonical.set(value, (await pm.schemaShowStatus(value)).status.id);
+                }
+                catch {
+                    canonical.set(value, value); /* Unknown historical mappings remain diagnosable without new refusals. */
+                }
+            }
+        // Metadata-only discovery needs no SDK module link; native tracker reads certify mapping values.
+        const normalization = { resolveStatus: (value) => canonical.get(value) ?? value, resolveTitle: normalizeTitleValue };
+        return await discoverProjectContract({ orgUrl: process.env.ADO_ORG_URL.trim(), project: project.trim(), token: process.env.ADO_TOKEN.trim() }, contractTransport, { type, expectedFingerprint: expected, localStatuses: localSchema ? [...localSchema.statuses.builtin, ...localSchema.statuses.custom].map((status) => status.id) : undefined, exportStates: exports, importStates: imports, normalization,
             items: checkTracker ? (await pm.listAllComplete()).items : undefined });
     }
     catch (error) {

@@ -1,0 +1,18 @@
+id: pm-ado-host-sdk-facade
+title: Expose host-bound SDK primitives for extensions without a module link
+description: "Pinned SDK 2026.10.23 exports commitItemMutations in sdk/item-transaction.d.ts:219, but core/extensions/extension-types.d.ts:574 ExtensionCommandSdk exposes only the bound client, graph helpers, workspace transactions and settings mutation. Missing signature: ExtensionCommandSdk.runtime (the installed public SDK namespace), or equivalent host-bound mutation/history/lease primitives including commitItemMutations(options without pmRoot). A manually copied extension whose pm install SDK link is removed cannot resolve those required primitives from its package anchor. Guarded sync now refuses clearly with ADO_USAGE and asks for pm install; read-only refresh still works. No local guard implementation or inferred launcher path is used. Proper package installs retain their SDK link. Searched the installed declarations and open upstream issues for ExtensionCommandSdk commitItemMutations; no matching open issue was returned. Orchestrator should verify current host APIs and file upstream if still missing; no upstream write performed."
+type: Issue
+status: open
+priority: 2
+tags[1]: sdk-gap
+created_at: "2026-10-27T01:55:53.323Z"
+updated_at: "2026-10-27T03:16:57.274Z"
+author: codex-agent
+parent: pm-ado-sdk-adoption
+comments[1]{created_at,author,text}:
+  "2026-10-27T03:16:57.245Z",codex-agent,"The package now accepts explicit SDK anchors for programmatic sync handlers and injected SDK namespaces for the outbox, following the existing resolution-loader contract. The CLI host facade supplies neither a public runtime namespace nor an explicit module anchor. Proper pm install links remain supported; removing the module link produces ADO_USAGE while bound read-only refresh remains available. Missing host signature can alternatively be ExtensionCommandSdk.moduleAnchor: string, permitting the host to provide its own explicit package anchor without inferring process launchers."
+files[1]{path,scope}:
+  sync.ts,project
+docs[1]{path,scope}:
+  docs/sdk-adoption.md,project
+body: ""

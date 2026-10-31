@@ -1,0 +1,22 @@
+id: pm-ado-sdk-preview-runtime
+title: Support SDK semantic preview with managed project runtime links
+description: "Installed SDK 2026.10.23 declares previewItemMutations(options: Pick<CommitItemMutationsOptions, \"pmRoot\" | \"transactionId\" | \"author\" | \"mutations\">) at sdk/item-transaction.d.ts:207. No authoritative-only or managed-runtime exclusion option exists. Real packed host 2026.10.25 project installation creates managed SDK symlinks within tracker storage; semantic preview refuses these with transaction_preview_non_regular_file before intent or Azure writes. All five actual launcher shapes support complete reviewed partial-base apply with global runtime outside the selected tracker. Missing capability: SDK-owned semantic preview scoped to authoritative tracker data while preserving managed extension links. Do not unlink runtime, bypass regular-file guards or reimplement SDK workspace cloning. Installed public transaction, snapshot, settings, event, history and runtime declarations were searched; no equivalent semantic-preview API was found. Open upstream searches for previewItemMutations symlink, transaction_preview_non_regular_file and preview extension symlink found no matching issue. Orchestrator verifies and files upstream."
+type: Issue
+status: open
+priority: 2
+tags[1]: sdk-gap
+created_at: "2026-10-27T06:26:10.332Z"
+updated_at: "2026-10-31T08:20:29.369Z"
+author: codex-agent
+parent: pm-ado-sdk-adoption
+comments[3]{created_at,author,text}:
+  "2026-10-27T06:50:44.980Z",codex-agent,"Confirmed using actual packed npm-global, bun-global, npx, bunx and local-bin hosts: project installation planning supports partial bases, while apply refuses managed SDK symlinks with transaction_preview_non_regular_file before any intent or Azure write. All five launchers support full apply when pm-ado is globally installed with runtime outside the selected tracker. This is a core preview API limitation, not a reason to unlink runtime, clone workspace storage locally, or bypass regular-file guards. The adapter provides a typed configuration remedy. Orchestrator should file the missing managed-runtime exclusion capability upstream."
+  "2026-10-27T08:03:56.571Z",codex-agent,"Full source CI https://github.com/unbraind/pm-ado/actions/runs/40467343302 passed 4/4 jobs. Every job passes 696/696 tests twice and 100% across all four coverage dimensions (1997/1997 statements, 11 sources). All five project launchers preserve managed links and refuse unsupported preview before writes; all five global-runtime launchers complete partial-base apply and protect endpoint edits. Missing SDK preview exclusion capability remains open for the orchestrator."
+  "2026-10-31T08:20:29.369Z",codex-agent,"PR46 release-gate verification: main pins SDK 2026.10.27, whose preview staging excludes extensions/*/node_modules. A real project SDK link now permits reviewed apply and remains intact. A separate authoritative history symlink still refuses before intent or remote PATCH. Packed host 2026.10.25 retains the older runtime-link refusal and global-install workaround. This item remains open for orchestrator verification."
+files[3]{path,scope}:
+  resolution.ts,project
+  test/packed-install-shapes.test.ts,project
+  test/sync.test.ts,project
+docs[1]{path,scope}:
+  docs/conflict-resolution.md,project
+body: ""

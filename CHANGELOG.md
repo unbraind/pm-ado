@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-No changes.
+### Fixed
+
+- Restore the prepared 2026.10.29 release notes ([pm-ado-release-notes-1029](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-release-notes-1029.toon))
 
 ## 2026.10.29 - 2026-10-29
 

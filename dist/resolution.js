@@ -33,7 +33,7 @@ export class ResolutionRefusal extends Error {
             return new ResolutionRefusal("configuration", "Check configured state maps and field values before generating a new plan.");
         if (typeof error === "object" && error !== null && "code" in error &&
             ["transaction_preview_non_regular_file", "transaction_preview_external_schema"].includes(String(error.code))) {
-            return new ResolutionRefusal("configuration", "SDK semantic preview refuses non-regular tracker storage or external schema. Keep SDK links intact; use global pm-ado installation with its runtime outside this tracker, or an SDK supporting managed runtime exclusions.");
+            return new ResolutionRefusal("configuration", "SDK semantic preview refuses non-regular tracker storage or external schema. Restore regular authoritative tracker files and supported schema configuration before retrying. Keep SDK links intact; older hosts may require a global pm-ado installation with its runtime outside this tracker.");
         }
         if (typeof error === "object" && error !== null && "code" in error &&
             ["MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND"].includes(String(error.code))) {

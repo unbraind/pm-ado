@@ -334,11 +334,11 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
         for (const item of items) {
             const history = (await sdk.readHistorySnapshot(sdk.getHistoryPath(ctx.pm_root, item.id), item.id)).entries;
             const latest = new Map(), agreed = new Map();
-            // Explicit first import may initialize untouched birth fields, never a later edit or ABA.
-            const initial = new Set();
+            // Explicit import may adopt untouched birth fields or unchanged native agreements, never a later edit or ABA.
+            const initial = new Set(), current = localValues(item, normalization);
             if (history[0]?.op === "create") {
                 const birth = sdk.replayToItemDocument(sdk.replayHistoryToTarget(history, 0)).metadata;
-                const born = localValues(birth, normalization), current = localValues(item, normalization);
+                const born = localValues(birth, normalization);
                 for (const key of Object.keys(ADO_FIELD_MAP))
                     if (equal(born[key], current[key]))
                         initial.add(key);
@@ -377,8 +377,12 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
                     if (patch.path === "/metadata/ado_sync_base" && "value" in patch) {
                         try {
                             const base = knownBase(JSON.parse(String(patch.value))), revisions = readBaseRevisions(base);
+                            const canonical = normalizeFieldValues(base, normalization);
                             for (const key of baseFields(base)) {
                                 initial.delete(key);
+                                // The mutable cache can be narrowed later; native scalar agreement remains a witness until the next field edit.
+                                if (own && Object.hasOwn(ADO_FIELD_MAP, key) && equal(canonical[key], current[key]))
+                                    initial.add(key);
                                 const coordinate = JSON.stringify([base[key], revisions[key]]);
                                 if (agreed.get(key) !== coordinate) {
                                     latest.delete(key);
@@ -619,6 +623,11 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
             // Validate export mappings even in dry-run, before any write on either side.
             azureFields(values, plan.export_fields, exportStates, normalization);
         }
+        // Reject edits made during planning before creating neighboring items or retiring any intent.
+        if (!dryRun)
+            for (const entry of entries)
+                if (entry.local !== undefined)
+                    await writes.assertCurrent(entry.local.id);
         await retireIntents(); // Target, mapping and observed-revision validation precedes housekeeping writes too.
         if (conflicts.length === 0) {
             const pulled = entries.filter((entry) => entry.pullRelations && entry.remote !== undefined && (mode === "sync" || entry.local !== undefined)).map((entry) => entry.remote);

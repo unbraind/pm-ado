@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile, fork } from "node:child_process";
-import { chmodSync, cpSync, lstatSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
@@ -3338,19 +3338,31 @@ test("round-4 closed unassigned items can apply reviewed partial-base choices", 
 
 
 test("round-4 SDK storage refusal preserves project links and returns actionable configuration without writes", async (t) => {
-  const f = await fixture(t);
-  assert.equal((await f.command("import")).ok, true);
-  const item = await row(f.pm);
-  f.items.get(1)!.fields["System.Title"] = "Reviewed value"; f.items.get(1)!.rev++;
-  const service = resolver(f), plan = choices(await service.plan(item.id), "remote");
-  const scope = join(f.pmRoot, "extensions/pm-ado/node_modules/@unbrained"); mkdirSync(scope, { recursive: true });
-  const link = join(scope, "pm-cli"); symlinkSync(join(repo, "node_modules/@unbrained/pm-cli"), link, "junction");
-  const before = snapshot(f.pmRoot);
-  await assert.rejects(service.apply(plan), (error: unknown) => error instanceof ResolutionRefusal && error.code === "configuration" && error.remedy.includes("global pm-ado installation"));
-  assert.deepEqual(snapshot(f.pmRoot), before);
-  assert.equal(lstatSync(link).isSymbolicLink(), true);
-  assert.equal((await f.pm.get(item.id)).item.ado_resolution_intent, undefined);
-  assert.ok(f.requests.every((request) => request.method !== "PATCH"));
+  for (const storage of ["runtime-only", "authoritative-link"]) await t.test(storage, async (sub) => {
+    const f = await fixture(sub);
+    assert.equal((await f.command("import")).ok, true);
+    const item = await row(f.pm);
+    f.items.get(1)!.fields["System.Title"] = "Reviewed value"; f.items.get(1)!.rev++;
+    const service = resolver(f), plan = choices(await service.plan(item.id), "remote");
+    const scope = join(f.pmRoot, "extensions/pm-ado/node_modules/@unbrained"); mkdirSync(scope, { recursive: true });
+    const link = join(scope, "pm-cli"); symlinkSync(join(repo, "node_modules/@unbrained/pm-cli"), link, "junction");
+    if (storage === "authoritative-link") {
+      const target = join(f.root, "storage-probe.jsonl"); writeFileSync(target, "");
+      symlinkSync(target, join(f.pmRoot, "history/fixture-storage-probe.jsonl"));
+    }
+    const before = snapshot(f.pmRoot);
+    if (storage === "runtime-only") {
+      assert.equal((await service.apply(plan)).ok, true, "SDK 2026.10.27 excludes managed runtime dependencies from preview");
+      assert.equal((await f.pm.get(item.id)).item.title, "Reviewed value");
+    } else {
+      await assert.rejects(service.apply(plan), (error: unknown) => error instanceof ResolutionRefusal && error.code === "configuration" &&
+        error.remedy.includes("Restore regular authoritative tracker files") && error.remedy.includes("global pm-ado installation"));
+      assert.deepEqual(snapshot(f.pmRoot), before);
+    }
+    assert.equal(lstatSync(link).isSymbolicLink(), true);
+    assert.equal((await f.pm.get(item.id)).item.ado_resolution_intent, undefined);
+    assert.ok(f.requests.every((request) => request.method !== "PATCH"));
+  });
 });
 
 test("round-4 canonical status aliases preserve native close semantics during import", async (t) => {
@@ -3768,6 +3780,54 @@ test("forward-only import preserves local fields missing from legacy and partial
     assert.equal((await service.apply(choices(await service.plan(item.id), "remote"))).ok, true);
     assert.equal((await f.pm.get(item.id, { depth: "full" })).item.body, "Keep peer context");
   });
+});
+
+/** Native agreement history survives a narrowed mutable cache, but never authorizes a later peer edit. */
+test("release gate import allows acknowledged scalars beside new items and refuses peer edits without git", async (t) => {
+  for (const [name, implementation] of [["source", runSyncCommand], ["built", runBuiltSyncCommand]] as const) {
+    for (const edit of ["none", "unchanged", "title", "aba", "during-read"]) await t.test(`${name}:${edit}`, async (sub) => {
+      const f = await fixture(sub, [workItem(1, { "System.State": "Closed" })]);
+      f.env.GIT_CEILING_DIRECTORIES = tmpdir(); f.env.PATH = f.pmRoot;
+      assert.equal((await f.command("import")).ok, true);
+      const item = await row(f.pm);
+      await f.setFields(item.id, { ado_sync_base: JSON.stringify({ ado_base_partial: 1, relations: [] }) });
+      if (edit === "title" || edit === "aba") {
+        await f.pm.update(item.id, { title: "Concurrent native title" });
+        if (edit === "aba") await f.pm.update(item.id, { title: item.title });
+      }
+      if (edit !== "unchanged") {
+        f.items.get(1)!.fields["System.Title"] = "Next remote title";
+        f.items.get(1)!.fields["System.State"] = "New"; f.items.get(1)!.rev++;
+      }
+      for (const id of [2, 3]) f.items.set(id, workItem(id));
+      let peer = snapshot(f.pmRoot), edited = false;
+      const preview = await f.observed("import", () => {}, { dryRun: true }, undefined, implementation);
+      assert.deepEqual(snapshot(f.pmRoot), peer);
+      const result = await f.observed("import", async (event) => {
+        if (edit === "during-read" && !edited && event.boundary === "remote" && event.phase === "after" && event.operation.includes("workitemsbatch")) {
+          edited = true; await f.pm.update(item.id, { title: "Concurrent native title" }); peer = snapshot(f.pmRoot);
+        }
+      }, {}, undefined, implementation);
+      assert.equal(existsSync(join(f.root, ".git")), false);
+      if (edit === "none" || edit === "unchanged") {
+        assert.equal(preview.ok, true, JSON.stringify(preview));
+        assert.equal(result.ok, true, JSON.stringify(result));
+        assert.equal((await f.pm.listAllComplete()).items.length, 3);
+        assert.equal((await f.pm.get(item.id)).item.title, edit === "unchanged" ? item.title : "Next remote title");
+        assert.equal((await f.pm.get(item.id)).item.status, edit === "unchanged" ? "closed" : "open");
+        if (edit === "unchanged") assert.equal(result.plans.find((plan) => plan.ado_id === 1)!.action, "none");
+      } else {
+        assert.equal(result.code, "ADO_CONFLICT", JSON.stringify(result));
+        assert.equal(result.kind, "sync_conflict");
+        assert.ok(result.sync_conflict?.fields.title);
+        if (edit !== "during-read") assert.equal(preview.code, "ADO_CONFLICT");
+        else assert.equal(edited, true);
+        assert.deepEqual(snapshot(f.pmRoot), peer);
+        assert.equal((await f.pm.listAllComplete()).items.length, 1);
+      }
+      assert.ok(f.requests.every((request) => request.method !== "PATCH"));
+    });
+  }
 });
 
 test("review initial import adopts untouched birth fields but refuses every post-birth scalar edit including clears and ABA", async (t) => {

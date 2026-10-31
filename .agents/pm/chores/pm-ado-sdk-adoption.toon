@@ -6,11 +6,11 @@ status: in_progress
 priority: 2
 tags[3]: "gh:unbraind/pm-ado#46",refactor,sdk-adoption
 created_at: "2026-10-25T16:11:56.608Z"
-updated_at: "2026-10-29T18:56:31.524Z"
+updated_at: "2026-10-31T10:04:21.690Z"
 author: codex-agent
 parent: pm-ado-g4v1
 unblock_note: "Owner-approved forward-only policy replaces all automatic pm compensation; SDK read/write window is explicitly accepted and documented (#1576, #1620)."
-comments[144]{created_at,author,text}:
+comments[150]{created_at,author,text}:
   "2026-10-25T15:50:43.902Z",codex-agent,"Orientation found no existing SDK-adoption item. Related SDK certification: pm-ado-qq1p; source features: pm-ado-4x3u and pm-ado-nc7z. Both audited SDK APIs exist in the pinned 2026.10.23 dependency. Plan: preserve authoritative raw documents, replace unguarded sync persistence with inspected-snapshot match preconditions, run non-git regression/differential/revert proofs and unchanged npm/Bun release gates."
   "2026-10-25T15:57:29.077Z",codex-agent,"Both replacements implemented. Resolution passes readSettings item_format and resolveItemTypeRegistry type_to_folder into locateItem and retains readLocatedItem whole-document hashing. Sync now uses commitItemMutations update match on inspected updated_at for link, relation and base writes. Expected revisions advance from our own immutable SDK transaction history, never from a refreshed current item. Three new real non-git regressions pass: custom nested folder/raw-document guard, local edit after Azure PATCH, and local edit before import relation/base persistence. The last two preserve the concurrent item/history bytes and return ADO_CONFLICT; remote success can remain partial."
   "2026-10-25T16:01:16.414Z",codex-agent,"Compatibility check found SDK gap tracked by pm-ado-sdk-match-close-1025: match on updated_at also runs inside update's internal terminal close after its first write has advanced the timestamp. Workaround uses one SDK transaction with a guarded scalar update then explicit close. SDK history messages necessarily become bulk-item-transaction markers instead of adapter prose; this intentional diagnostic difference is documented and differential-tested. Initial read-only differential passed over public pm-ado and pm-jira origin snapshots: 140 items, 8 exact output comparisons, unchanged authoritative bytes. Extending proof to writable copies for persistence receipts, values and history patches."
@@ -155,38 +155,77 @@ comments[144]{created_at,author,text}:
   "2026-10-29T18:35:57.157Z",codex-agent,"Exact old-head log audit found the remaining 5c99f44 failures: 950 tests, 942 passing, 8 failures (five packed launcher first imports plus their parent, and pending-export-owner import plus its parent). All V8 source dimensions were already 100 percent; this was not the historical issue 59 branch gap. Class: tightening unknown-base conflict policy must preserve valid first imports of untouched native births. Shared history planning now certifies per-field equality to the replayed native birth, revokes that eligibility on any later field patch or agreement including ABA, and permits only explicit selected first imports. No foreign edits or unselected graph endpoints acquire authority. Adding source/built all-scalar clear/ABA and preview/apply adversarial cases; no existing assertion or timeout changed."
   "2026-10-29T18:53:54.385Z",codex-agent,"Final first-import fix: per-field replayed birth proof permits only untouched explicit initial imports; later scalar changes, clears, ABA and agreements revoke eligibility. Selected graph endpoints use the same proof, while unselected/edited endpoints remain guarded. SDK-normalized history paths and replayed semantic footprints cover root metadata and legacy front_matter records, including owned records followed by peer edits. Final direct source/built matrix passes 43/43, zero failed/skipped/cancelled. Pinned pm snapshot matrix passed its original 33/33; native lifecycle matrix 5/5 and existing owner/claim/legacy compatibility 12/12 pass. Revert proofs in disposable copies: reverting only runSyncCommand to 83d41df fails 12/33; restoration passes 33/33. Removing SDK history-footprint normalization fails 9/13; restored final implementation passes 13/13. TypeScript build and test compilation, 108 docstrings, committed dist rebuild, privacy and main-prefix history checks pass. All prior assertions, timeout limits and four 100-percent thresholds are unchanged. Exact full release counts remain unavailable: local npm and isolated packed attempts timed out in installer setup, and all four required jobs of https://github.com/unbraind/pm-ado/actions/runs/40931319406 remain queued. Final-head CI is https://github.com/unbraind/pm-ado/pull/46/checks . Stop CI waiting at the original 30-minute cutoff; do not interpret queued jobs as passing. Reviewer issues 60 and 59 remain verification blockers; the compile defect 67 is corrected and independently reproduced on revert."
   "2026-10-29T18:56:31.524Z",codex-agent,"Final implementation db35f2c is pushed. At the original CI wait cutoff, https://github.com/unbraind/pm-ado/actions/runs/40935187241 still has test (22), test (26), release gate (npm), and release gate (bun) all queued: zero completed required gate jobs. GitHub issue 67 is closed with the complete-read compile/revert proof; GitHub issues 60 and 59 remain open pending complete current-head gates. Source/built first-import matrix 43/43, native lifecycle 5/5, restored footprint 13/13 and original restored import 33/33 pass; no local full release pass is claimed. All tracker items remain open and the owned claim is released. This final receipt changes tracker evidence only; final-head checks remain at https://github.com/unbraind/pm-ado/pull/46/checks . Stop rather than wait beyond the queue rule."
-files[30]{path,scope}:
-  .github/workflows/ci.yml,project
-  agreement.ts,project
-  contracts.ts,project
-  history-fence.ts,project
-  index.ts,project
-  moves.ts,project
-  normalization.ts,project
-  package.json,project
-  README.md,project
-  refresh.ts,project
-  resolution.ts,project
-  scripts/sdk-adoption-differential.ts,project
-  scripts/sdk-native-precondition-probe.ts,project
-  sync-outbox.ts,project
-  sync.ts,project
-  test/ado.test.ts,project
-  test/agreement.test.ts,project
-  test/contracts.test.ts,project
-  test/fixtures/normalization/released-2026.10.26/provenance.json,project
-  test/fixtures/public-api/current/history-fence.d.ts.txt,project
-  test/helpers/forward-write-crash-worker.ts,project
-  test/helpers/sync-crash-worker.ts,project
-  test/helpers/workspace-lock-probe.ts,project
-  test/history-fence.test.ts,project
-  test/moves.test.ts,project
-  test/normalization.test.ts,project
-  test/packed-install-shapes.test.ts,project
-  test/public-api.test.ts,project
-  test/refresh.test.ts,project
-  test/sync.test.ts,project
-tests[28]:
+  "2026-10-31T08:16:35.894Z",codex-agent,"Release-gate repair: fetched PR head 1d74837 and merged origin/main (merge be10212; changelog include-empty retained). Reproducing packed import and storage-preflight failures before changes; will retain same-field concurrent-edit refusals, add behavioral revert proofs, and run both full release gates at two workers."
+  "2026-10-31T08:20:28.604Z",codex-agent,"Reproduced packed failure on five project runtime shapes and storage Missing expected rejection before changes. Root cause: native agreements cleared birth-field eligibility, then a narrowed mutable ado_sync_base lost scalar authority despite unchanged local fields. Import now preserves per-field native agreement witnesses until a later field patch (including ABA), and rechecks native history before neighboring creates. Focused source/built regression plus birth/legacy corpus: 57/57 pass. Storage failure is an obsolete fixture assumption: pinned SDK 2026.10.27 intentionally excludes managed runtime dependencies. Added must-allow project-runtime coverage and genuine authoritative-history-link refusal, preserving links and no-write configuration behavior; recovery guidance now names regular authoritative files."
+  "2026-10-31T08:22:22.515Z",codex-agent,"Behavioral reverts executed only in a disposable worktree, rebuilding dist for each case. Reverting runSyncCommand to the pre-fix implementation fails source:none and built:none (8 passing, 3 failing including parent). Removing only the new pre-effect native-history check fails source:during-read and built:during-read because neighboring creates precede refusal (8 passing, 3 failing including parent). Reverting ResolutionRefusal.from recovery guidance fails the real authoritative-link configuration remedy assertion (1 passing, 2 failing including parent). Restoring both fixed functions passes 14/14. PM-linked focused command also passes 14/14 via pm test --run --progress. No original checkout code was mutated during reverts."
+  "2026-10-31T09:21:50.800Z",codex-agent,"Complete local npm release gate PASS with isolated HOME and Git identity on Node 24.19.0: npm run release:check. Both V8 and independent statement passes run 1011/1011 tests, zero failures/cancellations/skips. All 13 required sources are covered; 2274/2274 statements, 100% lines, branches and functions at unchanged thresholds. Native monotonic-precondition probe passes 19/19. Typecheck, build, declaration docstrings, production audit, pack dry-run, changelog, publish attestation and release-date checks all pass. No installer timeout retry was needed. Starting the complete Bun gate sequentially using installed Node 26.13.0 to match CI."
+  "2026-10-31T10:04:20.080Z",codex-agent,"Complete local Bun release gate PASS with isolated HOME and Git identity on Node 26.13.0 and Bun 1.3.5: bun run release:check. Both V8 and independent statement passes run 1011/1011 tests, zero failures/cancellations/skips. Coverage is 2274/2274 statements and 100% lines, branches and functions across all 13 required sources at unchanged thresholds. Native precondition probe passes 19/19; all 108 declaration docstrings, typecheck/build, production audit (zero vulnerabilities), packed acceptance, changelog and publication-policy checks pass. npm and Bun gates ran sequentially with at most two test workers. No installer timeout was retried. The only remaining verification is CI on the pushed head; existing native atomic-CAS limitations remain tracked separately in pm-cli issues 1576 and 1620."
+  "2026-10-31T10:04:20.889Z",codex-agent,"Ready for orchestrator verification: import and storage regressions are covered by real SDK trackers, native-history must-allow/must-refuse cases and disposable function-only reverts. Final code is compiled into tracked dist. Tracker items remain unclosed; releasing only this agent claim before committing code and tracker records together. Final-head CI job conclusions will be reported from the PR checks after push."
+files[30]:
+  - path: .github/workflows/ci.yml
+    scope: project
+  - path: agreement.ts
+    scope: project
+  - path: contracts.ts
+    scope: project
+  - path: history-fence.ts
+    scope: project
+  - path: index.ts
+    scope: project
+  - path: moves.ts
+    scope: project
+  - path: normalization.ts
+    scope: project
+  - path: package.json
+    scope: project
+  - path: README.md
+    scope: project
+  - path: refresh.ts
+    scope: project
+  - path: resolution.ts
+    scope: project
+    note: Actionable authoritative storage recovery
+  - path: scripts/sdk-adoption-differential.ts
+    scope: project
+  - path: scripts/sdk-native-precondition-probe.ts
+    scope: project
+  - path: sync-outbox.ts
+    scope: project
+  - path: sync.ts
+    scope: project
+    note: Native agreement witnesses and pre-effect history check
+  - path: test/ado.test.ts
+    scope: project
+  - path: test/agreement.test.ts
+    scope: project
+  - path: test/contracts.test.ts
+    scope: project
+  - path: test/fixtures/normalization/released-2026.10.26/provenance.json
+    scope: project
+  - path: test/fixtures/public-api/current/history-fence.d.ts.txt
+    scope: project
+  - path: test/helpers/forward-write-crash-worker.ts
+    scope: project
+  - path: test/helpers/sync-crash-worker.ts
+    scope: project
+  - path: test/helpers/workspace-lock-probe.ts
+    scope: project
+  - path: test/history-fence.test.ts
+    scope: project
+  - path: test/moves.test.ts
+    scope: project
+  - path: test/normalization.test.ts
+    scope: project
+  - path: test/packed-install-shapes.test.ts
+    scope: project
+  - path: test/public-api.test.ts
+    scope: project
+  - path: test/refresh.test.ts
+    scope: project
+  - path: test/sync.test.ts
+    scope: project
+    note: Allowed imports and refused peer edits plus real storage contracts
+tests[29]:
   - command: npm run typecheck
     scope: project
     provenance:
@@ -384,10 +423,24 @@ tests[28]:
       created_at: "2026-10-29T18:40:33.653Z"
       source_kind: local_mutation
       source_ref: refactor/sdk-adoption-1025
-docs[5]{path,scope}:
-  docs/conflict-resolution.md,project
-  docs/sdk-adoption.md,project
-  docs/sparse-refresh.md,project
-  docs/sync-recovery.md,project
-  docs/sync.md,project
+  - command: node --test --test-concurrency=2 --test-name-pattern='release gate import allows|round-4 SDK storage refusal' test/sync.test.ts
+    scope: project
+    timeout_seconds: 120
+    provenance:
+      author: codex-agent
+      created_at: "2026-10-31T08:21:19.678Z"
+      source_kind: local_mutation
+      source_ref: refactor/sdk-adoption-1025
+docs[5]:
+  - path: docs/conflict-resolution.md
+    scope: project
+    note: SDK runtime compatibility and authoritative storage refusal
+  - path: docs/sdk-adoption.md
+    scope: project
+  - path: docs/sparse-refresh.md
+    scope: project
+  - path: docs/sync-recovery.md
+    scope: project
+  - path: docs/sync.md
+    scope: project
 body: ""

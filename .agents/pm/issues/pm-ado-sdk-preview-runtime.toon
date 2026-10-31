@@ -6,12 +6,13 @@ status: open
 priority: 2
 tags[1]: sdk-gap
 created_at: "2026-10-27T06:26:10.332Z"
-updated_at: "2026-10-27T08:03:56.571Z"
+updated_at: "2026-10-31T08:20:29.369Z"
 author: codex-agent
 parent: pm-ado-sdk-adoption
-comments[2]{created_at,author,text}:
+comments[3]{created_at,author,text}:
   "2026-10-27T06:50:44.980Z",codex-agent,"Confirmed using actual packed npm-global, bun-global, npx, bunx and local-bin hosts: project installation planning supports partial bases, while apply refuses managed SDK symlinks with transaction_preview_non_regular_file before any intent or Azure write. All five launchers support full apply when pm-ado is globally installed with runtime outside the selected tracker. This is a core preview API limitation, not a reason to unlink runtime, clone workspace storage locally, or bypass regular-file guards. The adapter provides a typed configuration remedy. Orchestrator should file the missing managed-runtime exclusion capability upstream."
   "2026-10-27T08:03:56.571Z",codex-agent,"Full source CI https://github.com/unbraind/pm-ado/actions/runs/40467343302 passed 4/4 jobs. Every job passes 696/696 tests twice and 100% across all four coverage dimensions (1997/1997 statements, 11 sources). All five project launchers preserve managed links and refuse unsupported preview before writes; all five global-runtime launchers complete partial-base apply and protect endpoint edits. Missing SDK preview exclusion capability remains open for the orchestrator."
+  "2026-10-31T08:20:29.369Z",codex-agent,"PR46 release-gate verification: main pins SDK 2026.10.27, whose preview staging excludes extensions/*/node_modules. A real project SDK link now permits reviewed apply and remains intact. A separate authoritative history symlink still refuses before intent or remote PATCH. Packed host 2026.10.25 retains the older runtime-link refusal and global-install workaround. This item remains open for orchestrator verification."
 files[3]{path,scope}:
   resolution.ts,project
   test/packed-install-shapes.test.ts,project

@@ -68,12 +68,14 @@ the injected `ctx.sdk.client`. They load those lazily through the SDK link maint
 by `pm install`, using a canonical module file and standard Node resolution.
 A missing link produces a typed `configuration` refusal with an installation
 remedy. Semantic apply also requires the SDK's regular-file preview contract.
-The pinned SDK and tested host reject managed SDK symlinks inside a selected
-tracker, including those from project installation. Planning still works;
-apply returns `configuration` before an intent or Azure write. Keep those links
-intact. Install pm-ado globally (`pm install <source> --global`) to keep its
-runtime outside the project tracker, or use a future SDK with managed runtime
-exclusions. The missing preview capability is tracked by
+The pinned SDK (2026.10.27) excludes managed extension runtime dependencies
+from preview, so project SDK links remain intact and reviewed apply works.
+Older hosts, including the packed 2026.10.25 acceptance host, still refuse those
+links before preparing an intent; use a global pm-ado installation to keep its
+runtime outside the project tracker on those hosts. Links and special entries
+in authoritative tracker storage still return `configuration` before an intent
+or Azure write. Restore regular tracker data and supported schema configuration
+before retrying. Compatibility evidence is tracked by
 [pm-ado-sdk-preview-runtime](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-sdk-preview-runtime.toon).
 An unchanged lifecycle state is not sent as another close during preview, so
 reviewed scalar changes to an already-closed item preserve its close evidence. Invalid command selections do not acquire this runtime. The service

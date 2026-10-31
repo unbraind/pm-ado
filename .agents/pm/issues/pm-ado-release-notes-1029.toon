@@ -2,12 +2,17 @@ id: pm-ado-release-notes-1029
 title: Restore the prepared 2026.10.29 release notes
 description: Audit confirms a version-only prepared release after tracker-only sync; generate an explicitly empty section without inventing delivered changes.
 type: Issue
-status: in_progress
+status: closed
 priority: 2
 tags: []
 created_at: "2026-10-29T18:18:07.356Z"
-updated_at: "2026-10-29T18:44:38.004Z"
+updated_at: "2026-10-31T10:55:26.043Z"
+closed_at: "2026-10-31T10:55:26.037Z"
+completed_at: "2026-10-30T01:16:12.000Z"
 author: codex-agent
+resolution: "Delivered by https://github.com/unbraind/pm-ado/pull/71 (merge 3ed5821a09a7, head 94d79f97b07c)"
+expected_result: "Delivered by the linked pull request, merged after its head check gate passed."
+actual_result: "Merged at 2026-10-30T01:16:12Z; no readable required checks, so every completed head check run had to succeed, be neutral or be skipped; successful checks: CodeQL, CodeRabbit, Sourcery review, codeql, release gate (bun), release gate (npm), test (22), test (26)"
 comments[4]{created_at,author,text}:
   "2026-10-29T18:20:20.084Z",codex-agent,"The prepared release follows only gated GitHub tracker sync PR 68; no production change or delivered item exists after v2026.10.28. Do not misattribute open work or manufacture a feature entry. Recovery explicitly opts the repository historical changelog commands into --include-empty so the pinned generator produces a truthful No changes section and its standard check remains reproducible. Version, release workflow and dependency pins remain unchanged."
   "2026-10-29T18:28:53.769Z",codex-agent,"Generated and checked through the repository commands: the only CHANGELOG delta is the exact 2026.10.29 - 2026-10-29 heading and No changes. Linked npm run changelog:check passed 1/1. Reverting only --include-empty in the two historical commands removes the section and makes that check drift; no delivered item was fabricated or closed. Full npm/Bun release gates must run in fresh CI at unchanged thresholds. The existing resume selector uses an immutable prepared SHA, so repairing main alone is not sufficient for a successful dispatch; the orchestrator must resolve that separately."
@@ -20,4 +25,5 @@ tests[1]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
   "npm run changelog:check",project,codex-agent,"2026-10-29T18:22:26.052Z",local_mutation,fix/changelog-2026-10-29
 docs[1]{path,scope}:
   README.md,project
+close_reason: "{\"pr\":71,\"url\":\"https://github.com/unbraind/pm-ado/pull/71\",\"merge_commit_sha\":\"3ed5821a09a714bf246ed083cc30574455a43946\",\"head_sha\":\"94d79f97b07c871c44685e4a786029eb2624414c\",\"merged_at\":\"2026-10-30T01:16:12Z\",\"checks\":[\"CodeQL\",\"CodeRabbit\",\"Sourcery review\",\"codeql\",\"release gate (bun)\",\"release gate (npm)\",\"test (22)\",\"test (26)\"]}"
 body: ""

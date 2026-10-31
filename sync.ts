@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { normalizeFieldValues, normalizeStatusValue, normalizeItemReference, normalizeScopeValue, normalizeStateMaps, type ValueNormalization } from "./normalization.ts";
+import { sameScope, normalizeFieldValues, normalizeStatusValue, normalizeItemReference, normalizeScopeValue, normalizeStateMaps, type ValueNormalization } from "./normalization.ts";
 /** Command orchestration and per-field Azure DevOps reconciliation. */
 import { agreementMutation, advanceSyncBase, readBaseRevisions, knownBase, baseFields } from "./agreement.ts";
 import { loadResolutionSdk, resolutionDigest } from "./resolution.ts";
@@ -258,7 +258,7 @@ export async function readLocalAgreement(pm: Pick<PmClient, "listAllComplete">, 
   if (item === undefined) throw new CommandError("Local item disappeared before agreement", EXIT_CODE.conflict);
   if (expectedVersion !== undefined && item.updated_at !== expectedVersion) throw new CommandError("Local item changed before read-back agreement; re-read both trackers and retry", EXIT_CODE.conflict);
   const identities = new Map<number, string>();
-  for (const row of snapshot.items) if (normalizeScopeValue(String(row.ado_project ?? "")) === normalizeScopeValue(config.project) && (row.ado_org_url === undefined || normalizeScopeValue(String(row.ado_org_url), true) === normalizeScopeValue(config.orgUrl, true)) && Number.isSafeInteger(row.ado_id)) identities.set(Number(row.ado_id), row.id);
+  for (const row of snapshot.items) if (sameScope(row, config, "match") && Number.isSafeInteger(row.ado_id)) identities.set(Number(row.ado_id), row.id);
   const empty: AdoWorkItem = { id: Number(item.ado_id), rev: 0, fields: {}, relations: [] };
   const graph = await exportRelations(empty, config.orgUrl, identities, { listAllComplete: async () => snapshot });
   const values = { ...localValues(item, normalization), relations: relationValues(applyRelations(empty, graph.operations), config, identities) };
@@ -478,8 +478,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
     const identities = new Map<number, string>();
     for (const item of items) {
       if (item.ado_id === undefined) continue;
-      if (item.ado_org_url !== undefined && normalizeScopeValue(String(item.ado_org_url), true) !== normalizeScopeValue(config.orgUrl, true) ||
-          normalizeScopeValue(String(item.ado_project ?? "")) !== normalizeScopeValue(config.project)) throw new CommandError(`Azure scope mismatch for ${item.id}`);
+      if (!sameScope(item, config, "match")) throw new CommandError(`Azure scope mismatch for ${item.id}`);
       const id = Number(item.ado_id);
       if (!Number.isSafeInteger(id) || id < 1 || identities.has(id)) throw new CommandError("ado_id must be unique positive safe integers");
       identities.set(id, item.id);

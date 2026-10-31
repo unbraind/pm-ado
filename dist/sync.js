@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { normalizeFieldValues, normalizeStatusValue, normalizeItemReference, normalizeScopeValue, normalizeStateMaps } from "./normalization.js";
+import { sameScope, normalizeFieldValues, normalizeStatusValue, normalizeItemReference, normalizeScopeValue, normalizeStateMaps } from "./normalization.js";
 /** Command orchestration and per-field Azure DevOps reconciliation. */
 import { agreementMutation, advanceSyncBase, readBaseRevisions, knownBase, baseFields } from "./agreement.js";
 import { loadResolutionSdk, resolutionDigest } from "./resolution.js";
@@ -193,7 +193,7 @@ export async function readLocalAgreement(pm, id, config, expectedVersion, normal
         throw new CommandError("Local item changed before read-back agreement; re-read both trackers and retry", EXIT_CODE.conflict);
     const identities = new Map();
     for (const row of snapshot.items)
-        if (normalizeScopeValue(String(row.ado_project ?? "")) === normalizeScopeValue(config.project) && (row.ado_org_url === undefined || normalizeScopeValue(String(row.ado_org_url), true) === normalizeScopeValue(config.orgUrl, true)) && Number.isSafeInteger(row.ado_id))
+        if (sameScope(row, config, "match") && Number.isSafeInteger(row.ado_id))
             identities.set(Number(row.ado_id), row.id);
     const empty = { id: Number(item.ado_id), rev: 0, fields: {}, relations: [] };
     const graph = await exportRelations(empty, config.orgUrl, identities, { listAllComplete: async () => snapshot });
@@ -412,8 +412,7 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
         for (const item of items) {
             if (item.ado_id === undefined)
                 continue;
-            if (item.ado_org_url !== undefined && normalizeScopeValue(String(item.ado_org_url), true) !== normalizeScopeValue(config.orgUrl, true) ||
-                normalizeScopeValue(String(item.ado_project ?? "")) !== normalizeScopeValue(config.project))
+            if (!sameScope(item, config, "match"))
                 throw new CommandError(`Azure scope mismatch for ${item.id}`);
             const id = Number(item.ado_id);
             if (!Number.isSafeInteger(id) || id < 1 || identities.has(id))

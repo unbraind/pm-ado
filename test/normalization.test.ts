@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import * as sdk from "@unbrained/pm-cli/sdk";
 import { normalizeStatusValue, normalizeItemReference, normalizeTitleValue, normalizeAssigneeValue,
   normalizeTagValues, normalizePriorityValue, normalizeLiteralValue, normalizeScopeValue, normalizeFieldValues, normalizeStateMaps,
-  type ValueNormalization } from "../normalization.ts";
+  sameScope, type ValueNormalization } from "../normalization.ts";
 import { localValues, remoteValues, azureFields, remoteScalarValues, IMPORT_STATE_MAP, type Values } from "../sync.ts";
 
 /** Obtain the registry and native write oracle without mocking SDK functions. */
@@ -75,4 +75,17 @@ test("round-5 field normalizers match native writes without erasing literal Unic
   const preferredCases: (Values | undefined)[] = [undefined, {}, { status: 1 }, { status: " CLOSED " }];
   for (const preferred of preferredCases) assert.equal(remoteScalarValues(remote, preferred, imports, { closed: "Closed" }, f.context).status, "closed");
   assert.equal(remoteScalarValues(remote, undefined, imports, {}, false).status, " CLOSED ");
+});
+
+test("sameScope normalizes both scope fields and states how a missing organization is treated", () => {
+  // CodeRabbit on #46: refresh, moves, resolution and sync each repeated this comparison. One helper keeps the rules
+  // together, and the single intended difference (legacy items without ado_org_url) is an explicit argument.
+  const config = { orgUrl: "https://dev.azure.com/acme/", project: " Platform " };
+  assert.equal(sameScope({ ado_org_url: " https://dev.azure.com/acme ", ado_project: "Platform" }, config, "refuse"), true);
+  assert.equal(sameScope({ ado_org_url: "https://dev.azure.com/other", ado_project: "Platform" }, config, "refuse"), false);
+  assert.equal(sameScope({ ado_org_url: "https://dev.azure.com/acme", ado_project: "Other" }, config, "refuse"), false);
+  assert.equal(sameScope({ ado_project: "Platform" }, config, "refuse"), false, "refuse requires a stored organization");
+  assert.equal(sameScope({ ado_project: "Platform" }, config, "match"), true, "match accepts a legacy item without one");
+  assert.equal(sameScope({ ado_org_url: "https://dev.azure.com/other", ado_project: "Platform" }, config, "match"), false);
+  assert.equal(sameScope({ ado_project: "Other" }, config, "match"), false, "the project is compared in both modes");
 });

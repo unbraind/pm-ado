@@ -998,6 +998,6 @@ export default defineExtension({
         });
     },
 });
-export { normalizeStatusValue, normalizeItemReference, normalizeTitleValue, normalizeAssigneeValue, normalizeTagValues, normalizePriorityValue, normalizeLiteralValue, normalizeScopeValue, normalizeFieldValues, normalizeStateMaps } from "./normalization.js";
+export { normalizeStatusValue, normalizeItemReference, normalizeTitleValue, normalizeAssigneeValue, normalizeTagValues, normalizePriorityValue, normalizeLiteralValue, normalizeScopeValue, sameScope, normalizeFieldValues, normalizeStateMaps } from "./normalization.js";
 export { baseFields, fieldAtRevision } from "./agreement.js";
 //# sourceMappingURL=index.js.map

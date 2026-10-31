@@ -41,6 +41,23 @@ export declare function normalizePriorityValue(value: string | number, context?:
 export declare function normalizeLiteralValue(value: string): string;
 /** Scope uses the same trimming and organization trailing-slash rule as package configuration writes. */
 export declare function normalizeScopeValue(value: string, organization?: boolean): string;
+/**
+ * True when an item's stored Azure scope equals the configured scope after normalization. Every scope check calls
+ * this, so sparse refresh, move preview, resolution and sync cannot drift apart.
+ *
+ * The one deliberate difference is how an item without `ado_org_url` is treated, and callers state it explicitly:
+ * `"refuse"` (refresh, resolution, moves) requires the stored organization; `"match"` (sync's identity and agreement
+ * reads) accepts items imported before `ado_org_url` was recorded as belonging to the configured organization.
+ *
+ * @param item - The item's stored scope fields.
+ * @param config - The configured organization URL and project.
+ * @param missingOrganization - How to treat an item that has no stored organization URL.
+ * @returns Whether the item belongs to the configured scope.
+ */
+export declare function sameScope(item: Readonly<Record<string, unknown>>, config: {
+    readonly orgUrl: string;
+    readonly project: string;
+}, missingOrganization: "match" | "refuse"): boolean;
 /** Normalize only mapped semantic fields, retaining unknown coordinates and partial-base markers verbatim. */
 export declare function normalizeFieldValues(values: Readonly<Values>, context?: ValueNormalization): Values;
 /** Canonicalize mapping interpretation without changing Azure's literal state names or inherited-key safety. */

@@ -1,4 +1,4 @@
-import { normalizeItemReference, normalizeScopeValue, type ValueNormalization, type ItemReferenceNormalization } from "./normalization.ts";
+import { sameScope, normalizeItemReference, normalizeScopeValue, type ValueNormalization, type ItemReferenceNormalization } from "./normalization.ts";
 /** Revision-bound classification previews using the shared contract and Azure's non-saving validator. */
 import type { CommandHandlerContext } from "@unbrained/pm-cli/sdk/authoring";
 import type { ItemMetadata } from "@unbrained/pm-cli/sdk";
@@ -152,7 +152,7 @@ export async function simulateMove(config: AdoConfig, request: AdoTransport, opt
     const identityScope = (item: ItemMetadata) => ({ org: normalizeScopeValue(String(item.ado_org_url ?? ""), true), project: normalizeScopeValue(String(item.ado_project ?? "")) });
     if (local.some((item) => {
       const current = identityScope(item);
-      return current.org !== config.orgUrl || current.project !== config.project || options.items.filter((entry) => {
+      return !sameScope(item, config, "refuse") || options.items.filter((entry) => {
         if (entry.ado_id !== item.ado_id) return false;
         const candidate = identityScope(entry);
         return candidate.org === current.org && candidate.project === current.project;

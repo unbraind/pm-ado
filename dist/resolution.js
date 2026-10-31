@@ -1,4 +1,4 @@
-import { normalizeFieldValues, normalizeStatusValue, normalizeScopeValue, normalizeStateMaps } from "./normalization.js";
+import { sameScope, normalizeFieldValues, normalizeStatusValue, normalizeScopeValue, normalizeStateMaps } from "./normalization.js";
 import { NativeWriteFence, nativeHead, NativeHistoryConflict, isNativeHead } from "./history-fence.js";
 /** Portable, revision-bound decisions over the existing Azure sync field map. */
 import { agreementMutation, advanceSyncBase, readBaseRevisions } from "./agreement.js";
@@ -125,7 +125,7 @@ export class AdoResolutionService {
     }
     /** Check identity and scope on every read, including when applying a portable artifact. */
     scope(item, remote) {
-        if (normalizeScopeValue(String(item.ado_org_url ?? ""), true) !== normalizeScopeValue(this.config.orgUrl, true) || normalizeScopeValue(String(item.ado_project ?? "")) !== normalizeScopeValue(this.config.project) || item.ado_id !== remote.id ||
+        if (!sameScope(item, this.config, "refuse") || item.ado_id !== remote.id ||
             !Number.isSafeInteger(remote.rev) || remote.rev < 1) {
             throw new ResolutionRefusal("scope", "Use the original organization, project and linked identities; import first if provenance is missing.");
         }

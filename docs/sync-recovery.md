@@ -202,6 +202,8 @@ recovery corruption. All existing immutable history remains readable.
 ## SDK module dependency
 
 Guarded commands require the host's SDK module link created by `pm install`.
-If it is missing, writes return a dependency refusal; read-only sparse refresh
-still works. Current field presence and per-key read-back agreement rules are
+If it is missing, `ado import`, `ado export` and `ado sync` return a dependency
+refusal, with or without `--dry-run`: the preview reads tracker settings and the
+status registry through the SDK before it plans anything. Read-only sparse
+refresh still works without the link. Current field presence and per-key read-back agreement rules are
 shared by import, export, recovery, resolution and refresh planning.

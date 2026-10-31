@@ -1,5 +1,5 @@
 import { baseFields, fieldAtRevision, readBaseRevisions } from "./agreement.ts";
-import { normalizeScopeValue } from "./normalization.ts";
+import { sameScope } from "./normalization.ts";
 /** Read-only Azure refresh compiler; artifacts describe reads and never authorize writes. */
 import type { CommandHandlerContext } from "@unbrained/pm-cli/sdk/authoring";
 import type { ItemMetadata, PmClient } from "@unbrained/pm-cli/sdk";
@@ -175,7 +175,7 @@ export function compileRefreshPlan(input: RefreshInput): RefreshPlan {
 export function refreshSaved(items: readonly ItemMetadata[], config: AdoConfig): RefreshSaved[] {
   const saved: RefreshSaved[] = [];
   for (const item of items) {
-    if (item.ado_id === undefined || normalizeScopeValue(String(item.ado_org_url ?? ""), true) !== normalizeScopeValue(config.orgUrl, true) || normalizeScopeValue(String(item.ado_project ?? "")) !== normalizeScopeValue(config.project)) continue;
+    if (item.ado_id === undefined || !sameScope(item, config, "refuse")) continue;
     let base;
     // Sparse coverage coordinates need shape only; no semantic value comparison or native write occurs here.
     try { base = readBase(item, localValues(item, false), false); } catch { throw new RefreshRefusal("invalid_input"); }
@@ -205,7 +205,7 @@ export async function observeRefreshPlan(pm: Pick<PmClient, "listAllComplete">, 
     const plan = compileRefreshPlan({ ...input, saved: currentSaved, observed: result.items.map((item) => ({ id: item.id, revision: item.rev })) });
     plan.skipped = [
       { reason: "unlinked", count: currentItems.filter((item) => item.ado_id === undefined).length },
-      { reason: "foreign_scope", count: currentItems.filter((item) => item.ado_id !== undefined && (normalizeScopeValue(String(item.ado_org_url ?? ""), true) !== normalizeScopeValue(config.orgUrl, true) || normalizeScopeValue(String(item.ado_project ?? "")) !== normalizeScopeValue(config.project))).length },
+      { reason: "foreign_scope", count: currentItems.filter((item) => item.ado_id !== undefined && !sameScope(item, config, "refuse")).length },
     ];
     if (Buffer.byteLength(JSON.stringify(plan)) > (maxOutputBytes ?? 65536)) throw new RefreshRefusal("output_budget");
     return plan;

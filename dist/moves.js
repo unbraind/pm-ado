@@ -1,4 +1,4 @@
-import { normalizeItemReference, normalizeScopeValue } from "./normalization.js";
+import { sameScope, normalizeItemReference, normalizeScopeValue } from "./normalization.js";
 import { AdoClient, buildUpdatePatch, relationTargetId, stripTrailingSlashes } from "./index.js";
 import { ContractRefusal, discoverProjectContract } from "./contracts.js";
 /** Hard bounds: one type contract, two batch reads and at most fifty validations. */
@@ -81,7 +81,7 @@ export async function simulateMove(config, request, options, normalization) {
         const identityScope = (item) => ({ org: normalizeScopeValue(String(item.ado_org_url ?? ""), true), project: normalizeScopeValue(String(item.ado_project ?? "")) });
         if (local.some((item) => {
             const current = identityScope(item);
-            return current.org !== config.orgUrl || current.project !== config.project || options.items.filter((entry) => {
+            return !sameScope(item, config, "refuse") || options.items.filter((entry) => {
                 if (entry.ado_id !== item.ado_id)
                     return false;
                 const candidate = identityScope(entry);

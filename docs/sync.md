@@ -132,11 +132,17 @@ items and the two stores are not a distributed transaction: earlier successful
 remote operations can remain if a later write or SDK mutation fails. The receipt
 includes the item plan; inspect both stores before retrying a partial failure.
 
-Every local sync update uses the SDK's `commitItemMutations` with an
-`updated_at` match checked under the item lock. A local edit after planning
-refuses persistence with `ADO_CONFLICT` (exit 4), keeping the newer item and
-history intact. Re-read both trackers before retrying; an earlier Azure write
-may already have succeeded. SDK persistence conflicts, including ownership or
+Every local sync update re-reads the item and its SDK history immediately
+before the write and compares the planned fields with the plan's base. A local
+edit after planning refuses persistence with `ADO_CONFLICT` (exit 4), keeping
+the newer item and history intact. The SDK has no compare-and-swap on update yet
+([pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576),
+[pm-cli#1620](https://github.com/unbraind/pm-cli/issues/1620)), so an ordinary
+writer can still land between that check and the write. Sync then finds the
+foreign history entry right after its own write and refuses with
+`ADO_CONFLICT`, but an overlapping field change by that writer may already be
+overwritten; inspect the item history before retrying. Re-read both trackers
+before retrying; an earlier Azure write may already have succeeded. SDK persistence conflicts, including ownership or
 lock refusals, also use this conflict receipt instead of a generic remote error.
 Sync's own link and relation writes advance its
 expected revision from their immutable transaction history. SDK transaction

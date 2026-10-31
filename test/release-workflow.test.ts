@@ -477,10 +477,31 @@ test("publication is proven possible before anything is mutated", () => {
 });
 
 test("changelog generation records breaking API changes before publish", () => {
-  const pkg = readFileSync(resolve(import.meta.dirname, "../package.json"), "utf-8");
-  const invocations = [...pkg.matchAll(/pm-changelog --[^"\n]+/g), ...workflow.matchAll(/npx pm-changelog --[^\n]+/g)];
-  assert.ok(invocations.length >= 7, "package scripts and the release workflow both generate the changelog");
-  for (const invocation of invocations) {
-    assert.match(invocation[0], /--breaking-changes/, invocation[0]);
+  const scripts = JSON.parse(readFileSync(resolve(import.meta.dirname, "../package.json"), "utf-8")).scripts as Record<string, string>;
+  const generators = ["changelog", "changelog:full", "changelog:check", "release:notes"];
+  for (const name of generators) {
+    assert.match(scripts[name], /^pm-changelog --/, name);
+    assert.match(scripts[name], /--breaking-changes/, name);
+  }
+});
+
+test("the release workflow generates the changelog only through the package scripts", () => {
+  // A second copy of the generator flags in the workflow drifted from the
+  // scripts once (#71 added --include-empty to the scripts only), and
+  // changelog:check then refused the changelog the workflow had just written.
+  assert.doesNotMatch(workflow, /^\s*[^#\s].*\bpm-changelog\b/m, "the workflow must not invoke pm-changelog directly");
+  const step = workflow.slice(workflow.indexOf("- name: Generate changelog and release notes"), workflow.indexOf("- name: Run release checks"));
+  assert.match(step, /^\s+npm run changelog:full$/m);
+  assert.match(step, /^\s+npm run changelog:check$/m);
+  assert.match(step, /^\s+npm run --silent release:notes > RELEASE_NOTES\.md$/m);
+});
+
+test("every changelog generator agrees on empty releases", () => {
+  // changelog:check renders empty releases. If changelog:full or release:notes
+  // did not, the release would write a changelog its own check refuses, or
+  // publish empty notes for a release whose changelog says "No changes.".
+  const scripts = JSON.parse(readFileSync(resolve(import.meta.dirname, "../package.json"), "utf-8")).scripts as Record<string, string>;
+  for (const name of ["changelog:full", "changelog:check", "release:notes"]) {
+    assert.match(scripts[name], /--include-empty/, name);
   }
 });

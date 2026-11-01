@@ -1,0 +1,12 @@
+id: pm-ado-04v5
+title: Prune or archive settled PATCH intents so sync recovery cost stops growing with every PATCH
+description: "CodeRabbit on #46 (thread PRRT_kwDOUMUq186yVn6l): each distinct PATCH writes a journal file under transactions/pm-ado-sync, and recoverEffects reads and parses every JSON file before filtering by scope or state, so recovery cost grows with every PATCH even after an intent is settled. Proposal: after advanceSyncBase persists an ado_rev greater than an intent's revision, archive or prune that intent; keep it while agreement is incomplete or publication failed."
+type: Task
+status: open
+priority: 2
+tags[3]: journal,performance,sync
+created_at: "2026-11-01T00:03:04.186Z"
+updated_at: "2026-11-01T00:03:04.186Z"
+author: claude-orchestrator
+acceptance_criteria: Settled intents (base advanced past their revision with full agreement) are archived or pruned; unsettled ones are kept; crash tests at every journal and publication boundary show that recovery never loses an intent it still needs; recoverEffects cost is bounded by unsettled intents.
+body: ""

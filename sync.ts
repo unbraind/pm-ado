@@ -423,8 +423,16 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
       const latest = new Map<string, boolean>(), agreed = new Map<string, string>();
       // Explicit import may adopt untouched birth fields or unchanged native agreements, never a later edit or ABA.
       const initial = new Set<string>(), current = localValues(item, normalization);
+      // Whole-/metadata entries compare the documents at index - 1 and index, and consecutive entries overlap, so
+      // each replayed target is computed once per item. The documents are only read here.
+      const replayed = new Map<number, ReturnType<typeof sdk.replayToItemDocument>>();
+      const replayedAt = (target: number) => {
+        let document = replayed.get(target);
+        if (document === undefined) { document = sdk.replayToItemDocument(sdk.replayHistoryToTarget(history, target)); replayed.set(target, document); }
+        return document;
+      };
       if (history[0]?.op === "create") {
-        const birth = sdk.replayToItemDocument(sdk.replayHistoryToTarget(history, 0)).metadata;
+        const birth = replayedAt(0).metadata;
         const born = localValues(birth, normalization);
         for (const key of Object.keys(ADO_FIELD_MAP)) if (equal(born[key], current[key])) initial.add(key);
         if (sdk.stableValueEquals(birth.parent, item.parent) && sdk.stableValueEquals(birth.dependencies, item.dependencies)) initial.add("relations");
@@ -437,8 +445,8 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
         if (revision !== undefined && revision !== null && Number.isSafeInteger(Number(revision[1]))) observed.set(item.id, Math.max(observed.get(item.id) ?? 0, Number(revision[1])));
         const patches = sdk.normalizeReplayPatchOps(entry.patch);
         if (patches.some((patch) => patch.path === "/metadata")) {
-          const before = index === 0 ? sdk.emptyImportedDocument() : sdk.replayToItemDocument(sdk.replayHistoryToTarget(history, index - 1));
-          const after = sdk.replayToItemDocument(sdk.replayHistoryToTarget(history, index));
+          const before = index === 0 ? sdk.emptyImportedDocument() : replayedAt(index - 1);
+          const after = replayedAt(index);
           for (const key of [...Object.keys(ADO_FIELD_MAP), "parent", "dependencies", "ado_sync_base", "ado_sync_intent"]) {
             if (!sdk.stableValueEquals(before.metadata[key], after.metadata[key])) patches.push(after.metadata[key] === undefined
               ? { op: "remove", path: `/metadata/${key}` } : { op: "add", path: `/metadata/${key}`, value: after.metadata[key] });

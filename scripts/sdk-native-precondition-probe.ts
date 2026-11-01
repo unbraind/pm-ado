@@ -5,6 +5,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const source = resolve(import.meta.dirname, "..");
+/** The native-precondition matrix: every write site per direction, each with a plain peer edit and an ABA edit. */
+const IMPORT_SITES = ["local-prepared", "update", "close-prepared", "close", "assignment", "agreement"];
+const EXPORT_SITES = ["local-prepared", "update", "agreement"];
+const EDITS = ["edit", "aba"];
+/** One top-level test plus one subtest per site and edit; a complete run must report exactly this many. */
+const EXPECTED_TESTS = (IMPORT_SITES.length + EXPORT_SITES.length) * EDITS.length + 1;
 const scratch = mkdtempSync(join(tmpdir(), "ado-native-precondition-probe-"));
 try {
   // A bounded source copy keeps both the reviewed checkout and its tracker untouched.
@@ -16,8 +22,8 @@ try {
 
 test("round-7 native history precondition acceptance", async (t) => {
   for (const mode of ["import", "export"] as const) {
-    const sites = mode === "import" ? ["local-prepared", "update", "close-prepared", "close", "assignment", "agreement"] : ["local-prepared", "update", "agreement"];
-    for (const site of sites) for (const edit of ["edit", "aba"] as const) await t.test(mode + ":" + site + ":" + edit, async (sub) => {
+    const sites = mode === "import" ? ${JSON.stringify(IMPORT_SITES)} : ${JSON.stringify(EXPORT_SITES)};
+    for (const site of sites) for (const edit of ${JSON.stringify(EDITS)} as const) await t.test(mode + ":" + site + ":" + edit, async (sub) => {
       const f = await fixture(sub, mode === "export" ? [] : [workItem()]);
       let item: runtimeSdk.ItemMetadata;
       if (mode === "import") {
@@ -72,6 +78,12 @@ test("round-7 native history precondition acceptance", async (t) => {
     const receipt = line.match(/ℹ (\{.*\}|(?:tests|pass|fail|cancelled|skipped|todo) \d+)$/u);
     if (receipt) process.stdout.write(receipt[0] + "\n");
   }
+  // A name pattern that matches nothing still exits 0 with one passing test, and a reduced matrix would also pass,
+  // so the run counts only when the summary reports exactly the full matrix, all passing, nothing skipped.
+  const count = (name: string) => Number(result.stdout.match(new RegExp(`ℹ ${name} (\\d+)$`, "mu"))?.[1] ?? Number.NaN);
+  const complete = count("tests") === EXPECTED_TESTS && count("pass") === EXPECTED_TESTS
+    && ["fail", "cancelled", "skipped", "todo"].every((name) => count(name) === 0);
   if (result.status !== 0) process.stderr.write("Native monotonic-precondition acceptance failed; see unbraind/pm-cli#1576.\n");
-  process.exitCode = result.status ?? 1;
+  else if (!complete) process.stderr.write(`Native monotonic-precondition acceptance was incomplete: expected ${EXPECTED_TESTS} passing tests and none failed, cancelled, skipped or todo.\n`);
+  process.exitCode = result.status !== 0 ? result.status ?? 1 : complete ? 0 : 1;
 } finally { rmSync(scratch, { recursive: true, force: true }); }

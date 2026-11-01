@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- The daily release generated its changelog with a drifted copy of the generator flags and its own check refused it ([pm-ado-r5ps](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-r5ps.toon))
 - Restore the prepared 2026.10.29 release notes ([pm-ado-release-notes-1029](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-release-notes-1029.toon))
 
 ## 2026.10.29 - 2026-10-29

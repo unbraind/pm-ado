@@ -2,15 +2,19 @@ id: pm-ado-r5ps
 title: The daily release generated its changelog with a drifted copy of the generator flags and its own check refused it
 description: "The 2026-10-31 release run 41190222982 failed at Run release checks: changelog:check (with --include-empty since #71) rejected the CHANGELOG.md that the workflow step had just generated without --include-empty. The workflow carried its own copy of the generator flags. Fix: the workflow calls npm run changelog:full, changelog:check and release:notes, so the flags exist only in package.json; release:notes also renders empty releases. Fleet-wide coupling is tracked in the companion item pm-cli-website-pnjc."
 type: Issue
-status: in_progress
+status: closed
 priority: 1
 tags[3]: changelog,ci,release
 created_at: "2026-10-31T14:35:58.231Z"
-updated_at: "2026-10-31T14:41:12.645Z"
-assignee: claude-orchestrator
+updated_at: "2026-11-01T10:42:04.376Z"
+closed_at: "2026-11-01T10:42:04.367Z"
+completed_at: "2026-11-01T10:42:04.367Z"
 claim_principal: claude-orchestrator
 author: claude-orchestrator
 acceptance_criteria: "Release workflow invokes no pm-changelog directly; tests fail when the workflow copy returns or a generator script loses --include-empty; a simulated 2026.10.31 bump passes changelog:full, changelog:check and release:notes."
+resolution: Implemented and merged in #74 (e214b65).
+expected_result: The change described by this item is on main.
+actual_result: "Merged in #74 as e214b65; checks successful at head 74a7ed8: CodeQL, codeql, release gate (bun), release gate (npm), test (22), test (26)."
 comments[2]{created_at,author,text}:
   "2026-10-31T14:36:09.606Z",claude-orchestrator,"Revert proofs: restoring origin/main release.yml fails 'the release workflow generates the changelog only through the package scripts'; restoring origin/main package.json (release:notes without --include-empty) fails 'every changelog generator agrees on empty releases'. End-to-end: npm version 2026.10.31, then changelog:full, changelog:check and release:notes all exit 0 and render '## 2026.10.31 - 2026-10-31 / No changes.'"
   "2026-10-31T14:41:12.644Z","harness:claude-code","Gates: release-workflow tests 11/11, typecheck, docstring (97 declarations), verify:release-changelog-date ok. Full release:check: one local failure in packed-install-shapes (npm install of the packed pm-cli tgz, empty stderr) caused by this host's ~/.npmrc; the same suite passes 7/7 with NPM_CONFIG_USERCONFIG=/dev/null, as CI runs it."
@@ -20,4 +24,5 @@ files[3]{path,scope}:
   test/release-workflow.test.ts,project
 tests[1]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
   node --test test/release-workflow.test.ts,project,claude-orchestrator,"2026-10-31T14:36:08.705Z",local_mutation,fix/release-changelog-via-package-scripts
+close_reason: "Delivered by #74 \"Generate the release changelog only through the package scripts\" (merged as e214b65). Checks successful at the PR head 74a7ed8: CodeQL, codeql, release gate (bun), release gate (npm), test (22), test (26)."
 body: ""

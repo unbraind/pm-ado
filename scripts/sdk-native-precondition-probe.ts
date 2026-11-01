@@ -71,8 +71,10 @@ test("round-7 native history precondition acceptance", async (t) => {
   const childEnv: NodeJS.ProcessEnv = { ...process.env, GIT_CEILING_DIRECTORIES: tmpdir(), NPM_CONFIG_USERCONFIG: "/dev/null" };
   for (const key of Object.keys(childEnv)) if (/(?:TOKEN|SECRET|PASSWORD|API_KEY|ACCESS_KEY|CREDENTIAL)/iu.test(key)) delete childEnv[key];
   for (const key of ["NPM_MEDIA_SERVER", "ADO_ORG_URL", "ADO_PROJECT", "PM_PATH", "PM_ROOT", "PM_GLOBAL_PATH"]) delete childEnv[key];
-  const result = spawnSync(process.execPath, ["--test", "--test-concurrency=2", "--test-name-pattern=round-7 native history precondition acceptance", "test/sync.test.ts"],
+  const result = spawnSync(process.execPath, ["--test", "--test-reporter=spec", "--test-concurrency=2", "--test-name-pattern=round-7 native history precondition acceptance", "test/sync.test.ts"],
     { cwd: scratch, env: childEnv, encoding: "utf8", maxBuffer: 4 * 1024 * 1024 });
+  // The summary is parsed from the spec reporter, so it is requested explicitly: with piped stdout, Node 22 defaults to
+  // TAP ("# pass N"), which the parser below never matched, so every Node 22 run reported an incomplete matrix.
   // Publish only bounded fixture receipts/counts, never local paths from assertion stacks.
   for (const line of result.stdout.split("\n")) {
     const receipt = line.match(/ℹ (\{.*\}|(?:tests|pass|fail|cancelled|skipped|todo) \d+)$/u);

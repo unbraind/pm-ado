@@ -6,8 +6,10 @@ status: open
 priority: 2
 tags[2]: "gh:unbraind/pm-ado#60","github_author:unbraind"
 created_at: "2026-10-27T21:41:10Z"
-updated_at: "2026-10-29T07:10:20.370Z"
+updated_at: "2026-10-29T18:25:38.701Z"
 author: pm-github
+comments[1]{created_at,author,text}:
+  "2026-10-29T18:25:38.701Z",codex-agent,"PR 46 retains the owner-approved forward-only implementation, including explicit assignment clears, native close/reopen semantics and the unchanged 512-sequence preservation model. Added source/built native lifecycle property: 5/5 pass directly and through pinned pm snapshot execution. Restoring the historical 5a853daa fence class fails both source cases by reintroducing synthetic verification events; restoring current source/built passes 5/5. Full current-head npm/Bun and Node 22/26 CI will verify the historical terminal and seeded regression family before GitHub issue closure."
 github_close_reason: ""
 github_closed_at: ""
 github_created_at: "2026-10-27T21:41:10Z"

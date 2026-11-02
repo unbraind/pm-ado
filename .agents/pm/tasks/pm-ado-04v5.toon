@@ -1,0 +1,14 @@
+id: pm-ado-04v5
+title: Prune or archive settled PATCH intents so sync recovery cost stops growing with every PATCH
+description: "CodeRabbit on #46 (thread PRRT_kwDOUMUq186yVn6l): each distinct PATCH retains a journal file under transactions/pm-ado-sync, so recovery cost grows after settlement. Archive or prune only when every scalar and relation written by that intent has a durable per-key agreement witness at or beyond its accepted revision. Full-item ado_rev is not required: another key may remain divergent. Preserve proof while any written key still needs it or publication failed. Pruning remains out of scope for PR 46 and requires its own crash-boundary tests."
+type: Task
+status: open
+priority: 2
+tags[3]: journal,performance,sync
+created_at: "2026-11-01T00:03:04.186Z"
+updated_at: "2026-11-02T00:27:24.212Z"
+author: claude-orchestrator
+acceptance_criteria: Archive or prune only after durable per-key agreement witnesses settle every scalar and relation written by the intent; unrelated divergent keys and global ado_rev do not prevent settlement. Keep all proof still needed by any key. Crash tests at every journal and publication boundary preserve recovery evidence. Recovery cost is bounded by unsettled intents.
+comments[1]{created_at,author,text}:
+  "2026-11-02T00:27:12.542Z",codex-sol,"PR46 review clarification: updated the active description against pinned SDK 2026.10.27 and current code. Earlier comments/history remain historical evidence and do not describe the current safety policy."
+body: ""

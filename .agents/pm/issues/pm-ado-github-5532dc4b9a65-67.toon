@@ -6,8 +6,10 @@ status: open
 priority: 2
 tags[2]: "gh:unbraind/pm-ado#67","github_author:unbraind"
 created_at: "2026-10-29T02:49:50Z"
-updated_at: "2026-10-29T07:10:20.358Z"
+updated_at: "2026-10-29T18:25:29.471Z"
 author: pm-github
+comments[1]{created_at,author,text}:
+  "2026-10-29T18:25:29.471Z",codex-agent,"PR 46 current branch already replaces the partial get projection with listAllComplete metadata in the native-claim assertion. Reconfirmed npm run build:test passes on the merged dependency pin. Disposable one-expression revert reproduces TS2345; restoration compiles. Real source and committed-build ownership refusal regressions pass. Full npm/Bun CI receipts remain pending; canonical implementation owner is pm-ado-sdk-adoption."
 github_close_reason: ""
 github_closed_at: ""
 github_created_at: "2026-10-29T02:49:50Z"

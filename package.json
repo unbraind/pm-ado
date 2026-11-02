@@ -23,12 +23,13 @@
     "docs/field-contracts.md",
     "docs/conflict-resolution.md",
     "docs/move-simulator.md",
+    "docs/sync-recovery.md",
     "docs/sparse-refresh.md"
   ],
   "scripts": {
     "build": "tsc",
     "build:test": "tsc -p tsconfig.test.json",
-    "test": "npm run build && npm run build:test && node --test test/*.test.ts",
+    "test": "npm run build && npm run build:test && node --test --test-concurrency=2 test/*.test.ts",
     "prepack": "npm run build",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck",
@@ -38,7 +39,8 @@
     "changelog": "pm-changelog --pm-root .agents/pm --mode prepend --output CHANGELOG.md --release-version-from-package --date-from-version --since-previous-tag --until-release-tag --item-url-base https://github.com/unbraind/pm-ado/blob/main/.agents/pm --respect-item-release --breaking-changes --pm-bin ./node_modules/.bin/pm --pm-arg=--output-budget --pm-arg=unbounded --pm-arg=--output-limit --pm-arg=unbounded",
     "changelog:full": "pm-changelog --pm-root .agents/pm --mode replace --output CHANGELOG.md --all-release-tags --include-empty --release-version-from-package --date-from-version --item-url-base https://github.com/unbraind/pm-ado/blob/main/.agents/pm --respect-item-release --breaking-changes --pm-bin ./node_modules/.bin/pm --pm-arg=--output-budget --pm-arg=unbounded --pm-arg=--output-limit --pm-arg=unbounded",
     "changelog:check": "pm-changelog --pm-root .agents/pm --mode replace --output CHANGELOG.md --all-release-tags --include-empty --release-version-from-package --date-from-version --item-url-base https://github.com/unbraind/pm-ado/blob/main/.agents/pm --respect-item-release --breaking-changes --check --pm-bin ./node_modules/.bin/pm --pm-arg=--output-budget --pm-arg=unbounded --pm-arg=--output-limit --pm-arg=unbounded",
-    "release:check": "npm run typecheck && npm run build && npm run docstring && npm run coverage && npm run audit:prod && npm run pack:dry-run && npm run changelog:check && npm run verify:release-publish-attestation && npm run verify:release-changelog-date",
+    "test:native-precondition": "node scripts/sdk-native-precondition-probe.ts",
+    "release:check": "npm run typecheck && npm run build && npm run docstring && npm run coverage && npm run audit:prod && npm run pack:dry-run && npm run changelog:check && npm run verify:release-publish-attestation && npm run verify:release-changelog-date && npm run test:native-precondition",
     "prepublishOnly": "npm run release:check",
     "release:notes": "pm-changelog --pm-root .agents/pm --stdout --since-previous-tag --until-release-tag --release-version-from-package --date-from-version --item-url-base https://github.com/unbraind/pm-ado/blob/main/.agents/pm --respect-item-release --include-empty --breaking-changes --pm-bin ./node_modules/.bin/pm --github-step-summary --pm-arg=--output-budget --pm-arg=unbounded --pm-arg=--output-limit --pm-arg=unbounded",
     "prepare": "node scripts/prepare-merge-driver.ts",
@@ -114,6 +116,7 @@
       "docs/field-contracts.md",
       "docs/conflict-resolution.md",
       "docs/move-simulator.md",
+      "docs/sync-recovery.md",
       "docs/sparse-refresh.md"
     ],
     "examples": [

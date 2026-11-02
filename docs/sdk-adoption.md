@@ -3,6 +3,9 @@
 The package uses SDK settings and type-folder registries to locate authoritative
 items, and SDK lifecycle mutations for native writes. Automatic pm-side
 compensation has been removed from native persistence and relation import.
+The pinned SDK (2026.10.28) supplies these development and acceptance primitives.
+Managed extension runtime links require a host SDK of at least 2026.10.27 for
+semantic preview; this minimum is separate from the development pin.
 
 Tracker items:
 [pm-ado-sdk-adoption](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-sdk-adoption.toon),

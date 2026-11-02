@@ -3,11 +3,11 @@ import { listenOnLoopback } from "../test/helpers/http-fixture.ts";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, cp, mkdtemp, mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { chmod, cp, mkdtemp, mkdir, readdir, readFile, realpath, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { PmClient, readHistoryEntries } from "@unbrained/pm-cli/sdk";
 import { createExtensionTestHarness } from "@unbrained/pm-cli/sdk/testing";
@@ -17,6 +17,22 @@ import { localValues } from "../sync.ts";
 
 const run = promisify(execFile);
 const repo = resolve(import.meta.dirname, "..");
+
+/** Reject escaping links across the entire source tree before preparing any writable copy. */
+async function validateTracker(root: string): Promise<void> {
+  const source = await realpath(root);
+  /** Inspect real directories; inward directory links are also inspected at their canonical location. */
+  async function visit(dir: string): Promise<void> {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const file = join(dir, entry.name);
+      if (entry.isSymbolicLink()) {
+        const target = relative(source, await realpath(file));
+        assert.ok(!isAbsolute(target) && target !== ".." && !target.startsWith(`..${sep}`), "Tracker symlink escapes source snapshot");
+      } else if (entry.isDirectory()) await visit(file);
+    }
+  }
+  await visit(source);
+}
 
 /** Fingerprint authoritative inputs while allowing disposable derived caches. */
 async function fingerprint(root: string, readonly = false): Promise<string> {
@@ -109,6 +125,7 @@ async function worker(build: string, workspace: string, org: string): Promise<vo
 /** Prepare identical inputs once, then compare origin/main and the candidate byte-for-byte. */
 async function compare(baseline: string, trackers: string[]): Promise<void> {
   assert.ok(trackers.length >= 2, "provide at least two public fleet tracker snapshots");
+  for (const tracker of trackers) await validateTracker(tracker);
   const scratch = await mkdtemp(join(tmpdir(), "ado-sdk-differential-"));
   const remote = new Map<number, AdoWorkItem>();
   const server = createServer(async (req, res) => {
@@ -131,7 +148,9 @@ async function compare(baseline: string, trackers: string[]): Promise<void> {
       const seed = join(scratch, `seed-${index}`);
       const pmRoot = join(seed, ".agents/pm");
       await mkdir(dirname(pmRoot), { recursive: true });
-      await cp(resolve(tracker), pmRoot, { recursive: true });
+      // Materialize validated inward links too: absolute links must never keep
+      // pointing at the source when the disposable tracker is mutated.
+      await cp(resolve(tracker), pmRoot, { recursive: true, dereference: true });
       const installed = join(pmRoot, "extensions/pm-ado");
       await mkdir(installed, { recursive: true });
       await cp(join(repo, "dist"), join(installed, "dist"), { recursive: true });

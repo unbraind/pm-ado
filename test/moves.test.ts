@@ -243,7 +243,39 @@ test("round-7 move selection bounds and native lookup failures refuse before Azu
   const f = await host(t), base = { project: "Example", areaPath: "Example\\New" };
   assert.equal((await f.command({ ...base, items: Array.from({ length: 51 }, (_, index) => "fixture-" + index).join(",") })).code, "selection");
   assert.equal((await f.command({ ...base, items: "fixture-missing" })).code, "selection");
-  assert.equal((await f.command({ ...base, items: "," })).code, "remote_failure");
+  assert.equal((await f.command({ ...base, items: "," })).code, "selection");
+  assert.equal(f.calls.length, 0);
+});
+
+test("blank move selection tokens refuse before any SDK lookup", async (t) => {
+  const f = await host(t);
+  const sdk = (await import("@unbrained/pm-cli/sdk")).createExtensionCommandSdk(f.pmRoot, f.pm);
+  const get = t.mock.method(f.pm, "get", () => { throw new Error("unexpected SDK lookup"); });
+  const list = t.mock.method(f.pm, "listAllComplete", () => { throw new Error("unexpected SDK snapshot"); });
+  const previous = process.env, exit = process.exitCode;
+  process.env = { ...f.env };
+  try {
+    for (const items of [",", "a,b,", "a,,b", " ", "a, ,b", ""]) {
+      const { runMoveCommand } = await import("../moves.ts");
+      const result = await runMoveCommand({ command: "ado move-preview", args: [], global: {}, pm_root: f.pmRoot, sdk,
+        options: { project: "Example", items, areaPath: "Example\\New" } });
+      assert.equal("code" in result && result.code, "selection", JSON.stringify(result));
+      assert.equal("exit_code" in result && result.exit_code, 2);
+    }
+    assert.equal(get.mock.callCount(), 0);
+    assert.equal(list.mock.callCount(), 0);
+    assert.equal(f.calls.length, 0);
+  } finally { process.env = previous; process.exitCode = exit; }
+});
+
+test("SDK move lookup failures return sanitized remote refusals", async (t) => {
+  const f = await host(t);
+  const lookup = t.mock.method(PmClient.prototype, "get", async () => { throw new Error("lookup-secret"); });
+  const result = await f.command({ project: "Example", items: f.options.ids[0], areaPath: "Example\\New" });
+  assert.equal(result.code, "remote_failure");
+  assert.equal(result.exit_code, 3);
+  assert.doesNotMatch(JSON.stringify(result), /lookup-secret/u);
+  assert.equal(lookup.mock.callCount(), 1);
   assert.equal(f.calls.length, 0);
 });
 

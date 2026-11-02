@@ -1,5 +1,6 @@
 import { applyFixtureRelation } from "./helpers/relation-fixture.ts";
 import { listenOnLoopback } from "./helpers/http-fixture.ts";
+import { isolatedPackage } from "./helpers/package-runtime.ts";
 /** Real host commands against a local Azure REST subset and disposable SDK trackers. */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -547,6 +548,60 @@ test("revision conflict receipts preserve custom status aliases and anchored SDK
       if (conflict !== "creation-relations") assert.deepEqual(snapshot(f.pmRoot), before);
     });
   }
+});
+
+test("recovered creation reconciliation reports exactly the true 412 field differences", async (t) => {
+  const unlinked = isolatedPackage(t, join(repo, "dist"))("./sync.js") as typeof import("../sync.ts");
+  for (const [name, implementation] of [["source", runSyncCommand], ["built", runBuiltSyncCommand], ["unlinked", unlinked.runSyncCommand]] as const) {
+    await t.test(name, async (sub) => {
+      const f = await fixture(sub, []);
+      const { item } = await f.pm.create({ title: "Accepted creation", type: "Task" });
+      const values = localValues(item);
+      await outbox(f).create(item.id, "Task", azureFields(values, Object.keys(values), { open: "New" }), values);
+      await f.pm.update(item.id, { title: "Local reconciliation" });
+      f.race();
+      const result = await f.observed("export", () => {}, {}, [import.meta.url], implementation);
+      assert.equal(result.code, "ADO_CONFLICT", JSON.stringify(result));
+      assert.equal(result.exit_code, 4);
+      assert.deepEqual(result.conflicts, [{ pm_id: item.id, ado_id: 1, stored_rev: 1, remote_rev: 2,
+        fields: { title: { local: "Local reconciliation", remote: "Concurrent writer" } } }]);
+      assert.equal((await f.pm.get(item.id)).item.ado_id, 1);
+      assert.equal(f.requests.filter((entry) => entry.method === "PATCH").length, 1);
+      assert.equal(f.requests.filter((entry) => entry.path.includes("/workitems/$")).length, 1);
+    });
+  }
+});
+
+test("recovered PATCH permits unrelated export only at its accepted current revision", async (t) => {
+  for (const peer of [true, false]) await t.test(peer ? "peer edit conflicts" : "no peer edit succeeds", async (sub) => {
+    const { f, item } = await importedFixture(sub);
+    const remote = structuredClone(f.items.get(1)!);
+    await f.pm.update(item.id, { title: "Owned title effect" });
+    const local = await row(f.pm);
+    await outbox(f).patch(item.id, remote, { "System.Title": local.title }, [], localValues(local));
+    await f.pm.update(item.id, { description: "Unrelated local description" });
+    if (peer) {
+      f.items.get(1)!.fields["System.Description"] = "Later peer description";
+      f.items.get(1)!.rev++;
+    }
+    const before = snapshot(f.pmRoot);
+    const patches = f.requests.filter((entry) => entry.method === "PATCH").length;
+    const result = await f.command("export");
+    if (peer) {
+      assert.equal(result.code, "ADO_CONFLICT", JSON.stringify(result));
+      assert.equal(result.exit_code, 4);
+      assert.equal(result.conflicts[0]!.stored_rev, 1);
+      assert.equal(result.conflicts[0]!.remote_rev, 3);
+      assert.equal(f.items.get(1)!.fields["System.Description"], "Later peer description");
+      assert.equal(f.requests.filter((entry) => entry.method === "PATCH").length, patches);
+      assert.deepEqual(snapshot(f.pmRoot), before);
+    } else {
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.equal(f.items.get(1)!.fields["System.Description"], "Unrelated local description");
+      assert.equal(f.requests.filter((entry) => entry.method === "PATCH").length, patches + 1);
+      assert.equal((await row(f.pm)).ado_rev, 3);
+    }
+  });
 });
 
 test("sync reconciles remote-only and local-only fields; both-changed fields refuse the whole plan", async (t) => {
@@ -4080,9 +4135,9 @@ test("review initial import preserves legacy items with no native birth proof", 
 });
 
 /** Interrupted creation recovery must use the observed revision in both preview and export. */
-test("review-46 recovered creation exports with the observed revision before acknowledging a base", async (t) => {
+test("review-46 recovered creation exports only at its accepted revision before acknowledging a base", async (t) => {
   for (const [name, implementation] of [["source", runSyncCommand], ["built", runBuiltSyncCommand]] as const) {
-    for (const checkpoint of ["missing", "stale"]) await t.test(`${name}:${checkpoint}`, async (sub) => {
+    for (const checkpoint of ["missing", "stale"]) for (const peer of [false, true]) await t.test(`${name}:${checkpoint}:peer=${peer}`, async (sub) => {
       const f = await fixture(sub, []);
       const { item } = await f.pm.create({ type: "Task", title: "Original creation" });
       const values = localValues(item);
@@ -4090,20 +4145,30 @@ test("review-46 recovered creation exports with the observed revision before ack
       await f.setFields(item.id, { ado_id: created.remote.id, ado_project: "Project", ado_org_url: f.org,
         ...(checkpoint === "stale" ? { ado_rev: 1 } : {}) });
       await f.pm.update(item.id, { title: "Corrected creation context" });
-      f.items.get(created.remote.id)!.rev++;
+      if (peer) f.items.get(created.remote.id)!.rev++;
       f.env.GIT_CEILING_DIRECTORIES = tmpdir(); f.env.PATH = f.pmRoot;
       const before = snapshot(f.pmRoot);
       const preview = await f.observed("export", () => {}, { dryRun: true }, undefined, implementation);
-      assert.equal(preview.ok, true, JSON.stringify(preview));
       assert.deepEqual(snapshot(f.pmRoot), before);
       const result = await f.observed("export", () => {}, {}, undefined, implementation);
+      if (peer) {
+        for (const refusal of [preview, result]) {
+          assert.equal(refusal.code, checkpoint === "missing" ? "ADO_USAGE" : "ADO_CONFLICT", JSON.stringify(refusal));
+          assert.equal(refusal.exit_code, checkpoint === "missing" ? 2 : 4);
+        }
+        assert.deepEqual(snapshot(f.pmRoot), before);
+        assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 0);
+        assert.equal(f.items.get(created.remote.id)!.fields["System.Title"], "Original creation");
+        return;
+      }
+      assert.equal(preview.ok, true, JSON.stringify(preview));
       assert.equal(result.ok, true, JSON.stringify(result));
       const patches = f.requests.filter((request) => request.method === "PATCH");
       assert.equal(patches.length, 1);
-      assert.deepEqual((patches[0]!.body as JsonPatchOperation[])[0], { op: "test", path: "/rev", value: 2 });
+      assert.deepEqual((patches[0]!.body as JsonPatchOperation[])[0], { op: "test", path: "/rev", value: 1 });
       assert.equal(f.items.size, 1);
       assert.equal(f.items.get(created.remote.id)!.fields["System.Title"], "Corrected creation context");
-      assert.equal((await f.pm.get(item.id)).item.ado_rev, 3);
+      assert.equal((await f.pm.get(item.id)).item.ado_rev, 2);
     });
   }
 });

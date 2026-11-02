@@ -262,7 +262,10 @@ function revisionConflict(entry, error, config, identities, states, normalizatio
     const current = error.current;
     const remote = current === undefined ? {} : remoteValues(current, states, normalization);
     remote.relations = current === undefined ? [] : relationValues(current.relations ?? [], config, identities);
-    const local = { ...localValues(entry.local, normalization), relations: entry.values.relations };
+    // Creation reconciles scalars before its graph is planned. Diagnose only
+    // coordinates that have been inspected, rather than an undefined graph.
+    const local = { ...localValues(entry.local, normalization),
+        ...(entry.values.relations === undefined ? {} : { relations: entry.values.relations }) };
     return { pm_id: entry.local.id, ado_id: entry.remote.id, stored_rev: error.assertedRev, remote_rev: current?.rev ?? null,
         fields: Object.fromEntries(Object.keys(local).filter((key) => !equal(local[key], remote[key]))
             .map((key) => [key, { local: local[key], remote: remote[key] ?? null }])) };
@@ -531,12 +534,14 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
             identities.set(remote, owner.item);
             if (owner.creation.base !== null)
                 effects.set(owner.item, [{ original: owner.creation.base,
-                        accepted: { ...remoteValues(owner.creation.accepted, states, normalization), relations: [] }, keys: Object.keys(ADO_FIELD_MAP), revision: 0 }]);
+                        accepted: { ...remoteValues(owner.creation.accepted, states, normalization), relations: [] }, keys: Object.keys(ADO_FIELD_MAP), revision: 0,
+                        acceptedRevision: owner.creation.accepted.rev }]);
         }
         for (const [item, recoveries] of await outbox.recoverEffects([...remotes.values()], items)) {
             effects.set(item, [...(effects.get(item) ?? []), ...recoveries.map((recovery) => ({ original: recovery.original,
                     accepted: { ...remoteValues(recovery.accepted, states, normalization), relations: relationValues(recovery.accepted.relations ?? [], config, identities) },
-                    keys: [...Object.keys(ADO_FIELD_MAP).filter((key) => Object.hasOwn(recovery.fields, ADO_FIELD_MAP[key])), ...(recovery.relations.length ? ["relations"] : [])], relations: recovery.relations.length ? true : undefined, revision: recovery.revision }))]);
+                    keys: [...Object.keys(ADO_FIELD_MAP).filter((key) => Object.hasOwn(recovery.fields, ADO_FIELD_MAP[key])), ...(recovery.relations.length ? ["relations"] : [])], relations: recovery.relations.length ? true : undefined, revision: recovery.revision,
+                    acceptedRevision: recovery.accepted.rev }))]);
         }
         const pairs = mode === "export" ? selected.map((local) => ({ local, remote: remotes.get(Number(local.ado_id)) }))
             : [...remotes.values()].map((remote) => ({ remote, local: items.find((item) => item.id === identities.get(remote.id)) }));
@@ -648,7 +653,9 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
             entry.operations = plan.export_fields.includes("relations") ? relationPlan.operations : [];
             plan.action = plan.import_fields.length || plan.export_fields.length ? "reconcile" : "none";
             if (plan.export_fields.length) {
-                const asserted = mode === "sync" || effects.has(local.id) ? remote.rev : local.ado_rev;
+                // An owned PATCH can advance the export fence only to the revision it
+                // actually accepted; a later peer revision still requires reconciliation.
+                const asserted = mode === "sync" || effect?.some((candidate) => candidate.acceptedRevision === remote.rev) ? remote.rev : local.ado_rev;
                 if (!Number.isSafeInteger(asserted) || Number(asserted) < 1)
                     throw new CommandError(`Missing valid ado_rev for ${local.id}; import first`);
                 entry.revision = Number(asserted);
@@ -696,6 +703,7 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
                         // Creation has no prior revision; the server allocates identity and rev 1.
                         const created = await outbox.create(local.id, option(ctx.options, "type") ?? process.env.ADO_WORK_ITEM_TYPE ?? "Task", fields, localValues(local, normalization));
                         remote = created.remote;
+                        entry.remote = remote;
                         localRemote.set(local.id, { id: remote.id, revision: remote.rev });
                         // Creation is not idempotent: retain its identity before any later work can fail.
                         plan.ado_id = remote.id;

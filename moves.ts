@@ -231,13 +231,13 @@ export async function runMoveCommand(ctx: CommandHandlerContext) {
     /** Accept the host's normalized camelCase and direct kebab-case SDK options. */
     const option = (name: string): string | undefined => {
       const value = ctx.options[name] ?? ctx.options[name.replace(/-([a-z])/gu, (_match, letter: string) => letter.toUpperCase())];
-      if (value !== undefined && (typeof value !== "string" || !value.trim())) throw new MoveRefusal("configuration");
+      if (value !== undefined && (typeof value !== "string" || name !== "items" && !value.trim())) throw new MoveRefusal("configuration");
       return value;
     };
     const project = option("project"), items = option("items");
-    if (!project || !items || !ctx.sdk?.client || !process.env.ADO_ORG_URL?.trim() || !process.env.ADO_TOKEN?.trim()) throw new MoveRefusal("configuration");
+    if (!project || items === undefined || !ctx.sdk?.client || !process.env.ADO_ORG_URL?.trim() || !process.env.ADO_TOKEN?.trim()) throw new MoveRefusal("configuration");
     const references = items.split(","), client = ctx.sdk.client;
-    if (references.length > MOVE_LIMITS.items) throw new MoveRefusal("selection");
+    if (references.length > MOVE_LIMITS.items || references.some((reference) => !reference.trim())) throw new MoveRefusal("selection");
     const snapshot = (await client.listAllComplete()).items;
     const canonical = new Map(snapshot.map((item) => [item.id, item.id]));
     for (const reference of references) {

@@ -68,8 +68,9 @@ the injected `ctx.sdk.client`. They load those lazily through the SDK link maint
 by `pm install`, using a canonical module file and standard Node resolution.
 A missing link produces a typed `configuration` refusal with an installation
 remedy. Semantic apply also requires the SDK's regular-file preview contract.
-The pinned SDK (2026.10.27) excludes managed extension runtime dependencies
+The pinned SDK (2026.10.28) excludes managed extension runtime dependencies
 from preview, so project SDK links remain intact and reviewed apply works.
+This preview support requires SDK 2026.10.27 or newer on the host.
 Older hosts, including the packed 2026.10.25 acceptance host, still refuse those
 links before preparing an intent; use a global pm-ado installation to keep its
 runtime outside the project tracker on those hosts. Links and special entries

@@ -71,6 +71,9 @@ async function worker(build: string, workspace: string, org: string): Promise<vo
   assert.equal(await fingerprint(pmRoot), before, "read-only commands changed authoritative files");
   const applyRoot = join(applyWorkspace, ".agents/pm");
   process.chdir(applyWorkspace);
+  // Diverge only the writable-copy phase; export previews above still exercise an agreed pair.
+  const diverged = await fetch(`${org}/__fixture_diverge`, { method: "POST" });
+  assert.equal(diverged.status, 200);
   const priorHistory = await readHistoryEntries(join(applyRoot, "history", `${linked.id}.jsonl`), linked.id);
   const applied = await harness.runCommand({ command: "ado import", pmRoot: applyRoot, options: { limit: 12 } });
   assert.equal((applied.result as { ok: boolean }).ok, true, JSON.stringify(applied.result));
@@ -113,7 +116,10 @@ async function compare(baseline: string, trackers: string[]): Promise<void> {
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) as { ids?: number[] } : {};
     res.setHeader("Content-Type", "application/json");
-    if (req.url!.includes("/wiql?")) res.end(JSON.stringify({ workItems: [...remote.keys()].map((id) => ({ id })) }));
+    if (req.url!.endsWith("/__fixture_diverge")) {
+      remote.get(1)!.fields["System.Title"] = "Differential remote title"; remote.get(1)!.rev = 2; res.end("{}");
+    }
+    else if (req.url!.includes("/wiql?")) res.end(JSON.stringify({ workItems: [...remote.keys()].map((id) => ({ id })) }));
     else if (req.url!.includes("/workitemsbatch?")) res.end(JSON.stringify({ value: body.ids!.map((id) => remote.get(id)) }));
     else res.end(JSON.stringify(remote.get(Number(req.url!.split("?")[0].split("/").at(-1)))));
   });
@@ -135,9 +141,12 @@ async function compare(baseline: string, trackers: string[]): Promise<void> {
       assert.ok(items.length > 0);
       const item = items.find((item) => item.status === "open" && item.assignee === undefined)!;
       assert.ok(item, "public corpus needs an open item");
-      await pm.update(item.id, { force: true, field: ["ado_id=1", "ado_rev=1", "ado_project=PublicFixture", `ado_org_url=${org}`] });
       const fields = localValues(item);
+      // A recorded agreement authorizes the deliberate one-sided remote change in both versions.
+      await pm.update(item.id, { force: true, field: ["ado_id=1", "ado_rev=1", "ado_project=PublicFixture", `ado_org_url=${org}`,
+        `ado_sync_base=${JSON.stringify({ ...fields, relations: [] })}`] });
       remote.clear();
+      // The read-only phase starts agreed; the worker then diverges the writable copy.
       remote.set(1, { id: 1, rev: 1, relations: [], fields: {
         "System.Title": fields.title, "System.Description": fields.description, "System.State": "New",
         "System.WorkItemType": "Task", "Microsoft.VSTS.Common.Priority": fields.priority,
@@ -146,6 +155,7 @@ async function compare(baseline: string, trackers: string[]): Promise<void> {
       } });
       const results: string[] = [];
       for (const [label, build] of [["before", baseline], ["after", repo]]) {
+        remote.get(1)!.fields["System.Title"] = fields.title; remote.get(1)!.rev = 1;
         const workspace = join(scratch, `${index}-${label}`);
         await cp(seed, workspace, { recursive: true });
         const { stdout } = await run(process.execPath, [resolve(import.meta.filename), "--worker", resolve(build), workspace, org],
@@ -154,7 +164,7 @@ async function compare(baseline: string, trackers: string[]): Promise<void> {
       }
       const before = JSON.parse(results[0]) as Record<string, unknown>;
       const after = JSON.parse(results[1]) as Record<string, unknown>;
-      assert.equal(before.history_message, "Azure DevOps revision 1");
+      assert.equal(before.history_message, "Azure DevOps revision 2");
       assert.match(String(after.history_message), /^bulk-item-transaction ado-sync-\S+ apply; Azure read-back agreement$/u);
       assert.equal(before.history_new_events, 1);
       assert.equal(after.history_new_events, 3);
@@ -169,6 +179,13 @@ async function compare(baseline: string, trackers: string[]): Promise<void> {
       assert.match(local.head!.hash, /^[a-f0-9]{64}$/u);
       delete local.head; // Additive native history coordinate; semantic decisions remain exact.
       assert.deepEqual(after, before, `public corpus ${index + 1} differs`);
+      // The deliberate remote title must actually reconcile: the applied import plans it and the
+      // net history patch carries the remote value, in both the baseline and the candidate.
+      const applied = (after.outputs as Record<string, unknown>[])[4] as { plans?: { import_fields?: string[] }[] };
+      assert.ok(applied.plans?.some((plan) => plan.import_fields?.includes("title")), "the deliberate remote title must be imported");
+      const summary = (after.outputs as Record<string, unknown>[]).at(-1) as { patch?: { path: string; value?: unknown }[] };
+      assert.ok(summary.patch?.some((entry) => entry.path === "/metadata/title" && entry.value === "Differential remote title"),
+        "the net history patch must carry the deliberate remote title");
       total += items.length;
       console.log(`Public corpus ${index + 1}: ${items.length} items; import/export/sync dry-run and resolution plan identical after removing documented canonical/history coordinates; authoritative files unchanged; writable-copy import receipts/values/net history patches identical; candidate records three forward native events and no verification/compensation events.`);
     }

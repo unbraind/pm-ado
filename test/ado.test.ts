@@ -1124,3 +1124,24 @@ test("review-46 opaque relation adapters work without an SDK module and retain p
     } finally { process.env = previous; }
   });
 });
+
+test("fixture relation operations refuse invalid patches and leave them to the caller", () => {
+  const relations = [edge("System.LinkTypes.Related", 2), edge("System.LinkTypes.Related", 3)];
+  const unchanged = () => assert.deepEqual(relations, [edge("System.LinkTypes.Related", 2), edge("System.LinkTypes.Related", 3)]);
+  // A non-add operation on the append path must not grow the relation list.
+  assert.equal(applyFixtureRelation(relations, { op: "replace", path: "/relations/-", value: edge("System.LinkTypes.Related", 4) }), false);
+  unchanged();
+  assert.equal(applyFixtureRelation(relations, { op: "test", path: "/relations/-", value: edge("System.LinkTypes.Related", 4) }), false);
+  unchanged();
+  // A removal is valid only on a real in-range relation index; anything else stays with the caller.
+  assert.equal(applyFixtureRelation(relations, { op: "remove", path: "/fields/System.Title" }), false);
+  unchanged();
+  assert.equal(applyFixtureRelation(relations, { op: "remove", path: "/relations/-" }), false);
+  unchanged();
+  assert.equal(applyFixtureRelation(relations, { op: "remove", path: "/relations/9" }), false);
+  unchanged();
+  assert.equal(applyFixtureRelation(relations, { op: "remove", path: "/relations/0" }), true);
+  assert.deepEqual(relations, [edge("System.LinkTypes.Related", 3)]);
+  assert.equal(applyFixtureRelation(relations, { op: "add", path: "/relations/-", value: edge("System.LinkTypes.Related", 4) }), true);
+  assert.deepEqual(relations, [edge("System.LinkTypes.Related", 3), edge("System.LinkTypes.Related", 4)]);
+});

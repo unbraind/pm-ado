@@ -30,7 +30,9 @@ export function installFixtureExtension(pmRoot: string): void {
 
 /** Locate and certify a real fixture document before deliberately corrupting its storage. */
 export function fixtureItemPath(pmRoot: string, id: string): string {
-  const file = readdirSync(pmRoot, { recursive: true, encoding: "utf8" }).find((entry) => entry.endsWith(`/${id}.toon`));
+  // Recursive entries carry the platform separator, so match the file's own name
+  // on either separator instead of a `/`-only suffix.
+  const file = readdirSync(pmRoot, { recursive: true, encoding: "utf8" }).find((entry) => entry.split(/[\\/]/u).at(-1) === `${id}.toon`);
   assert.ok(file);
   return join(pmRoot, file);
 }

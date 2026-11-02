@@ -42,6 +42,9 @@ Export rejects the import-only WIQL, area and iteration filters.
 Use a dedicated tracker or a small preview before exporting unlinked items.
 Azure scope mismatches and duplicate numeric identities fail closed.
 
+Explicit export-map keys use native status aliases before overriding defaults.
+Two explicit keys that resolve to one status and name different Azure states are refused.
+
 ## Field map
 
 | Azure field | pm field | Normalization |
@@ -133,7 +136,8 @@ remote operations can remain if a later write or SDK mutation fails. The receipt
 includes the item plan; inspect both stores before retrying a partial failure.
 
 Every local sync update re-reads the item and its SDK history immediately
-before the write and compares the planned fields with the plan's base. A local
+before the write and compares current SDK-normalized fields and native history
+with the captured pre-plan snapshot and head. A local
 edit after planning refuses persistence with `ADO_CONFLICT` (exit 4), keeping
 the newer item and history intact. The SDK has no compare-and-swap on update yet
 ([pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576),

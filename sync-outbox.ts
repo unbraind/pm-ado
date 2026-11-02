@@ -1,6 +1,6 @@
 /** Durable package intents for revision-checked Azure effects and recoverable creation. */
-import { mkdir, readFile, chmod, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, chmod, readdir, lstat } from "node:fs/promises";
+import { basename, join } from "node:path";
 import type { ItemMetadata, LockLease } from "@unbrained/pm-cli/sdk";
 import type { Values } from "./sync.ts";
 import { loadResolutionSdk, resolutionDigest } from "./resolution.ts";
@@ -109,10 +109,31 @@ export class SyncOutbox {
   private async save(path: string, intent: Intent, lease: LockLease): Promise<void> {
     await this.observer?.({ boundary: "intent", phase: "before", operation: intent.state, item: intent.item });
     await lease.fence(async () => {
+      await this.journalDirectory();
+      await this.certifyJournalFile(path);
       await this.sdk.writeFileAtomic(path, JSON.stringify(intent));
       await chmod(path, 0o600);
     });
     await this.observer?.({ boundary: "intent", phase: "after", operation: intent.state, item: intent.item });
+  }
+
+  /** Harden the private journal directory before every journal read or write. */
+  private async journalDirectory(create = false): Promise<string> {
+    const directory = join(this.pmRoot, "transactions/pm-ado-sync");
+    if (create) await mkdir(directory, { recursive: true, mode: 0o700 });
+    const stats = await lstat(directory);
+    // A symlinked or special stand-in never receives private intent contents.
+    if (!stats.isDirectory()) throw new CommandError("Azure sync journal directory must be a real private directory; inspect transactions/pm-ado-sync before retrying", EXIT_CODE.conflict);
+    await chmod(directory, 0o700);
+    return directory;
+  }
+
+  /** Reject non-regular journal paths so a symlink cannot redirect private intent contents. */
+  private async certifyJournalFile(path: string): Promise<void> {
+    let stats: Awaited<ReturnType<typeof lstat>>;
+    try { stats = await lstat(path); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+    if (!stats.isFile()) throw new CommandError(`Azure sync journal entry must be a regular file: ${basename(path)}`, EXIT_CODE.conflict);
   }
 
   /** Keep the first create plan stable across local edits, under a fenced SDK lease. */
@@ -120,8 +141,7 @@ export class SyncOutbox {
     run: (intent: Intent, persist: () => Promise<void>, replan: () => Promise<void>, changed: boolean) => Promise<T>): Promise<T> {
     const key = `${initial.item}:${initial.operation}:${resolutionDigest([this.scope, initial])}`;
     const name = resolutionDigest([this.scope, initial.item, initial.operation, initial.operation === "create" ? "" : key]);
-    const directory = join(this.pmRoot, "transactions/pm-ado-sync");
-    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const directory = await this.journalDirectory(true);
     const path = join(directory, `${name}.json`);
     const settings = await this.sdk.readSettings(this.pmRoot);
     const lease = await this.sdk.acquireLockLease(this.pmRoot, `ado-outbox-${name}`, settings.locks.ttl_seconds,
@@ -129,7 +149,7 @@ export class SyncOutbox {
     try {
       let intent: Intent;
       const persist = () => this.save(path, intent, lease);
-      try { intent = JSON.parse(await readFile(path, "utf8")) as Intent; }
+      try { await this.certifyJournalFile(path); intent = JSON.parse(await readFile(path, "utf8")) as Intent; }
       catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         intent = { ...initial, schema: "pm-ado/outbox/1", scope: this.scope, key, state: "prepared" };
@@ -184,7 +204,11 @@ export class SyncOutbox {
     for (const local of locals.filter((item) => item.ado_id === undefined || item.ado_sync_base === undefined || item.ado_rev === undefined)) {
       const name = resolutionDigest([this.scope, local.id, "create", ""]);
       let intent: Intent;
-      try { intent = JSON.parse(await readFile(join(this.pmRoot, "transactions/pm-ado-sync", `${name}.json`), "utf8")) as Intent; }
+      try {
+        const path = join(await this.journalDirectory(), `${name}.json`);
+        await this.certifyJournalFile(path);
+        intent = JSON.parse(await readFile(path, "utf8")) as Intent;
+      }
       catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
       this.validate(intent, local.id, "create");
       const matches = remotes.filter((remote) => remote.id === intent.response?.id ||
@@ -210,16 +234,17 @@ export class SyncOutbox {
 
   /** Reconcile a proven prior PATCH before treating its own effect as a competing writer. */
   async recoverEffects(remotes: readonly AdoWorkItem[], locals: readonly ItemMetadata[]): Promise<Map<string, { original: Values; accepted: AdoWorkItem; fields: Record<string, unknown>; relations: JsonPatchOperation[]; revision: number }[]>> {
-    const directory = join(this.pmRoot, "transactions/pm-ado-sync");
     const recovered = new Map<string, { original: Values; accepted: AdoWorkItem; fields: Record<string, unknown>; relations: JsonPatchOperation[]; revision: number }[]>();
-    let names: string[];
-    try { names = await readdir(directory); }
+    let directory: string, names: string[];
+    try { directory = await this.journalDirectory(); names = await readdir(directory); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return recovered; throw error; }
     const localById = new Map(locals.map((item) => [item.id, item]));
     const remoteById = new Map(remotes.map((item) => [item.id, item]));
     const records: Intent[] = [];
     for (const name of names.filter((entry) => entry.endsWith(".json"))) {
-      const intent = JSON.parse(await readFile(join(directory, name), "utf8")) as Intent;
+      const path = join(directory, name);
+      await this.certifyJournalFile(path);
+      const intent = JSON.parse(await readFile(path, "utf8")) as Intent;
       if (intent.operation === "patch" && intent.scope === this.scope) records.push(intent);
     }
     // Retain every proven request; the planner selects the latest evidence separately for each key.

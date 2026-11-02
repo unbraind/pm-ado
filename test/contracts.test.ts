@@ -1,4 +1,4 @@
-import { authoritativeDigest as snapshot } from "./helpers/authoritative-digest.ts";
+import { authoritativeDigest as snapshot, isRuntimeCacheEntry } from "./helpers/authoritative-digest.ts";
 import { listenOnLoopback } from "./helpers/http-fixture.ts";
 import { isolatedPackage, installFixtureExtension, fixtureItemPath, fixtureDirectory, packageRoot as repo } from "./helpers/package-runtime.ts";
 import { runCommand as run } from "./helpers/process-fixture.ts";
@@ -415,10 +415,93 @@ test("review-46 required titles share export normalization through an SDK-free d
     const normalization = { resolveStatus: (value: string) => runtimeSdk.normalizeStatusInput(value) ?? value };
     const discovery = await copied.discoverProjectContract(config, f.request, { items: [legacy], normalization });
     assert.equal(discovery.compatible, compatible, JSON.stringify(discovery.issues));
-    const json = await f.cli(["--project", config.project, "--type", "Task", "--check-tracker", "--json"]);
-    assert.equal(json.code, 0, json.stderr);
-    assert.equal((JSON.parse(json.stdout) as ProjectContract).compatible, compatible);
-    assert.deepEqual(snapshot(f.pmRoot), before);
-    assert.ok(f.calls.every((call) => call.method === "GET"));
+    await assertInstalledDiscovery(f, compatible, before);
   });
+});
+
+/** Legacy stored assignments must be evaluated as the real export value without an extension SDK link. */
+test("review-46 legacy assignees share export normalization through an SDK-free discovery context", async (t) => {
+  const copied = isolatedPackage(t, join(repo, "dist"))("./index.js") as typeof built;
+  // Reads trim stored identities, so the reachable raw/writer divergence is the legacy clear token.
+  for (const assignee of ["Allowed assignee", "none", "null"]) await t.test(JSON.stringify(assignee), async (sub) => {
+    const f = await hostFixture(sub);
+    f.typeFields.find((field) => field.referenceName === "System.AssignedTo")!.allowedValues = ["Allowed assignee", ""];
+    const settings = await runtimeSdk.readSettings(f.pmRoot), id = "fixture-legacy-assignee";
+    const document = { metadata: { ...f.item.item, id, title: "Allowed title", assignee }, body: "Previously persisted assignment fixture" };
+    writeFileSync(runtimeSdk.getItemPath(f.pmRoot, "Task", id, settings.item_format), runtimeSdk.serializeItemDocument(document, { schema: settings.schema }));
+    const legacy = (await f.pm.listAllComplete()).items.find((item) => item.id === id)!;
+    assert.equal(legacy.assignee, assignee, "the legacy read must retain the actual stored spelling");
+    const context = { sdk: runtimeSdk, schema: settings.schema, idPrefix: settings.id_prefix };
+    const sent = azureFields(localValues(legacy, context), ["assignee"], STATE_MAP, context)["System.AssignedTo"];
+    // The writer either clears the assignment explicitly or sends the allowed identity;
+    // discovery must agree instead of judging the unreadable raw spelling.
+    const compatible = sent === "" || sent === "Allowed assignee";
+    const before = snapshot(f.pmRoot);
+    const normalization = { resolveStatus: (value: string) => runtimeSdk.normalizeStatusInput(value) ?? value, resolveTitle: (value: string) => value.trim() };
+    const discovery = await copied.discoverProjectContract(config, f.request, { items: [legacy], normalization });
+    assert.equal(discovery.compatible, compatible, JSON.stringify(discovery.issues));
+    assert.equal(discovery.issues.some((issue) => issue.code === "item_value" && issue.target === "Task/System.AssignedTo"), !compatible);
+    await assertInstalledDiscovery(f, compatible, before);
+  });
+});
+
+test("a failed loopback bind rejects the helper instead of hanging or crashing the process", { timeout: 1000 }, async () => {
+  const server = createServer();
+  (server as unknown as { listen: () => unknown }).listen = () => {
+    queueMicrotask(() => server.emit("error", Object.assign(new Error("fixture bind refusal"), { code: "EADDRINUSE" })));
+    return server;
+  };
+  await assert.rejects(listenOnLoopback(server), /fixture bind refusal/u);
+  server.close();
+});
+
+test("fixture document lookup and runtime exclusion match either recursive separator convention", async (t) => {
+  const { root, cleanup } = fixtureDirectory("ado-helper-separators-");
+  t.after(cleanup);
+  const pmRoot = join(root, "pm");
+  mkdirSync(join(pmRoot, "tasks"), { recursive: true });
+  // A recursive entry whose separators before the file name are `\` (the Windows shape) must be
+  // found; the previous `/`-only suffix match could not locate it.
+  writeFileSync(join(pmRoot, "tasks\\fixture-separated.toon"), "simulated platform-separated entry");
+  assert.equal(fixtureItemPath(pmRoot, "fixture-separated"), join(pmRoot, "tasks\\fixture-separated.toon"));
+  assert.throws(() => fixtureItemPath(pmRoot, "fixture-missing"), /assert/u);
+});
+
+test("runtime cache exclusion matches either separator convention", () => {
+  const posixRoot = "/probe/pm-root";
+  assert.equal(isRuntimeCacheEntry(posixRoot, `${posixRoot}/runtime/cache/state.json`), true);
+  assert.equal(isRuntimeCacheEntry(posixRoot, `${posixRoot}/tasks/Task/a.toon`), false);
+  // The Windows `join` shape must be excluded exactly like the POSIX one.
+  const windowsRoot = "C:\\probe\\pm-root";
+  assert.equal(isRuntimeCacheEntry(windowsRoot, `${windowsRoot}\\runtime\\cache\\state.json`), true);
+  assert.equal(isRuntimeCacheEntry(windowsRoot, `${windowsRoot}\\runtime`), true);
+  assert.equal(isRuntimeCacheEntry(windowsRoot, `${windowsRoot}\\tasks\\Task\\a.toon`), false);
+  assert.equal(isRuntimeCacheEntry(windowsRoot, `${windowsRoot}\\runtime2\\a.toon`), false);
+});
+
+
+/** Exercise the copied CLI and certify read-only metadata discovery against the expected writer value. */
+async function assertInstalledDiscovery(f: Awaited<ReturnType<typeof hostFixture>>, compatible: boolean, before: Record<string, string>): Promise<void> {
+  const json = await f.cli(["--project", config.project, "--type", "Task", "--check-tracker", "--json"]);
+  assert.equal(json.code, 0, json.stderr);
+  assert.equal((JSON.parse(json.stdout) as ProjectContract).compatible, compatible);
+  assert.deepEqual(snapshot(f.pmRoot), before);
+  assert.ok(f.calls.every((call) => call.method === "GET"));
+}
+
+
+test("contract CLI keeps explicit alias overrides distinct from ambiguous user mappings", async (t) => {
+  const f = await hostFixture(t);
+  (f.types[0]!.states as { name: string }[]).push({ name: "Done" });
+  f.env.ADO_STATUS_MAP = JSON.stringify({ Done: "closed" });
+  f.env.ADO_EXPORT_STATE_MAP = JSON.stringify({ " CLOSED ": "Done" });
+  const before = snapshot(f.pmRoot);
+  await assertInstalledDiscovery(f, true, before);
+  f.env.ADO_EXPORT_STATE_MAP = JSON.stringify({ closed: "Done", " CLOSED ": "Closed" });
+  const calls = f.calls.length;
+  const refused = await f.command({ project: config.project, checkTracker: true }) as { ok: boolean; code?: string };
+  assert.equal(refused.ok, false);
+  assert.ok("code" in refused && refused.code === "configuration");
+  assert.equal(f.calls.length, calls, "ambiguous explicit keys refuse before remote discovery");
+  assert.deepEqual(snapshot(f.pmRoot), before);
 });

@@ -1,6 +1,6 @@
 /** Durable package intents for revision-checked Azure effects and recoverable creation. */
-import { mkdir, readFile, chmod, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, chmod, readdir, lstat } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { loadResolutionSdk, resolutionDigest } from "./resolution.js";
 import { AdoHttpError, buildUpdatePatch, CommandError, EXIT_CODE, RevisionConflict } from "./index.js";
 /** Total transition table; successful proof is never downgraded by a later failure. */
@@ -44,17 +44,44 @@ export class SyncOutbox {
     async save(path, intent, lease) {
         await this.observer?.({ boundary: "intent", phase: "before", operation: intent.state, item: intent.item });
         await lease.fence(async () => {
+            await this.journalDirectory();
+            await this.certifyJournalFile(path);
             await this.sdk.writeFileAtomic(path, JSON.stringify(intent));
             await chmod(path, 0o600);
         });
         await this.observer?.({ boundary: "intent", phase: "after", operation: intent.state, item: intent.item });
     }
+    /** Harden the private journal directory before every journal read or write. */
+    async journalDirectory(create = false) {
+        const directory = join(this.pmRoot, "transactions/pm-ado-sync");
+        if (create)
+            await mkdir(directory, { recursive: true, mode: 0o700 });
+        const stats = await lstat(directory);
+        // A symlinked or special stand-in never receives private intent contents.
+        if (!stats.isDirectory())
+            throw new CommandError("Azure sync journal directory must be a real private directory; inspect transactions/pm-ado-sync before retrying", EXIT_CODE.conflict);
+        await chmod(directory, 0o700);
+        return directory;
+    }
+    /** Reject non-regular journal paths so a symlink cannot redirect private intent contents. */
+    async certifyJournalFile(path) {
+        let stats;
+        try {
+            stats = await lstat(path);
+        }
+        catch (error) {
+            if (error.code === "ENOENT")
+                return;
+            throw error;
+        }
+        if (!stats.isFile())
+            throw new CommandError(`Azure sync journal entry must be a regular file: ${basename(path)}`, EXIT_CODE.conflict);
+    }
     /** Keep the first create plan stable across local edits, under a fenced SDK lease. */
     async withIntent(initial, run) {
         const key = `${initial.item}:${initial.operation}:${resolutionDigest([this.scope, initial])}`;
         const name = resolutionDigest([this.scope, initial.item, initial.operation, initial.operation === "create" ? "" : key]);
-        const directory = join(this.pmRoot, "transactions/pm-ado-sync");
-        await mkdir(directory, { recursive: true, mode: 0o700 });
+        const directory = await this.journalDirectory(true);
         const path = join(directory, `${name}.json`);
         const settings = await this.sdk.readSettings(this.pmRoot);
         const lease = await this.sdk.acquireLockLease(this.pmRoot, `ado-outbox-${name}`, settings.locks.ttl_seconds, this.author, false, settings.governance.force_required_for_stale_lock, settings.locks.wait_ms);
@@ -62,6 +89,7 @@ export class SyncOutbox {
             let intent;
             const persist = () => this.save(path, intent, lease);
             try {
+                await this.certifyJournalFile(path);
                 intent = JSON.parse(await readFile(path, "utf8"));
             }
             catch (error) {
@@ -121,7 +149,9 @@ export class SyncOutbox {
             const name = resolutionDigest([this.scope, local.id, "create", ""]);
             let intent;
             try {
-                intent = JSON.parse(await readFile(join(this.pmRoot, "transactions/pm-ado-sync", `${name}.json`), "utf8"));
+                const path = join(await this.journalDirectory(), `${name}.json`);
+                await this.certifyJournalFile(path);
+                intent = JSON.parse(await readFile(path, "utf8"));
             }
             catch (error) {
                 if (error.code === "ENOENT")
@@ -151,10 +181,10 @@ export class SyncOutbox {
     }
     /** Reconcile a proven prior PATCH before treating its own effect as a competing writer. */
     async recoverEffects(remotes, locals) {
-        const directory = join(this.pmRoot, "transactions/pm-ado-sync");
         const recovered = new Map();
-        let names;
+        let directory, names;
         try {
+            directory = await this.journalDirectory();
             names = await readdir(directory);
         }
         catch (error) {
@@ -166,7 +196,9 @@ export class SyncOutbox {
         const remoteById = new Map(remotes.map((item) => [item.id, item]));
         const records = [];
         for (const name of names.filter((entry) => entry.endsWith(".json"))) {
-            const intent = JSON.parse(await readFile(join(directory, name), "utf8"));
+            const path = join(directory, name);
+            await this.certifyJournalFile(path);
+            const intent = JSON.parse(await readFile(path, "utf8"));
             if (intent.operation === "patch" && intent.scope === this.scope)
                 records.push(intent);
         }

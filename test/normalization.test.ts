@@ -7,8 +7,8 @@ import { tmpdir } from "node:os";
 import * as sdk from "@unbrained/pm-cli/sdk";
 import { normalizeStatusValue, normalizeItemReference, normalizeTitleValue, normalizeAssigneeValue,
   normalizeTagValues, normalizePriorityValue, normalizeLiteralValue, normalizeScopeValue, normalizeFieldValues, normalizeStateMaps,
-  sameScope, type ValueNormalization } from "../normalization.ts";
-import { localValues, remoteValues, azureFields, remoteScalarValues, IMPORT_STATE_MAP, type Values } from "../sync.ts";
+  sameScope, normalizeDiscoveryFieldValues, type ValueNormalization } from "../normalization.ts";
+import { localValues, remoteValues, azureFields, remoteScalarValues, IMPORT_STATE_MAP, stateMap, type Values } from "../sync.ts";
 
 /** Obtain the registry and native write oracle without mocking SDK functions. */
 async function fixture(t: test.TestContext) {
@@ -88,4 +88,44 @@ test("sameScope normalizes both scope fields and states how a missing organizati
   assert.equal(sameScope({ ado_project: "Platform" }, config, "match"), true, "match accepts a legacy item without one");
   assert.equal(sameScope({ ado_org_url: "https://dev.azure.com/other", ado_project: "Platform" }, config, "match"), false);
   assert.equal(sameScope({ ado_project: "Other" }, config, "match"), false, "the project is compared in both modes");
+});
+
+test("state-map canonicalization refuses ambiguous duplicate export keys instead of discarding one", () => {
+  const resolve = (value: string) => value.trim().toLowerCase();
+  // Two spellings of one status that map to different Azure states are ambiguous; refusing
+  // beats silently keeping whichever entry Object.fromEntries happened to visit last.
+  assert.throws(() => normalizeStateMaps({ imports: {}, exports: { "todo": "New", " TODO ": "Proposed" } }, { resolveStatus: resolve }),
+    /Ambiguous status export mapping for todo/u);
+  assert.throws(() => normalizeStateMaps({ imports: {}, exports: { "todo": "New", "TODO": "Proposed" } }, { resolveStatus: resolve }),
+    /Ambiguous status export mapping for todo/u);
+  // Identical targets are unambiguous and collapse to one canonical mapping.
+  assert.deepEqual(normalizeStateMaps({ imports: {}, exports: { "todo": "New", " TODO ": "New" } }, { resolveStatus: resolve }),
+    { imports: {}, exports: { todo: "New" } });
+  assert.deepEqual(normalizeStateMaps({ imports: {}, exports: { "todo": "New", "other": "Proposed" } }, { resolveStatus: resolve }),
+    { imports: {}, exports: { todo: "New", other: "Proposed" } });
+});
+
+
+test("discovery scalar projection matches the SDK writer with and without a module context", async (t) => {
+  const f = await fixture(t);
+  for (const priority of [" 3 ", "historical", -1, 7]) {
+    const values = { title: " Title ", status: " OPEN ", priority, assignee: " NULL ", tags: [" Z ", "z", " ä ", ""], description: " Literal ", ado_area_path: " Area " };
+    const expected = normalizeFieldValues(values, f.context);
+    assert.deepEqual(normalizeDiscoveryFieldValues(values, f.context), expected);
+    assert.deepEqual(normalizeDiscoveryFieldValues(values, { resolveStatus: (value) => normalizeStatusValue(value, f.context) }), expected);
+    assert.deepEqual(normalizeDiscoveryFieldValues(values), expected);
+  }
+  assert.deepEqual(normalizeDiscoveryFieldValues({ assignee: " Name " }, { resolveStatus: (value) => value }), { assignee: "Name" });
+  const maps = normalizeStateMaps({ imports: {}, exports: JSON.parse('{"__proto__":"New"}') }, { resolveStatus: (value) => value });
+  assert.equal(Object.hasOwn(maps.exports, "__proto__"), true);
+  assert.equal(maps.exports.__proto__, "New");
+});
+
+
+test("explicit canonical status overrides replace defaults while collisions within one layer refuse", () => {
+  const normalization = { resolveStatus: (value: string) => value.trim().toLowerCase() };
+  assert.deepEqual(stateMap('{" CLOSED ":"Done"}', { open: "New", closed: "Closed" }, normalization), { open: "New", closed: "Done" });
+  assert.deepEqual(stateMap(undefined, { " CLOSED ": "Closed" }, normalization), { closed: "Closed" });
+  assert.throws(() => stateMap('{"closed":"Done"," CLOSED ":"Closed"}', { open: "New" }, normalization), /Ambiguous status export mapping/u);
+  assert.throws(() => stateMap(undefined, { closed: "Done", " CLOSED ": "Closed" }, normalization), /Ambiguous status export mapping/u);
 });

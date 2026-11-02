@@ -227,9 +227,12 @@ test("adversarial duplicate type metadata cannot exceed the total request budget
 
 test("round-5 move IDs use host SDK prefix case and hash-marker normalization without a module link", async (t) => {
   const f = await host(t), id = f.options.ids[0]!;
+  // The copied dist package under tracker storage has no SDK module link, so these
+  // references must resolve through the installed no-module-link CLI, not the in-repo module.
   for (const project of ["Example", " Example "]) for (const reference of [id.toUpperCase(), ` #${id.toUpperCase()} `, id.slice("fixture-".length)]) {
-    const result = await f.command({ project, items: reference, areaPath: "Example\\New" });
-    assert.equal(result.ok, true, JSON.stringify(result)); assert.equal(result.rows[0]!.id, id);
+    const json = await f.cli(["--project", project, "--items", reference, "--area-path", "Example\\New", "--json"]);
+    const result = JSON.parse(json.stdout) as MovePreview;
+    assert.equal(result.ok, true, json.stdout); assert.equal(result.rows[0]!.id, id);
   }
   const before = f.calls.length;
   const duplicate = await f.command({ project: "Example", items: `${id}, #${id.toUpperCase()}`, areaPath: "Example\\New" });

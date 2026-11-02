@@ -176,7 +176,7 @@ GitHub workflows need a git checkout and are separate from tracker operations.
 `pm ado resolve-plan --item <id> [--save]` returns compact base/local/remote
 field digests. Review and add explicit `local`/`remote` choices, then use
 `pm ado resolve-apply --artifact decision.json` or `--plan <core-plan-id>`.
-Changed local document hashes or Azure revisions refuse; successful replay adds no writes.
+Changed local document hashes or Azure revisions refuse; successful replay adds no additional Azure PATCH or resolution history event; it can still publish local agreement metadata.
 
 ## Concurrency
 
@@ -190,7 +190,7 @@ recognized history reason; subsequent import/export/sync re-plans current state.
 A fresh import and its dry-run also refuse fields edited locally since the agreed
 base; retrying does not force a peer's status or title back to Azure's value.
 Use the reviewed resolution choices above to choose a conflicting remote value.
-An absent or partial base never authorizes overwriting an existing local field.
+An absent or partial base never authorizes overwriting a locally edited or unknown-ancestry field; native birth proof may initialize untouched fields during first import.
 
 There is still a window between the final read and the native write. Ordinary
 SDK writers do not join the workspace transaction lock

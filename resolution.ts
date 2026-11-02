@@ -242,8 +242,8 @@ export class AdoResolutionService {
   }
 
   /** Read normalized configured maps once per operation and bind their interpretation to the plan. */
-  private maps() {
-    return { imports: stateMap(process.env.ADO_STATUS_MAP, IMPORT_STATE_MAP), exports: stateMap(process.env.ADO_EXPORT_STATE_MAP, STATE_MAP) };
+  private maps(normalization?: ValueNormalization) {
+    return { imports: stateMap(process.env.ADO_STATUS_MAP, IMPORT_STATE_MAP), exports: stateMap(process.env.ADO_EXPORT_STATE_MAP, STATE_MAP, normalization) };
   }
 
   /** Preview one linked item's scalar decisions with no tracker or REST writes. */
@@ -258,7 +258,7 @@ export class AdoResolutionService {
       }
       const remote = await this.remote(Number(item.ado_id));
       this.scope(item, remote);
-      const maps = this.maps(), settings = await this.sdk.readSettings(this.pmRoot), normalization = this.normalization(settings);
+      const settings = await this.sdk.readSettings(this.pmRoot), normalization = this.normalization(settings), maps = this.maps(normalization);
       return { normalization: "pm-ado/fields/1", schema: "pm-ado/resolution/2", scope: { ref: resolutionScopeReference(this.config) },
         local: { id: item.id, revision: resolutionDigest(document), head: inspectedHead },
         remote: { id: remote.id, revision: remote.rev, digest: resolutionDigest(remote) },
@@ -362,10 +362,14 @@ export class AdoResolutionService {
             ...(nativeStatus === item.status ? {} : { status: nativeStatus, closeReason: "Azure conflict resolution" }),
             priority: Number(canonical.priority), tags: JSON.stringify(canonical.tags),
             ...(canonical.assignee === "" ? { unset: ["assignee"] } : { assignee: String(canonical.assignee) }) } }] });
-        const patch = this.patch(plan, values, maps, decision, normalization, incoming);
+        // Markerless legacy plans keep their raw-wire compatibility: the legacy patch path
+        // compares reviewed values directly and a fresh intent omits the normalized witness.
+        const witnessed = plan.normalization === undefined ? undefined : incoming;
+        const patch = this.patch(plan, values, maps, decision, normalization, witnessed);
         prepared = { plan_id: decision, local_revision: plan.local.revision, guard: this.guard(document),
           remote_id: remote.id, remote_revision: remote.rev, remote_digest: plan.remote.digest,
-          expected_remote_revision: remote.rev + (patch.length === 0 ? 0 : 1), patch, values, remote_values: incoming, base: base ?? null };
+          expected_remote_revision: remote.rev + (patch.length === 0 ? 0 : 1), patch, values,
+          ...(witnessed === undefined ? {} : { remote_values: witnessed }), base: base ?? null };
         item.ado_resolution_intent = JSON.stringify(prepared);
         return { changedFields: ["ado_resolution_intent"] };
       } });
@@ -432,7 +436,8 @@ export class AdoResolutionService {
       const plan = structuredClone(input);
       plan.fields.sort((a, b) => a.field.localeCompare(b.field));
       plan.choices.sort((a, b) => a.field.localeCompare(b.field));
-      const maps = this.maps(), settings = await this.sdk.readSettings(this.pmRoot), normalization = this.normalization(settings);
+      const settings = await this.sdk.readSettings(this.pmRoot), normalization = this.normalization(settings),
+        normalizedMaps = this.maps(normalization), maps = plan.normalization === undefined ? this.maps() : normalizedMaps;
       const inspected = (await this.document(plan.local.id)).metadata;
       if (plan.normalization !== undefined) plan.local.id = inspected.id;
       const decision = resolutionDigest(plan);
@@ -448,7 +453,7 @@ export class AdoResolutionService {
       if (intent !== null) {
         try {
           await this.observer?.({ phase: "prepared", decision });
-          const result = await this.settle(plan, decision, intent, maps, settings);
+          const result = await this.settle(plan, decision, intent, normalizedMaps, settings);
           replayed = result.replayed; expectedVersion = result.version;
         }
         catch { throw this.partial(decision, intent.expected_remote_revision); }
@@ -461,7 +466,7 @@ export class AdoResolutionService {
         readRemote: async (local) => {
           const remote = await this.remote(plan.remote.id);
           this.scope(readback.item, remote);
-          return { revision: remote.rev, values: remoteAgreement(remote, local.values, this.config, readback.identities, maps.imports, maps.exports, normalization) };
+          return { revision: remote.rev, values: remoteAgreement(remote, local.values, this.config, readback.identities, normalizedMaps.imports, normalizedMaps.exports, normalization) };
         },
         publish: async (base, revision, version) => {
           await nativeWrites.assertCurrent(inspected.id);

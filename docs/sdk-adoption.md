@@ -51,8 +51,8 @@ native head coordinates; agreement publication is detection-only and never
 rolls metadata back. The relation importer also retains completed forward
 parents when a later endpoint fails.
 
-`ado_sync_intent` is advisory progress, not authority to overwrite a peer. Every
-fresh invocation retires mutable version-1/version-2 intent data with the history
+`ado_sync_intent` is advisory progress, not authority to overwrite a peer. A non-preview invocation that passes scalar and relation preflight
+retires mutable version-1/version-2 intent data with the history
 message `Discard obsolete Azure sync intent; replan current state`. New version-2 checkpoints hold only an opaque scope, unique plan coordinate,
 observed Azure revision and optional diagnostic stage; saved desired values and
 intent proofs are gone. Native SDK history remembers unacknowledged integration

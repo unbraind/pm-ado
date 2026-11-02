@@ -29,6 +29,8 @@ export interface TitleReferenceNormalization {
     /** Project the exact required text value used by the export writer. */
     resolveTitle(value: string): string;
 }
+/** Resolvers available to metadata-only discovery; absent text rules fall back to writer-matching trims. */
+export type DiscoveryNormalization = StatusReferenceNormalization & Partial<TitleReferenceNormalization>;
 /** Required text shares SDK trimming; the fallback stays SDK-free for metadata-only discovery. */
 export declare function normalizeTitleValue(value: string, context?: ValueNormalization | Partial<TitleReferenceNormalization>): string;
 /** Assignment names preserve case while sharing SDK trimming and legacy scalar-clear semantics. */
@@ -60,6 +62,8 @@ export declare function sameScope(item: Readonly<Record<string, unknown>>, confi
 }, missingOrganization: "match" | "refuse"): boolean;
 /** Normalize only mapped semantic fields, retaining unknown coordinates and partial-base markers verbatim. */
 export declare function normalizeFieldValues(values: Readonly<Values>, context?: ValueNormalization): Values;
+/** Normalize every mapped scalar for discovery checks; a full context uses writer-exact semantics. */
+export declare function normalizeDiscoveryFieldValues(values: Readonly<Values>, context?: ValueNormalization | DiscoveryNormalization): Values;
 /** Canonicalize mapping interpretation without changing Azure's literal state names or inherited-key safety. */
 export declare function normalizeStateMaps(maps: {
     imports: Readonly<Record<string, string>>;
@@ -68,8 +72,6 @@ export declare function normalizeStateMaps(maps: {
     imports: {
         [k: string]: string;
     };
-    exports: {
-        [k: string]: string;
-    };
+    exports: Record<string, string>;
 };
 //# sourceMappingURL=normalization.d.ts.map

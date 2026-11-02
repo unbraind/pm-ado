@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import type { CommandHandlerContext } from "@unbrained/pm-cli/sdk/authoring";
 import type { ItemMetadata, SchemaListResult } from "@unbrained/pm-cli/sdk";
 import { CommandError, EXIT_CODE, RELATION_MAP, STATE_MAP, stripTrailingSlashes, type AdoConfig, type AdoTransport } from "./index.ts";
-import { normalizeTitleValue, normalizeStatusValue, normalizeStateMaps, normalizeScopeValue, type TitleReferenceNormalization, type StatusReferenceNormalization, type ValueNormalization } from "./normalization.ts";
+import { normalizeTitleValue, normalizeStatusValue, normalizeStateMaps, normalizeScopeValue, normalizeDiscoveryFieldValues, type DiscoveryNormalization, type ValueNormalization } from "./normalization.ts";
 import { ADO_FIELD_MAP, IMPORT_STATE_MAP, azureFields, localValues, stateMap } from "./sync.ts";
 
 /** Stable refusal vocabulary for SDK callers and host-rendered CLI results. */
@@ -130,8 +130,8 @@ export interface ContractOptions {
   importStates?: Readonly<Record<string, string>>;
   /** Optional complete local snapshot supplied by the host SDK. */
   items?: readonly ItemMetadata[];
-  /** Native status normalization, including custom aliases and host-owned registry lookup. */
-  normalization?: ValueNormalization | (StatusReferenceNormalization & Partial<TitleReferenceNormalization>);
+  /** Native status and text normalization; a full context shares the writer's exact scalar semantics. */
+  normalization?: ValueNormalization | DiscoveryNormalization;
 }
 
 /** Fail closed when remote metadata no longer has the documented shape. */
@@ -287,7 +287,8 @@ export async function discoverProjectContract(config: AdoConfig, request: AdoTra
     if (!type) { issue("item_type", typeName, "Select or map an enabled Azure type for these tracker items."); continue; }
     const status = normalizeStatusValue(item.status, options.normalization);
     if (!Object.hasOwn(exportStates, status)) { issue("export_state", `${typeName}/${item.status}`, "Configure ADO_EXPORT_STATE_MAP for this local status."); continue; }
-    const values = azureFields({ ...localValues(item, false), status, title: normalizeTitleValue(item.title, options.normalization) }, Object.keys(ADO_FIELD_MAP), exportStates, false);
+    // Discovery must evaluate the same scalar values that export sends.
+    const values = azureFields(normalizeDiscoveryFieldValues(localValues(item, false), options.normalization), Object.keys(ADO_FIELD_MAP), exportStates, false);
     for (const field of type.fields) {
       if (!Object.hasOwn(values, field.ref)) continue;
       const value = values[field.ref];
@@ -326,7 +327,7 @@ export async function runContractCommand(ctx: CommandHandlerContext) {
     // Metadata-only discovery needs no SDK module link; native tracker reads certify mapping values.
     const normalization = { resolveStatus: (value: string) => canonical.get(value) ?? value, resolveTitle: normalizeTitleValue };
     return await discoverProjectContract({ orgUrl: process.env.ADO_ORG_URL.trim(), project: project.trim(), token: process.env.ADO_TOKEN.trim() }, contractTransport,
-      { type, expectedFingerprint: expected, localStatuses: localSchema ? [...localSchema.statuses.builtin, ...localSchema.statuses.custom].map((status) => status.id) : undefined, exportStates: exports, importStates: imports, normalization,
+      { type, expectedFingerprint: expected, localStatuses: localSchema ? [...localSchema.statuses.builtin, ...localSchema.statuses.custom].map((status) => status.id) : undefined, exportStates: stateMap(process.env.ADO_EXPORT_STATE_MAP, STATE_MAP, normalization), importStates: imports, normalization,
         items: checkTracker ? (await pm!.listAllComplete()).items : undefined });
   } catch (error) {
     const refusal = ContractRefusal.from(error);

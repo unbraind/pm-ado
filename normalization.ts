@@ -1,7 +1,7 @@
 /** Shared field representations for SDK writes and semantic comparison; raw guards stay opaque. */
 import type { Values } from "./sync.ts";
 import type * as Sdk from "@unbrained/pm-cli/sdk";
-import { stripTrailingSlashes } from "./index.ts";
+import { stripTrailingSlashes, CommandError, EXIT_CODE } from "./index.ts";
 import { loadResolutionSdk } from "./resolution.ts";
 
 /** Native SDK and tracker schema used by both projection and persistence. */
@@ -43,6 +43,8 @@ export interface TitleReferenceNormalization {
   /** Project the exact required text value used by the export writer. */
   resolveTitle(value: string): string;
 }
+/** Resolvers available to metadata-only discovery; absent text rules fall back to writer-matching trims. */
+export type DiscoveryNormalization = StatusReferenceNormalization & Partial<TitleReferenceNormalization>;
 /** Required text shares SDK trimming; the fallback stays SDK-free for metadata-only discovery. */
 export function normalizeTitleValue(value: string, context?: ValueNormalization | Partial<TitleReferenceNormalization>): string {
   if (context !== undefined && "sdk" in context) return context.sdk.toNonEmptyImportString(value) ?? "";
@@ -97,8 +99,34 @@ export function normalizeFieldValues(values: Readonly<Values>, context?: ValueNo
   }
   return result;
 }
+/** Normalize every mapped scalar for discovery checks; a full context uses writer-exact semantics. */
+export function normalizeDiscoveryFieldValues(values: Readonly<Values>, context?: ValueNormalization | DiscoveryNormalization): Values {
+  if (context !== undefined && "sdk" in context) return normalizeFieldValues(values, context);
+  const result = { ...values };
+  if (typeof result.status === "string") result.status = normalizeStatusValue(result.status, context);
+  if (typeof result.title === "string") result.title = normalizeTitleValue(result.title, context);
+  // The SDK-free projections mirror the writer's trimming, clear tokens and sorted labels so
+  // required/allowed discovery cannot diverge from the actual export write.
+  if (typeof result.assignee === "string") result.assignee = clearToken(result.assignee) ? "" : result.assignee.trim();
+  if (Array.isArray(result.tags)) result.tags = [...new Set(result.tags.map((tag) => tag.trim().toLowerCase()).filter(Boolean))].sort();
+  if (typeof result.priority === "string" || typeof result.priority === "number") {
+    const number = Number(result.priority);
+    if (Number.isInteger(number) && number >= 0 && number <= 4) result.priority = number;
+  }
+  return result;
+}
 /** Canonicalize mapping interpretation without changing Azure's literal state names or inherited-key safety. */
 export function normalizeStateMaps(maps: { imports: Readonly<Record<string, string>>; exports: Readonly<Record<string, string>> }, context?: ValueNormalization | StatusReferenceNormalization) {
-  return { imports: Object.fromEntries(Object.entries(maps.imports).map(([key, value]) => [key, normalizeStatusValue(value, context)])),
-    exports: Object.fromEntries(Object.entries(maps.exports).map(([key, value]) => [normalizeStatusValue(key, context), value])) };
+  const imports = Object.fromEntries(Object.entries(maps.imports).map(([key, value]) => [key, normalizeStatusValue(value, context)]));
+  const exports: Record<string, string> = {};
+  for (const [key, value] of Object.entries(maps.exports)) {
+    const canonical = normalizeStatusValue(key, context);
+    // Two SDK-equivalent status keys mapping to different Azure states are ambiguous;
+    // refusing beats silently discarding one mapping and choosing an arbitrary state.
+    if (Object.hasOwn(exports, canonical) && exports[canonical] !== value) {
+      throw new CommandError(`Ambiguous status export mapping for ${canonical}: ${key} and a prior key map to different Azure states`, EXIT_CODE.usage);
+    }
+    Object.defineProperty(exports, canonical, { value, enumerable: true, writable: true, configurable: true });
+  }
+  return { imports, exports };
 }

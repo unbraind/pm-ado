@@ -40,6 +40,11 @@ test("partial agreement decoding retains unknown keys without accepting malforme
   const item = { id: "synthetic", ado_sync_base: JSON.stringify({ title: "agreed", ado_base_partial: 1, ado_base_fields: ["title"] }) } as unknown as ItemMetadata;
   assert.deepEqual(readBase(item, { title: "", relations: [], priority: 2 }), { title: "agreed", ado_base_partial: 1, ado_base_fields: ["title"] });
   assert.throws(() => readBase({ ...item, ado_sync_base: JSON.stringify({ title: 7, ado_base_partial: 1, ado_base_fields: ["title"] }) }, { title: "" }), /title/u);
+  // A corrupt explicit field list must never pose as an empty partial base and bypass field validation.
+  for (const fields of [7, "title", ["title", 7], null]) {
+    assert.throws(() => readBase({ ...item, ado_sync_base: JSON.stringify({ title: "agreed", ado_base_partial: 1, ado_base_fields: fields }) }, { title: "" }), /Invalid ado_sync_base fields/u);
+    assert.throws(() => readBase({ ...item, ado_sync_base: JSON.stringify({ title: "agreed", ado_base_fields: fields }) }, { title: "" }), /Invalid ado_sync_base fields/u);
+  }
 });
 
 test("owned scalar effect proof never becomes a base for unrelated fields or relations", () => {

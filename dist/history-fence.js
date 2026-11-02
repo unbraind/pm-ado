@@ -97,6 +97,11 @@ export class NativeWriteFence {
             throw conflict;
         }
     }
+    /** Recheck every captured head so query limits and filters never narrow the fence. */
+    async assertAll() {
+        for (const id of [...this.heads.keys()])
+            await this.assertCurrent(id);
+    }
     /** Re-read changed fields, write forward once, and report races without restoring anything. */
     async update(id, options, transactionId) {
         if (!this.snapshots.has(id))

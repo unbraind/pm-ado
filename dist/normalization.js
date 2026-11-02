@@ -1,4 +1,4 @@
-import { stripTrailingSlashes } from "./index.js";
+import { stripTrailingSlashes, CommandError, EXIT_CODE } from "./index.js";
 import { loadResolutionSdk } from "./resolution.js";
 let defaultSdk;
 /** Load the existing SDK bridge only when a caller has not supplied its native context. */
@@ -79,9 +79,41 @@ export function normalizeFieldValues(values, context) {
     }
     return result;
 }
+/** Normalize every mapped scalar for discovery checks; a full context uses writer-exact semantics. */
+export function normalizeDiscoveryFieldValues(values, context) {
+    if (context !== undefined && "sdk" in context)
+        return normalizeFieldValues(values, context);
+    const result = { ...values };
+    if (typeof result.status === "string")
+        result.status = normalizeStatusValue(result.status, context);
+    if (typeof result.title === "string")
+        result.title = normalizeTitleValue(result.title, context);
+    // The SDK-free projections mirror the writer's trimming, clear tokens and sorted labels so
+    // required/allowed discovery cannot diverge from the actual export write.
+    if (typeof result.assignee === "string")
+        result.assignee = clearToken(result.assignee) ? "" : result.assignee.trim();
+    if (Array.isArray(result.tags))
+        result.tags = [...new Set(result.tags.map((tag) => tag.trim().toLowerCase()).filter(Boolean))].sort();
+    if (typeof result.priority === "string" || typeof result.priority === "number") {
+        const number = Number(result.priority);
+        if (Number.isInteger(number) && number >= 0 && number <= 4)
+            result.priority = number;
+    }
+    return result;
+}
 /** Canonicalize mapping interpretation without changing Azure's literal state names or inherited-key safety. */
 export function normalizeStateMaps(maps, context) {
-    return { imports: Object.fromEntries(Object.entries(maps.imports).map(([key, value]) => [key, normalizeStatusValue(value, context)])),
-        exports: Object.fromEntries(Object.entries(maps.exports).map(([key, value]) => [normalizeStatusValue(key, context), value])) };
+    const imports = Object.fromEntries(Object.entries(maps.imports).map(([key, value]) => [key, normalizeStatusValue(value, context)]));
+    const exports = {};
+    for (const [key, value] of Object.entries(maps.exports)) {
+        const canonical = normalizeStatusValue(key, context);
+        // Two SDK-equivalent status keys mapping to different Azure states are ambiguous;
+        // refusing beats silently discarding one mapping and choosing an arbitrary state.
+        if (Object.hasOwn(exports, canonical) && exports[canonical] !== value) {
+            throw new CommandError(`Ambiguous status export mapping for ${canonical}: ${key} and a prior key map to different Azure states`, EXIT_CODE.usage);
+        }
+        Object.defineProperty(exports, canonical, { value, enumerable: true, writable: true, configurable: true });
+    }
+    return { imports, exports };
 }
 //# sourceMappingURL=normalization.js.map

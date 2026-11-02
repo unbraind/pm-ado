@@ -51,6 +51,10 @@ export declare class SyncOutbox {
     private marker;
     /** Persist through the SDK's atomic file writer, with private file permissions. */
     private save;
+    /** Harden the private journal directory before every journal read or write. */
+    private journalDirectory;
+    /** Reject non-regular journal paths so a symlink cannot redirect private intent contents. */
+    private certifyJournalFile;
     /** Keep the first create plan stable across local edits, under a fenced SDK lease. */
     private withIntent;
     /** Refuse altered scope, ownership or plan bytes before consulting remote identities. */

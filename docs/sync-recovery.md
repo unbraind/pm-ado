@@ -15,8 +15,8 @@ Already completed changes remain durable; no parent, scalar, body, intent or
 collection value is restored automatically. SDK hierarchy/permission validation
 runs on every forward write.
 
-Local `ado_sync_intent` is advisory recovery metadata. Every fresh invocation
-retires mutable old/new intent data through an SDK update whose immutable
+Local `ado_sync_intent` is advisory recovery metadata. Non-preview invocations that pass scalar
+and relation preflight retire mutable old/new intent data through an SDK update whose immutable
 message records `Discard obsolete Azure sync intent; replan current state`.
 The next plan uses current pm and Azure reads. Version-2 checkpoints retain
 observed remote revisions and diagnostic stages, with no saved desired fields or

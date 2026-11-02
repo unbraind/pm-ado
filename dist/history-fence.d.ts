@@ -55,6 +55,8 @@ export declare class NativeWriteFence {
     private conflict;
     /** Refuse advanced native history, including fixed-clock ABA, without any reverse mutation. */
     assertCurrent(id: string): Promise<void>;
+    /** Recheck every captured head so query limits and filters never narrow the fence. */
+    assertAll(): Promise<void>;
     /** Re-read changed fields, write forward once, and report races without restoring anything. */
     update(id: string, options: Sdk.PmUpdateActionOptions, transactionId: string): Promise<string>;
 }

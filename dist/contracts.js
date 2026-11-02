@@ -1,7 +1,7 @@
 /** Read-only Azure project metadata discovery; this module never plans or applies writes. */
 import { createHash } from "node:crypto";
 import { CommandError, EXIT_CODE, RELATION_MAP, STATE_MAP, stripTrailingSlashes } from "./index.js";
-import { normalizeTitleValue, normalizeStatusValue, normalizeStateMaps, normalizeScopeValue } from "./normalization.js";
+import { normalizeTitleValue, normalizeStatusValue, normalizeStateMaps, normalizeScopeValue, normalizeDiscoveryFieldValues } from "./normalization.js";
 import { ADO_FIELD_MAP, IMPORT_STATE_MAP, azureFields, localValues, stateMap } from "./sync.js";
 /** An actionable failure that contains no remote response body or credentials. */
 export class ContractRefusal extends Error {
@@ -218,7 +218,8 @@ export async function discoverProjectContract(config, request, options = {}) {
             issue("export_state", `${typeName}/${item.status}`, "Configure ADO_EXPORT_STATE_MAP for this local status.");
             continue;
         }
-        const values = azureFields({ ...localValues(item, false), status, title: normalizeTitleValue(item.title, options.normalization) }, Object.keys(ADO_FIELD_MAP), exportStates, false);
+        // Discovery must evaluate the same scalar values that export sends.
+        const values = azureFields(normalizeDiscoveryFieldValues(localValues(item, false), options.normalization), Object.keys(ADO_FIELD_MAP), exportStates, false);
         for (const field of type.fields) {
             if (!Object.hasOwn(values, field.ref))
                 continue;
@@ -264,7 +265,7 @@ export async function runContractCommand(ctx) {
             }
         // Metadata-only discovery needs no SDK module link; native tracker reads certify mapping values.
         const normalization = { resolveStatus: (value) => canonical.get(value) ?? value, resolveTitle: normalizeTitleValue };
-        return await discoverProjectContract({ orgUrl: process.env.ADO_ORG_URL.trim(), project: project.trim(), token: process.env.ADO_TOKEN.trim() }, contractTransport, { type, expectedFingerprint: expected, localStatuses: localSchema ? [...localSchema.statuses.builtin, ...localSchema.statuses.custom].map((status) => status.id) : undefined, exportStates: exports, importStates: imports, normalization,
+        return await discoverProjectContract({ orgUrl: process.env.ADO_ORG_URL.trim(), project: project.trim(), token: process.env.ADO_TOKEN.trim() }, contractTransport, { type, expectedFingerprint: expected, localStatuses: localSchema ? [...localSchema.statuses.builtin, ...localSchema.statuses.custom].map((status) => status.id) : undefined, exportStates: stateMap(process.env.ADO_EXPORT_STATE_MAP, STATE_MAP, normalization), importStates: imports, normalization,
             items: checkTracker ? (await pm.listAllComplete()).items : undefined });
     }
     catch (error) {

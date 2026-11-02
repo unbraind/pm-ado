@@ -4,7 +4,7 @@ import { listenOnLoopback } from "./helpers/http-fixture.ts";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile, fork } from "node:child_process";
-import { chmodSync, cpSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
@@ -16,7 +16,7 @@ import * as runtimeSdk from "@unbrained/pm-cli/sdk";
 import { PmClient, createExtensionCommandSdk, runWithActiveExtensions, resolveRuntimeStatusRegistry, readSettings } from "@unbrained/pm-cli/sdk";
 import { createExtensionTestHarness } from "@unbrained/pm-cli/sdk/testing";
 import extension, { type AdoWorkItem, type AdoRelation, type JsonPatchOperation } from "../index.ts";
-import { buildWiql, localValues, remoteValues, IMPORT_STATE_MAP, azureFields, ADO_FIELD_MAP, runSyncCommand, readLocalAgreement, type SyncCommandResult } from "../sync.ts";
+import { buildWiql, localValues, remoteValues, IMPORT_STATE_MAP, stateMap, azureFields, ADO_FIELD_MAP, runSyncCommand, readLocalAgreement, type SyncCommandResult } from "../sync.ts";
 import { NativeWriteFence, NativeHistoryConflict } from "../history-fence.ts";
 import { runSyncCommand as runBuiltSyncCommand } from "../dist/sync.js";
 
@@ -107,27 +107,45 @@ test("round-8 sync preserves native claim refusals and unavailable SDK diagnosti
 });
 
 test("round-8 legacy prepared decisions without remote projections retain raw PATCH compatibility", async (t) => {
-  const f = await fixture(t);
-  assert.equal((await f.command("import")).ok, true);
-  const item = await row(f.pm), service = resolver(f);
-  await f.pm.update(item.id, { title: "Legacy local decision" });
-  const current = await row(f.pm), remote = f.items.get(1)!;
-  const plan = await service.plan(item.id), maps = { imports: IMPORT_STATE_MAP, exports: STATE_MAP };
-  delete plan.normalization;
-  plan.fields = resolutionFields(current, remote, maps, false); plan.mapping = resolutionDigest(maps);
-  const reviewed = choices(plan);
+  const { f, item, service, reviewed } = await legacyLocalDecision(t);
   await assert.rejects(resolver(f, () => { throw new Error("Interrupted legacy prepare"); }).apply(reviewed), { code: "ado_partial_apply" });
   const pending = JSON.parse(String((await f.pm.get(item.id)).item.ado_resolution_intent)) as Record<string, unknown>;
   delete pending.remote_values;
   await runtimeSdk.mutateItemWithHistoryContext({ pmRoot: f.pmRoot, settings: await readSettings(f.pmRoot), id: item.id,
     author: "fixture-agent", op: "update", historyContext: { ado_resolution_prepare: pending.plan_id },
     mutate: (document) => { document.metadata.ado_resolution_intent = JSON.stringify(pending); return { changedFields: ["ado_resolution_intent"] }; } });
-  assert.equal((await service.apply(reviewed)).ok, true);
-  assert.equal(f.items.get(1)!.fields["System.Title"], "Legacy local decision");
-  const before = snapshot(f.pmRoot);
-  assert.equal((await service.apply(reviewed)).replayed, true);
-  assert.deepEqual(snapshot(f.pmRoot), before);
-  assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 1);
+  await assertLegacyReplay(f, service, reviewed);
+});
+
+test("round-8 fresh legacy plan preparation omits remote projections and keeps the raw PATCH path", async (t) => {
+  const { f, item, service, reviewed } = await legacyLocalDecision(t);
+  let pending: Record<string, unknown> | undefined;
+  const interrupted = resolver(f, async () => {
+    pending = JSON.parse(String((await f.pm.get(item.id)).item.ado_resolution_intent)) as Record<string, unknown>;
+    throw new Error("Interrupted after fresh legacy prepare");
+  });
+  await assert.rejects(interrupted.apply(reviewed), { code: "ado_partial_apply" });
+  assert.ok(pending, "the observer must capture the freshly prepared legacy intent");
+  assert.equal("remote_values" in pending, false, "a fresh legacy intent must omit the normalized remote witness");
+  const patch = pending.patch as JsonPatchOperation[];
+  assert.ok(patch.some((operation) => operation.path === "/fields/System.Title" && operation.value === "Legacy local decision"),
+    "the raw-wire PATCH must carry the reviewed local value");
+  // Recovery consumes the raw-wire intent without remote projections and replays cleanly.
+  await assertLegacyReplay(f, service, reviewed);
+});
+
+test("legacy raw plans retain explicit alias configuration through PATCH proof and agreement replay", async (t) => {
+  const previous = process.env.ADO_EXPORT_STATE_MAP;
+  process.env.ADO_EXPORT_STATE_MAP = JSON.stringify({ " CLOSED ": "Done" });
+  try {
+    const maps = { imports: IMPORT_STATE_MAP, exports: stateMap(process.env.ADO_EXPORT_STATE_MAP, STATE_MAP) };
+    const { f, service, reviewed } = await legacyLocalDecision(t, maps);
+    await assertLegacyReplay(f, service, reviewed);
+    assert.equal(f.items.get(1)!.fields["System.State"], "New", "the reviewed title PATCH never reinterprets the raw remote status");
+  } finally {
+    if (previous === undefined) delete process.env.ADO_EXPORT_STATE_MAP;
+    else process.env.ADO_EXPORT_STATE_MAP = previous;
+  }
 });
 
 test("round-8 missing scope coordinates and non-directory outbox storage refuse without writes", async (t) => {
@@ -140,7 +158,58 @@ test("round-8 missing scope coordinates and non-directory outbox storage refuse 
   const empty = await fixture(t, []);
   mkdirSync(join(empty.pmRoot, "transactions"), { recursive: true });
   writeFileSync(join(empty.pmRoot, "transactions/pm-ado-sync"), "not a directory");
-  await assert.rejects(outbox(empty).recoverEffects([], []), { code: "ENOTDIR" });
+  await assert.rejects(outbox(empty).recoverEffects([], []), /real private directory/u);
+});
+
+test("the journal directory is hardened before every read and write and refuses non-regular stand-ins", async (t) => {
+  const f = await fixture(t, []);
+  const { item } = await f.pm.create({ title: "Journal owner", type: "Task" });
+  const directory = join(f.pmRoot, "transactions/pm-ado-sync");
+  mkdirSync(directory, { recursive: true });
+  // Inherited loose permissions must not survive the next journal read or write.
+  chmodSync(directory, 0o755);
+  assert.equal((await outbox(f).create(item.id, "Task", { "System.Title": "Hardened plan" })).remote.id, 1);
+  assert.equal(statSync(directory).mode & 0o777, 0o700, "an existing journal directory must be hardened before journal use");
+  const locals = (await f.pm.listAllComplete()).items;
+  const remotes = [{ id: 1, rev: 1, fields: {}, relations: [] }];
+  const elsewhere = mkdtempSync(join(tmpdir(), "ado-journal-target-"));
+  t.after(() => rmSync(elsewhere, { recursive: true, force: true }));
+  // A symlinked journal entry is refused instead of followed or overwritten.
+  const file = intentFiles(f)[0]!, stash = readFileSync(file, "utf8");
+  const leak = join(elsewhere, "leak.json");
+  writeFileSync(leak, "{}");
+  rmSync(file);
+  symlinkSync(leak, file);
+  await assert.rejects(outbox(f).create(item.id, "Task", {}), /regular file/u);
+  await assert.rejects(outbox(f).owners(remotes, locals), /regular file/u);
+  await assert.rejects(outbox(f).recoverEffects([], []), /regular file/u);
+  assert.equal(readFileSync(leak, "utf8"), "{}", "refusal preserves the external target");
+  rmSync(file);
+  writeFileSync(file, stash);
+  chmodSync(file, 0o600);
+  // A symlinked journal directory never receives private intent contents.
+  rmSync(directory, { recursive: true, force: true });
+  symlinkSync(elsewhere, directory);
+  await assert.rejects(outbox(f).create(item.id, "Task", {}), /real private directory/u);
+  await assert.rejects(outbox(f).owners(remotes, locals), /real private directory/u);
+  await assert.rejects(outbox(f).recoverEffects([], []), /real private directory/u);
+  assert.deepEqual(readdirSync(elsewhere), ["leak.json"], "no journal is written through the directory link");
+});
+
+test("journal entry inspection propagates filesystem errors if storage changes after directory validation", async (t) => {
+  const f = await fixture(t, []), { item } = await f.pm.create({ title: "Storage race", type: "Task" });
+  const directory = join(f.pmRoot, "transactions/pm-ado-sync");
+  const sdk = { ...runtimeSdk, acquireLockLease: async (...args: Parameters<typeof runtimeSdk.acquireLockLease>) => {
+    const lease = await runtimeSdk.acquireLockLease(...args);
+    renameSync(directory, `${directory}-saved`);
+    writeFileSync(directory, "replaced after directory inspection");
+    return lease;
+  } };
+  const config = { orgUrl: f.org, project: "Project", token: "synthetic-token" };
+  const service = new SyncOutbox(f.pmRoot, "fixture-agent", config, new AdoClient(config, transport), undefined, sdk);
+  await assert.rejects(service.create(item.id, "Task", { "System.Title": item.title }), { code: "ENOTDIR" });
+  assert.equal(f.items.size, 0);
+  assert.equal(f.requests.length, 0);
 });
 
 /** Build a full work item with optional field/revision overrides. */
@@ -2041,9 +2110,7 @@ test("pending PATCH bases ignore unrelated or unapplied records and prove only t
 test("a dispatched PATCH whose work item Azure now omits refuses as a typed conflict and keeps its intent", async (t) => {
   // CodeRabbit on #46: getWorkItems uses errorPolicy "omit", so a deleted or newly unreadable item returns no row.
   // Reading current.rev then threw a TypeError that surfaced as a generic ADO_REMOTE with no recovery guidance.
-  const f = await fixture(t);
-  await f.command("import");
-  const local = await row(f.pm);
+  const { f, item: local } = await importedFixture(t);
   const remote = structuredClone(f.items.get(1)!);
   const interrupted = outbox(f, (event) => {
     if (event.boundary === "intent" && event.phase === "after" && event.operation === "dispatched") throw new Error("Interrupted after dispatch");
@@ -2657,6 +2724,44 @@ test("round-3 model: 512 two-sided sequences preserve edits and witness every ba
   assert.ok(successes > 0 && conflicts > 0);
   for (const side of ["local", "remote"]) for (const key of operations) assert.ok(counts[`${side}:${key}`], `${side} ${key} missing`);
   t.diagnostic(JSON.stringify({ sequences: 512, seed: "0x37a9c521", interrupted, successes, conflicts, boundaries: [...boundaries].sort(), actor_operations: counts }));
+});
+
+test("explicit status aliases override defaults but ambiguous user maps refuse before remote effects", async (t) => {
+  const f = await fixture(t, []);
+  const { item } = await f.pm.create({ title: "Explicit alias", type: "Task" });
+  await f.pm.update(item.id, { status: "closed", closeReason: "Alias export fixture" });
+  f.env.ADO_EXPORT_STATE_MAP = JSON.stringify({ " CLOSED ": "Done" });
+  assert.equal((await f.command("export")).ok, true);
+  assert.equal(f.items.get(1)!.fields["System.State"], "Done");
+  f.env.ADO_EXPORT_STATE_MAP = JSON.stringify({ closed: "Done", " CLOSED ": "Closed" });
+  const before = snapshot(f.pmRoot), calls = f.requests.length;
+  assert.equal((await f.command("sync")).code, "ADO_USAGE");
+  assert.equal(f.requests.length, calls);
+  assert.deepEqual(snapshot(f.pmRoot), before);
+});
+
+test("round-8 fixed: a peer edit to a captured but unselected item refuses before a neighboring Azure create", async (t) => {
+  const f = await fixture(t, []);
+  await f.pm.create({ title: "Selected neighbor", type: "Task" });
+  await f.pm.create({ title: "Unselected peer target", type: "Task" });
+  // The command selects the first listed local item only; the peer edits the other captured head.
+  const rows = (await f.pm.listAllComplete()).items;
+  assert.equal(rows.length, 2);
+  const selected = rows[0]!, unselected = rows[1]!, original = selected.title;
+  let edited = false;
+  const result = await f.observed("sync", async (event) => {
+    // Edit after the fence captured every head but before the query selects only the first item.
+    if (!edited && event.boundary === "remote" && event.phase === "before" && event.operation.includes("wiql")) {
+      edited = true;
+      await f.pm.update(unselected.id, { title: "Peer edit during planning" });
+    }
+  }, { limit: 1 });
+  assert.equal(edited, true);
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.code, "ADO_CONFLICT");
+  assert.equal(f.items.size, 0, "no Azure item may be created after an undetected peer edit");
+  assert.equal((await f.pm.get(unselected.id)).item.title, "Peer edit during planning");
+  assert.equal((await f.pm.get(selected.id)).item.title, original);
 });
 
 test("round-3 fixed: interrupted scalar PATCH never promotes an unimported remote relation", async (t) => {
@@ -3585,8 +3690,8 @@ test("round-5 unprepared version-2 coordinates normalize on first apply interrup
     plan.fields = resolutionFields(item, remote, maps, false); plan.mapping = resolutionDigest(maps);
     const reviewed = choices(plan, "remote");
     await assert.rejects(resolver(f, () => { throw new Error("Interrupted legacy prepare"); }).apply(reviewed), { code: "ado_partial_apply" });
-    const pending = JSON.parse(String((await f.pm.get(item.id)).item.ado_resolution_intent)) as { values: Record<string, unknown>; remote_values: Record<string, unknown> };
-    assert.equal(pending.values.status, " CLOSED "); assert.equal(pending.remote_values.status, " CLOSED ");
+    const pending = JSON.parse(String((await f.pm.get(item.id)).item.ado_resolution_intent)) as { values: Record<string, unknown>; remote_values?: Record<string, unknown> };
+    assert.equal(pending.values.status, " CLOSED "); assert.equal(Object.hasOwn(pending, "remote_values"), false);
     assert.equal((await service.apply(reviewed)).ok, true);
     const before = snapshot(f.pmRoot); assert.equal((await service.apply(reviewed)).replayed, true);
     assert.deepEqual(snapshot(f.pmRoot), before);
@@ -4046,3 +4151,25 @@ test("review-46 recovered relation PATCH refuses a later local deletion before c
     });
   }
 });
+
+
+/** Prepare identical markerless reviewed decisions for fresh and pre-existing legacy intent recovery. */
+async function legacyLocalDecision(t: test.TestContext, maps = { imports: IMPORT_STATE_MAP, exports: STATE_MAP }) {
+  const { f, item } = await importedFixture(t), service = resolver(f);
+  await f.pm.update(item.id, { title: "Legacy local decision" });
+  const current = await row(f.pm), remote = f.items.get(1)!;
+  const plan = await service.plan(item.id);
+  delete plan.normalization;
+  plan.fields = resolutionFields(current, remote, maps, false); plan.mapping = resolutionDigest(maps);
+  return { f, item, service, reviewed: choices(plan) };
+}
+
+/** A legacy recovered PATCH applies once and its successful replay preserves authoritative bytes. */
+async function assertLegacyReplay(f: Awaited<ReturnType<typeof fixture>>, service: AdoResolutionService, reviewed: ResolutionPlan): Promise<void> {
+  assert.equal((await service.apply(reviewed)).ok, true);
+  assert.equal(f.items.get(1)!.fields["System.Title"], "Legacy local decision");
+  const before = snapshot(f.pmRoot);
+  assert.equal((await service.apply(reviewed)).replayed, true);
+  assert.deepEqual(snapshot(f.pmRoot), before);
+  assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 1);
+}

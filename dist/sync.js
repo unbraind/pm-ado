@@ -36,8 +36,17 @@ function option(options, name) {
         throw new CommandError(`--${name} requires a non-empty string`);
     return value;
 }
-/** Parse an optional JSON state map and reject unusable configuration before reads. */
-export function stateMap(raw, defaults) {
+/**
+ * Parse state maps; an export context canonicalizes defaults and explicit overrides separately before merging.
+ * Imports omit the context so Azure state names remain literal; explicit export aliases replace defaults.
+ */
+export function stateMap(raw, defaults, normalization) {
+    if (normalization !== undefined) {
+        // An explicit alias overrides its default just like a canonical key. Collisions within either
+        // layer remain ambiguous; merging first would erase which keys were explicit overrides.
+        return { ...normalizeStateMaps({ imports: {}, exports: defaults }, normalization).exports,
+            ...normalizeStateMaps({ imports: {}, exports: stateMap(raw, {}) }, normalization).exports };
+    }
     if (raw === undefined)
         return { ...defaults };
     let parsed;
@@ -109,6 +118,10 @@ export function readBase(item, sample, normalization) {
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
         throw new CommandError("Invalid ado_sync_base");
     const base = parsed, presentFields = new Set(baseFields(parsed));
+    // A corrupt field list must never masquerade as an empty partial base and bypass field validation.
+    if (Object.hasOwn(base, "ado_base_fields") && (!Array.isArray(base.ado_base_fields) || base.ado_base_fields.some((field) => typeof field !== "string"))) {
+        throw new CommandError("Invalid ado_sync_base fields");
+    }
     for (const [key, value] of Object.entries(sample)) {
         if ((base.ado_base_partial === 1 || Object.hasOwn(base, "ado_base_fields")) && !presentFields.has(key))
             continue;
@@ -284,7 +297,7 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
         if (!Number.isSafeInteger(limit) || limit < 1)
             throw new CommandError("--limit must be a positive safe integer");
         const requestedStates = stateMap(process.env.ADO_STATUS_MAP, IMPORT_STATE_MAP);
-        const exportStates = stateMap(process.env.ADO_EXPORT_STATE_MAP, STATE_MAP);
+        let exportStates = stateMap(process.env.ADO_EXPORT_STATE_MAP, STATE_MAP);
         if (mode === "export" && ["wiql", "area-path", "iteration-path"].some((name) => option(ctx.options, name) !== undefined)) {
             throw new CommandError("WIQL, area and iteration filters apply to import/sync only");
         }
@@ -313,6 +326,7 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
         const settings = await sdk.readSettings(ctx.pm_root);
         const statusRegistry = sdk.resolveRuntimeStatusRegistry(settings.schema);
         const normalization = { sdk, schema: settings.schema, idPrefix: settings.id_prefix };
+        exportStates = stateMap(process.env.ADO_EXPORT_STATE_MAP, STATE_MAP, normalization);
         const states = Object.fromEntries(Object.entries(requestedStates).map(([remote, status]) => [remote, normalizeStatusValue(status, normalization)]));
         const author = sdk.selectImportAuthor(ctx.global.author, settings.author_default);
         const outbox = new SyncOutbox(ctx.pm_root, author, config, client, observer, sdk);
@@ -659,6 +673,10 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
                 await guardRelationUpdate(id, options);
         }
         await retireIntents(); // Scalar and relation validation precedes every housekeeping write.
+        // Query limits and filters never narrow the fence: recheck every captured head, including
+        // captured-but-unselected items, after the retiring writes and before any remote effect.
+        if (!dryRun)
+            await writes.assertAll();
         if (!dryRun) {
             for (const entry of entries)
                 if (entry.local !== undefined) {

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { sameScope, normalizeFieldValues, normalizeStatusValue, normalizeItemReference, normalizeScopeValue, normalizeStateMaps, type ValueNormalization } from "./normalization.ts";
+import { sameScope, normalizeFieldValues, normalizeStatusValue, normalizeItemReference, normalizeScopeValue, normalizeStateMaps, type ValueNormalization, type StatusReferenceNormalization } from "./normalization.ts";
 /** Command orchestration and per-field Azure DevOps reconciliation. */
 import { agreementMutation, advanceSyncBase, readBaseRevisions, knownBase, baseFields } from "./agreement.ts";
 import { loadResolutionSdk, resolutionDigest } from "./resolution.ts";
@@ -60,10 +60,17 @@ interface Plan {
   /** Provenance fields already persisted after a successful remote creation. */
   linked_fields?: string[];
 }
-/** Stable command receipt; native races retain the established ADO_CONFLICT envelope and typed field evidence. */
-export interface SyncCommandResult {
-  /** Whether every selected operation completed. */
-  ok: boolean;
+/** Native-conflict evidence retained inside the established ADO_CONFLICT envelope. */
+export interface SyncConflictEvidence {
+  /** Forward-only conflict class marker. */
+  code: "sync_conflict";
+  /** Exact native target, when a guarded write selected one. */
+  pm_id: string | null;
+  /** Saved and current field values; null represents an absent field. */
+  fields: Record<string, { base: unknown; current: unknown }>;
+}
+/** Coordinates shared by successful and refused command receipts. */
+interface SyncReceipt {
   /** Preview mode does not commit either tracker. */
   dry_run: boolean;
   /** Planned and completed operation coordinates. */
@@ -72,17 +79,37 @@ export interface SyncCommandResult {
   conflicts: Conflict[];
   /** Unmapped relation and transport diagnostics. */
   diagnostics: unknown[];
-  /** Existing CLI machine code. */
-  code?: string;
-  /** Existing process exit contract. */
-  exit_code?: number;
-  /** Human-readable refusal, when present. */
-  error?: string;
-  /** Forward-only conflict class, also available with compact output. */
-  kind?: "sync_conflict";
-  /** Exact native target and before/current field values. */
-  sync_conflict?: { code: "sync_conflict"; pm_id: string | null; fields: Record<string, { base: unknown; current: unknown }> };
 }
+/** Stable discriminated receipt; success has no refusal code and failure always has an exit code. */
+export type SyncCommandResult = SyncReceipt & (
+  | {
+    /** Every selected operation completed. */
+    ok: true;
+    /** Successful runs carry no refusal coordinates. */
+    code?: undefined;
+    /** Successful runs carry no process exit code. */
+    exit_code?: undefined;
+    /** Successful runs carry no refusal message. */
+    error?: undefined;
+    /** Successful runs carry no conflict class. */
+    kind?: undefined;
+    /** Successful runs carry no native-conflict evidence. */
+    sync_conflict?: undefined;
+  }
+  | {
+    /** A selected operation was refused. */
+    ok: false;
+    /** Existing CLI machine code. */
+    code: string;
+    /** Existing process exit contract. */
+    exit_code: number;
+    /** Human-readable refusal, when supplied by this failure class. */
+    error?: string;
+    /** Forward-only conflict class, also available with compact output. */
+    kind?: "sync_conflict";
+    /** Exact native target and before/current field values. */
+    sync_conflict?: SyncConflictEvidence;
+  });
 /** Internal plan retaining snapshots without exposing private item bodies by default. */
 interface Entry {
   /** The public plan receipt. */
@@ -117,8 +144,17 @@ function option(options: Record<string, unknown>, name: string): string | undefi
   return value;
 }
 
-/** Parse an optional JSON state map and reject unusable configuration before reads. */
-export function stateMap(raw: string | undefined, defaults: Readonly<Record<string, string>>): Record<string, string> {
+/**
+ * Parse state maps; an export context canonicalizes defaults and explicit overrides separately before merging.
+ * Imports omit the context so Azure state names remain literal; explicit export aliases replace defaults.
+ */
+export function stateMap(raw: string | undefined, defaults: Readonly<Record<string, string>>, normalization?: ValueNormalization | StatusReferenceNormalization): Record<string, string> {
+  if (normalization !== undefined) {
+    // An explicit alias overrides its default just like a canonical key. Collisions within either
+    // layer remain ambiguous; merging first would erase which keys were explicit overrides.
+    return { ...normalizeStateMaps({ imports: {}, exports: defaults }, normalization).exports,
+      ...normalizeStateMaps({ imports: {}, exports: stateMap(raw, {}) }, normalization).exports };
+  }
   if (raw === undefined) return { ...defaults };
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { throw new CommandError("State map must be valid JSON"); }
@@ -180,6 +216,10 @@ export function readBase(item: ItemMetadata, sample: Values, normalization?: Val
   catch { throw new CommandError(`Invalid ado_sync_base for ${item.id}: expected valid JSON`); }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new CommandError("Invalid ado_sync_base");
   const base = parsed as Values, presentFields = new Set(baseFields(parsed as Values));
+  // A corrupt field list must never masquerade as an empty partial base and bypass field validation.
+  if (Object.hasOwn(base, "ado_base_fields") && (!Array.isArray(base.ado_base_fields) || (base.ado_base_fields as unknown[]).some((field) => typeof field !== "string"))) {
+    throw new CommandError("Invalid ado_sync_base fields");
+  }
   for (const [key, value] of Object.entries(sample)) {
     if ((base.ado_base_partial === 1 || Object.hasOwn(base, "ado_base_fields")) && !presentFields.has(key)) continue;
     if (Array.isArray(value) ? !Array.isArray(base[key]) || (base[key] as unknown[]).some((entry) => typeof entry !== "string")
@@ -377,7 +417,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
     const limit = Number(ctx.options.limit ?? 100);
     if (!Number.isSafeInteger(limit) || limit < 1) throw new CommandError("--limit must be a positive safe integer");
     const requestedStates = stateMap(process.env.ADO_STATUS_MAP, IMPORT_STATE_MAP);
-    const exportStates = stateMap(process.env.ADO_EXPORT_STATE_MAP, STATE_MAP);
+    let exportStates = stateMap(process.env.ADO_EXPORT_STATE_MAP, STATE_MAP);
     if (mode === "export" && ["wiql", "area-path", "iteration-path"].some((name) => option(ctx.options, name) !== undefined)) {
       throw new CommandError("WIQL, area and iteration filters apply to import/sync only");
     }
@@ -396,6 +436,7 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
     const settings = await sdk.readSettings(ctx.pm_root);
     const statusRegistry = sdk.resolveRuntimeStatusRegistry(settings.schema);
     const normalization = { sdk, schema: settings.schema, idPrefix: settings.id_prefix };
+    exportStates = stateMap(process.env.ADO_EXPORT_STATE_MAP, STATE_MAP, normalization);
     const states = Object.fromEntries(Object.entries(requestedStates).map(([remote, status]) => [remote, normalizeStatusValue(status, normalization)]));
     const author = sdk.selectImportAuthor(ctx.global.author, settings.author_default);
     const outbox = new SyncOutbox(ctx.pm_root, author, config, client, observer, sdk);
@@ -662,6 +703,9 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
       for (const { id, options } of footprint.updates) await guardRelationUpdate(id, options);
     }
     await retireIntents(); // Scalar and relation validation precedes every housekeeping write.
+    // Query limits and filters never narrow the fence: recheck every captured head, including
+    // captured-but-unselected items, after the retiring writes and before any remote effect.
+    if (!dryRun) await writes.assertAll();
     if (!dryRun) {
       for (const entry of entries) if (entry.local !== undefined) {
         if (entry.remote !== undefined) {

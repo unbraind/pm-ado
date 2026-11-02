@@ -1,4 +1,4 @@
-import { type ValueNormalization } from "./normalization.ts";
+import { type ValueNormalization, type StatusReferenceNormalization } from "./normalization.ts";
 import { type SyncObserver } from "./sync-outbox.ts";
 import type { CommandHandlerContext, FlagDefinition } from "@unbrained/pm-cli/sdk/authoring";
 import type { ItemMetadata, PmUpdateActionOptions, PmClient } from "@unbrained/pm-cli/sdk";
@@ -41,10 +41,20 @@ interface Plan {
     /** Provenance fields already persisted after a successful remote creation. */
     linked_fields?: string[];
 }
-/** Stable command receipt; native races retain the established ADO_CONFLICT envelope and typed field evidence. */
-export interface SyncCommandResult {
-    /** Whether every selected operation completed. */
-    ok: boolean;
+/** Native-conflict evidence retained inside the established ADO_CONFLICT envelope. */
+export interface SyncConflictEvidence {
+    /** Forward-only conflict class marker. */
+    code: "sync_conflict";
+    /** Exact native target, when a guarded write selected one. */
+    pm_id: string | null;
+    /** Saved and current field values; null represents an absent field. */
+    fields: Record<string, {
+        base: unknown;
+        current: unknown;
+    }>;
+}
+/** Coordinates shared by successful and refused command receipts. */
+interface SyncReceipt {
     /** Preview mode does not commit either tracker. */
     dry_run: boolean;
     /** Planned and completed operation coordinates. */
@@ -53,28 +63,42 @@ export interface SyncCommandResult {
     conflicts: Conflict[];
     /** Unmapped relation and transport diagnostics. */
     diagnostics: unknown[];
+}
+/** Stable discriminated receipt; success has no refusal code and failure always has an exit code. */
+export type SyncCommandResult = SyncReceipt & ({
+    /** Every selected operation completed. */
+    ok: true;
+    /** Successful runs carry no refusal coordinates. */
+    code?: undefined;
+    /** Successful runs carry no process exit code. */
+    exit_code?: undefined;
+    /** Successful runs carry no refusal message. */
+    error?: undefined;
+    /** Successful runs carry no conflict class. */
+    kind?: undefined;
+    /** Successful runs carry no native-conflict evidence. */
+    sync_conflict?: undefined;
+} | {
+    /** A selected operation was refused. */
+    ok: false;
     /** Existing CLI machine code. */
-    code?: string;
+    code: string;
     /** Existing process exit contract. */
-    exit_code?: number;
-    /** Human-readable refusal, when present. */
+    exit_code: number;
+    /** Human-readable refusal, when supplied by this failure class. */
     error?: string;
     /** Forward-only conflict class, also available with compact output. */
     kind?: "sync_conflict";
     /** Exact native target and before/current field values. */
-    sync_conflict?: {
-        code: "sync_conflict";
-        pm_id: string | null;
-        fields: Record<string, {
-            base: unknown;
-            current: unknown;
-        }>;
-    };
-}
+    sync_conflict?: SyncConflictEvidence;
+});
 /** Detect a field requiring an explicit decision rather than choosing either writer. */
 export declare function threeWayFieldConflict(local: unknown, remote: unknown, base: unknown): boolean;
-/** Parse an optional JSON state map and reject unusable configuration before reads. */
-export declare function stateMap(raw: string | undefined, defaults: Readonly<Record<string, string>>): Record<string, string>;
+/**
+ * Parse state maps; an export context canonicalizes defaults and explicit overrides separately before merging.
+ * Imports omit the context so Azure state names remain literal; explicit export aliases replace defaults.
+ */
+export declare function stateMap(raw: string | undefined, defaults: Readonly<Record<string, string>>, normalization?: ValueNormalization | StatusReferenceNormalization): Record<string, string>;
 /** Escape WIQL literals; explicit WIQL cannot be combined with generated filters. */
 export declare function buildWiql(options: Record<string, unknown>, project: string): string;
 /** Project Azure fields into the same normalized shape as local metadata. */

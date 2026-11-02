@@ -258,11 +258,11 @@ export function mergeSyncValues(local, remote, base, effect, normalization) {
     }));
 }
 /** Describe a refused revision using the client's single diagnostic snapshot. */
-function revisionConflict(entry, error, config, identities, states) {
+function revisionConflict(entry, error, config, identities, states, normalization) {
     const current = error.current;
-    const remote = current === undefined ? {} : remoteValues(current, states);
+    const remote = current === undefined ? {} : remoteValues(current, states, normalization);
     remote.relations = current === undefined ? [] : relationValues(current.relations ?? [], config, identities);
-    const local = { ...localValues(entry.local), relations: entry.values.relations };
+    const local = { ...localValues(entry.local, normalization), relations: entry.values.relations };
     return { pm_id: entry.local.id, ado_id: entry.remote.id, stored_rev: error.assertedRev, remote_rev: current?.rev ?? null,
         fields: Object.fromEntries(Object.keys(local).filter((key) => !equal(local[key], remote[key]))
             .map((key) => [key, { local: local[key], remote: remote[key] ?? null }])) };
@@ -653,7 +653,7 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
                     throw new CommandError(`Missing valid ado_rev for ${local.id}; import first`);
                 entry.revision = Number(asserted);
                 if (mode === "export" && entry.revision !== remote.rev) {
-                    conflicts.push(revisionConflict(entry, new RevisionConflict(remote.id, entry.revision, remote), config, identities, states));
+                    conflicts.push(revisionConflict(entry, new RevisionConflict(remote.id, entry.revision, remote), config, identities, states, normalization));
                 }
             }
             // Validate export mappings even in dry-run, before any write on either side.
@@ -730,7 +730,7 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
                 catch (error) {
                     if (!(error instanceof RevisionConflict))
                         throw error;
-                    conflicts.push(revisionConflict(entry, error, config, identities, states));
+                    conflicts.push(revisionConflict(entry, error, config, identities, states, normalization));
                     continue;
                 }
                 entry.remote = { ...remote, relations: remote.relations ?? [] };
@@ -767,7 +767,7 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
                     catch (error) {
                         if (!(error instanceof RevisionConflict))
                             throw error;
-                        conflicts.push(revisionConflict(entry, error, config, identities, states));
+                        conflicts.push(revisionConflict(entry, error, config, identities, states, normalization));
                     }
                 }
             }

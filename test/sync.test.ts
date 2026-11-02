@@ -499,6 +499,56 @@ test("412 export conflict retains pm item and history byte-for-byte and has a re
   assert.deepEqual(snapshot(f.pmRoot), before);
 });
 
+/** Conflict diagnostics use the command's schema and SDK even when the extension has no module link. */
+test("revision conflict receipts preserve custom status aliases and anchored SDK normalization", async (t) => {
+  const isolated = mkdtempSync(join(tmpdir(), "ado-conflict-runtime-"));
+  t.after(() => rmSync(isolated, { recursive: true, force: true }));
+  cpSync(join(repo, "dist"), join(isolated, "dist"), { recursive: true });
+  writeFileSync(join(isolated, "package.json"), JSON.stringify({ type: "module" }));
+  const request = createRequire(join(isolated, "dist/sync.js"));
+  assert.throws(() => request.resolve("@unbrained/pm-cli/sdk"), /Cannot find module/u);
+  const unlinked = request(join(isolated, "dist/sync.js")) as typeof import("../sync.ts");
+  for (const [name, implementation] of [["source", runSyncCommand], ["built", runBuiltSyncCommand], ["unlinked", unlinked.runSyncCommand]] as const) {
+    for (const conflict of ["planning", "patch", "creation-relations"] as const) await t.test(`${name}:${conflict}`, async (sub) => {
+      const f = await fixture(sub, conflict === "creation-relations" ? [] : [workItem(1, { "System.State": "Awaiting Review" })]);
+      await f.pm.schemaAddStatus("review_stage", { alias: ["Ready To Review", "ready-to-verify"], role: ["active"] });
+      f.env.ADO_STATUS_MAP = JSON.stringify({ "Awaiting Review": "Ready To Review" });
+      f.env.ADO_EXPORT_STATE_MAP = JSON.stringify({ review_stage: "Awaiting Review" });
+      if (conflict === "creation-relations") {
+        const { item } = await f.pm.create({ title: "Unlinked parent", type: "Task", status: "review_stage" });
+        await f.pm.create({ title: "Unlinked child", type: "Task", status: "review_stage", parent: item.id });
+      } else {
+        assert.equal((await f.command("import")).ok, true);
+        const item = await row(f.pm);
+        assert.equal(item.status, "review_stage");
+        await f.pm.update(item.id, { title: "Local writer" });
+      }
+      // A host metadata projection may retain an accepted historical spelling; native storage remains canonical.
+      const list = f.pm.listAllComplete.bind(f.pm);
+      sub.mock.method(f.pm, "listAllComplete", async (...args: Parameters<typeof list>) => {
+        const result = await list(...args);
+        return { ...result, items: result.items.map((item) => ({ ...item, status: "ready-to-verify" })) };
+      });
+      const before = snapshot(f.pmRoot);
+      if (conflict === "planning") {
+        f.items.get(1)!.rev++;
+        f.items.get(1)!.fields["System.Title"] = "Concurrent writer";
+      } else f.race();
+      const result = await f.observed("export", () => {}, {}, [import.meta.url], implementation);
+      assert.equal(result.code, "ADO_CONFLICT", JSON.stringify(result));
+      assert.equal(result.exit_code, 4);
+      assert.equal(result.conflicts.length, 1);
+      const receipt = result.conflicts[0]!;
+      assert.equal(receipt.stored_rev, 1);
+      assert.equal(receipt.remote_rev, 2);
+      assert.ok(receipt.fields.title);
+      assert.equal(Object.hasOwn(receipt.fields, "status"), false, JSON.stringify(receipt));
+      assert.equal(f.requests.filter((entry) => entry.method === "PATCH").length, conflict === "planning" ? 0 : conflict === "patch" ? 1 : 2);
+      if (conflict !== "creation-relations") assert.deepEqual(snapshot(f.pmRoot), before);
+    });
+  }
+});
+
 test("sync reconciles remote-only and local-only fields; both-changed fields refuse the whole plan", async (t) => {
   const f = await fixture(t);
   await f.command("import");

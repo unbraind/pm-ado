@@ -278,7 +278,7 @@ process.on("exit", () => {
   writeFileSync(join(reportDir, process.pid + ".json"), JSON.stringify(globalThis.__coverage__ ?? {}));
 });
 `);
-  const result = spawnSync(runner.executable, [...runner.args, "--import", preload, "--test", ...tests], {
+  const result = spawnSync(runner.executable, [...runner.args, "--import", preload, "--test", "--test-concurrency=2", ...tests], {
     cwd: rootDir,
     stdio,
     shell: runner.shell ?? false,
@@ -464,6 +464,7 @@ export function runCoverageGate(
     [
       ...runner.args,
       "--test",
+      "--test-concurrency=2",
       "--experimental-test-coverage",
       // Scope the report to exactly the files the presence check requires.
       // Passing the enumerated paths rather than a directory glob keeps the two

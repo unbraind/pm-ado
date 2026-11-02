@@ -1,0 +1,19 @@
+id: pm-ado-host-sdk-facade
+title: Expose host-bound SDK primitives for extensions without a module link
+description: "Verified pinned SDK 2026.10.27: sdk/item-transaction.d.ts exports commitItemMutations and previewItemMutations; core/extensions/extension-types.d.ts ExtensionCommandSdk exposes bound client, graph/history helpers, workspace transactions and settings mutation, but no public SDK runtime namespace or module anchor. Guarded import, export and sync need module-resolved mutation/history/lease primitives and refuse with ADO_USAGE without the pm install SDK link, including dry-run. Bound read-only sparse refresh still works. Missing signature: ExtensionCommandSdk.runtime or moduleAnchor, or equivalent bound primitives. Proper package installs retain their SDK link. Recheck current upstream capabilities before filing; no upstream write performed."
+type: Issue
+status: open
+priority: 2
+tags[1]: sdk-gap
+created_at: "2026-10-27T01:55:53.323Z"
+updated_at: "2026-11-02T00:27:18.240Z"
+author: codex-agent
+parent: pm-ado-sdk-adoption
+comments[2]{created_at,author,text}:
+  "2026-10-27T03:16:57.245Z",codex-agent,"The package now accepts explicit SDK anchors for programmatic sync handlers and injected SDK namespaces for the outbox, following the existing resolution-loader contract. The CLI host facade supplies neither a public runtime namespace nor an explicit module anchor. Proper pm install links remain supported; removing the module link produces ADO_USAGE while bound read-only refresh remains available. Missing host signature can alternatively be ExtensionCommandSdk.moduleAnchor: string, permitting the host to provide its own explicit package anchor without inferring process launchers."
+  "2026-11-02T00:27:18.240Z",codex-sol,"PR46 review clarification: updated the active description against pinned SDK 2026.10.27 and current code. Earlier comments/history remain historical evidence and do not describe the current safety policy."
+files[1]{path,scope}:
+  sync.ts,project
+docs[1]{path,scope}:
+  docs/sdk-adoption.md,project
+body: ""

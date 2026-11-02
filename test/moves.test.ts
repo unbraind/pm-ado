@@ -1,25 +1,23 @@
+import { installFixtureExtension, fixtureItemPath, fixtureDirectory, packageRoot as repo } from "./helpers/package-runtime.ts";
+import { authoritativeDigest as snapshot } from "./helpers/authoritative-digest.ts";
+import { runCommand as run } from "./helpers/process-fixture.ts";
 /** Real SDK trackers, deterministic Azure rule validation, bounded reads and installed no-git CLI. */
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { promisify } from "node:util";
+import { join } from "node:path";
 import test from "node:test";
 import { PmClient, type ItemMetadata } from "@unbrained/pm-cli/sdk";
 import { createExtensionTestHarness } from "@unbrained/pm-cli/sdk/testing";
 import extension, { ContractRefusal, MOVE_LIMITS, MoveRefusal, simulateMove, type AdoWorkItem, type MoveOptions, type MovePreview } from "../index.ts";
 import * as built from "../dist/index.js";
 import { moveItem, moveService } from "./fixtures/move-service.ts";
-const repo = resolve(import.meta.dirname, "..");
-const run = promisify(execFile);
 
 /** Build a real disposable non-git tracker and link its genuine SDK-created items in memory. */
 async function fixture(t: test.TestContext, remote: AdoWorkItem[] = [moveItem(1)]) {
-  const root = mkdtempSync(join(tmpdir(), "ado-moves-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { root, cleanup } = fixtureDirectory("ado-moves-");
+  t.after(cleanup);
   const pmRoot = join(root, ".agents/pm"), pm = new PmClient({ cwd: root, pmRoot, author: "fixture-agent" });
   await pm.run("init", { prefix: "fixture" });
   for (const item of remote) await pm.create({ title: `Public shaped task ${item.id}`, type: "Task" });
@@ -38,12 +36,6 @@ async function refuses(action: Promise<unknown>, code: string) {
   });
 }
 /** Hash authoritative tracker files, excluding the SDK's derived runtime caches. */
-function snapshot(root: string) {
-  return Object.fromEntries(readdirSync(root, { recursive: true, withFileTypes: true }).filter((entry) => entry.isFile() && !join(entry.parentPath, entry.name).includes(`${join(root, "runtime")}/`)).map((entry) => {
-    const path = join(entry.parentPath, entry.name);
-    return [path.slice(root.length), createHash("sha256").update(readFileSync(path)).digest("hex")];
-  }));
-}
 
 test("inherited permissions and custom iteration rules produce deterministic independent rows without writes", async (t) => {
   const f = await fixture(t, [moveItem(1), moveItem(2, { "System.AreaPath": "Example\\Locked\\Child" }), moveItem(3, { "Custom.Ready": false })]);
@@ -92,7 +84,7 @@ test("selection and destination errors refuse before the first request", async (
   const f = await fixture(t);
   for (const ids of [[], ["absent"], [...f.options.ids, ...f.options.ids], Array.from({ length: 51 }, (_, i) => String(i))]) await refuses(f.preview({ ids }), "selection");
   for (const value of [undefined, "1", 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) await refuses(f.preview({ items: [{ ...f.options.items[0]!, ado_id: value }] }), "selection");
-  for (const changes of [{ ado_org_url: undefined }, { ado_org_url: "https://dev.azure.com/other" }, { ado_project: "Other" }]) {
+  for (const changes of [{ ado_org_url: undefined }, { ado_org_url: "https://dev.azure.com/other" }, { ado_project: undefined }, { ado_project: "Other" }]) {
     await refuses(f.preview({ items: [{ ...f.options.items[0]!, ...changes }] }), "selection");
   }
   const second = { ...f.options.items[0]!, id: "fixture-other" };
@@ -182,8 +174,7 @@ async function host(t: test.TestContext) {
   t.after(() => new Promise<void>((done) => server.close(() => done())));
   const address = server.address(); assert.ok(address && typeof address !== "string");
   f.config.orgUrl = `http://127.0.0.1:${address.port}`;
-  const installed = join(f.pmRoot, "extensions/pm-ado"); mkdirSync(installed, { recursive: true });
-  cpSync(join(repo, "dist"), join(installed, "dist"), { recursive: true }); cpSync(join(repo, "manifest.json"), join(installed, "manifest.json"));
+  installFixtureExtension(f.pmRoot);
   await f.pm.update(f.options.ids[0]!, { field: ["ado_id=1", `ado_org_url=${f.config.orgUrl}`, "ado_project=Example"] });
   const bin = join(f.root, "bin"); mkdirSync(bin); symlinkSync(process.execPath, join(bin, "node"));
   const env = { ...process.env, ADO_ORG_URL: f.config.orgUrl, ADO_TOKEN: f.config.token, PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1", GIT_CEILING_DIRECTORIES: tmpdir(), PATH: bin };
@@ -219,10 +210,9 @@ test("host refuses malformed options, missing binding/credentials, schema drift 
   assert.equal((await f.command({ ...options, "expect-fingerprint": "0".repeat(64) })).exit_code, 4);
   f.overrides.set("workitemsbatch", { status: 500, body: "server-secret" }); assert.equal((await f.command(options)).code, "remote_failure");
   f.overrides.clear(); assert.equal((await f.command(options)).ok, true);
-  const file = readdirSync(f.pmRoot, { recursive: true, encoding: "utf8" }).find((path) => path.endsWith(`/${f.options.ids[0]}.toon`));
-  assert.ok(file);
+  const file = fixtureItemPath(f.pmRoot, f.options.ids[0]!);
   // A genuine tracker read failure, not a mocked client, exercises sanitized fallback.
-  writeFileSync(join(f.pmRoot, file), "invalid [tracker data");
+  writeFileSync(file, "invalid [tracker data");
   assert.equal((await f.command(options)).code, "remote_failure");
 });
 
@@ -233,4 +223,67 @@ test("adversarial duplicate type metadata cannot exceed the total request budget
   await refuses(f.preview(), "remote_failure");
   assert.equal(f.calls.length, MOVE_LIMITS.requests);
   assert.ok(f.calls.every((call) => call.method === "GET"));
+});
+
+test("round-5 move IDs use host SDK prefix case and hash-marker normalization without a module link", async (t) => {
+  const f = await host(t), id = f.options.ids[0]!;
+  // The copied dist package under tracker storage has no SDK module link, so these
+  // references must resolve through the installed no-module-link CLI, not the in-repo module.
+  for (const project of ["Example", " Example "]) for (const reference of [id.toUpperCase(), ` #${id.toUpperCase()} `, id.slice("fixture-".length)]) {
+    const json = await f.cli(["--project", project, "--items", reference, "--area-path", "Example\\New", "--json"]);
+    const result = JSON.parse(json.stdout) as MovePreview;
+    assert.equal(result.ok, true, json.stdout); assert.equal(result.rows[0]!.id, id);
+  }
+  const before = f.calls.length;
+  const duplicate = await f.command({ project: "Example", items: `${id}, #${id.toUpperCase()}`, areaPath: "Example\\New" });
+  assert.equal(duplicate.code, "selection"); assert.equal(f.calls.length, before);
+});
+
+test("round-7 move selection bounds and native lookup failures refuse before Azure reads", async (t) => {
+  const f = await host(t), base = { project: "Example", areaPath: "Example\\New" };
+  assert.equal((await f.command({ ...base, items: Array.from({ length: 51 }, (_, index) => "fixture-" + index).join(",") })).code, "selection");
+  assert.equal((await f.command({ ...base, items: "fixture-missing" })).code, "selection");
+  assert.equal((await f.command({ ...base, items: "," })).code, "selection");
+  assert.equal(f.calls.length, 0);
+});
+
+test("blank move selection tokens refuse before any SDK lookup", async (t) => {
+  const f = await host(t);
+  const sdk = (await import("@unbrained/pm-cli/sdk")).createExtensionCommandSdk(f.pmRoot, f.pm);
+  const get = t.mock.method(f.pm, "get", () => { throw new Error("unexpected SDK lookup"); });
+  const list = t.mock.method(f.pm, "listAllComplete", () => { throw new Error("unexpected SDK snapshot"); });
+  const previous = process.env, exit = process.exitCode;
+  process.env = { ...f.env };
+  try {
+    for (const items of [",", "a,b,", "a,,b", " ", "a, ,b", ""]) {
+      const { runMoveCommand } = await import("../moves.ts");
+      const result = await runMoveCommand({ command: "ado move-preview", args: [], global: {}, pm_root: f.pmRoot, sdk,
+        options: { project: "Example", items, areaPath: "Example\\New" } });
+      assert.equal("code" in result && result.code, "selection", JSON.stringify(result));
+      assert.equal("exit_code" in result && result.exit_code, 2);
+    }
+    assert.equal(get.mock.callCount(), 0);
+    assert.equal(list.mock.callCount(), 0);
+    assert.equal(f.calls.length, 0);
+  } finally { process.env = previous; process.exitCode = exit; }
+});
+
+test("SDK move lookup failures return sanitized remote refusals", async (t) => {
+  const f = await host(t);
+  const lookup = t.mock.method(PmClient.prototype, "get", async () => { throw new Error("lookup-secret"); });
+  const result = await f.command({ project: "Example", items: f.options.ids[0], areaPath: "Example\\New" });
+  assert.equal(result.code, "remote_failure");
+  assert.equal(result.exit_code, 3);
+  assert.doesNotMatch(JSON.stringify(result), /lookup-secret/u);
+  assert.equal(lookup.mock.callCount(), 1);
+  assert.equal(f.calls.length, 0);
+});
+
+test("round-7 unscoped duplicate Azure IDs cannot borrow a selected native record's scope", async (t) => {
+  const f = await fixture(t), first = f.options.items[0]!;
+  for (const missing of [{ ado_org_url: undefined }, { ado_project: undefined }]) {
+    const result = await f.preview({ items: [first, { ...first, id: "fixture-unscoped", ...missing }] });
+    assert.equal(result.rows.length, 1); assert.equal(result.rows[0]!.id, first.id);
+    assert.equal(result.ok, true);
+  }
 });

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+No changes.
+
+## 2026.11.2 - 2026-11-02
+
 ### Fixed
 
 - The daily release generated its changelog with a drifted copy of the generator flags and its own check refused it ([pm-ado-r5ps](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-r5ps.toon))

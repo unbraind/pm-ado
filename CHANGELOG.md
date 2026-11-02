@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-No changes.
+### Changed
+
+- Use SDK settings-aware item reads and guarded sync persistence ([pm-ado-sdk-adoption](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-sdk-adoption.toon))
 
 ## 2026.11.2 - 2026-11-02
 

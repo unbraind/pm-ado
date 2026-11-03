@@ -3,11 +3,13 @@ title: Use SDK settings-aware item reads and guarded sync persistence
 description: "Adopt settings-aware authoritative SDK reads and guarded SDK lifecycle persistence from the 2026-10-25 audit. Authoritative lookup uses readSettings, resolveItemTypeRegistry and locateItem. Native sync is forward-only: compare current fields and native history before writes, report typed sync_conflict with field evidence, never compensate or restore old tracker state. Stale advisory intents are discarded with a recognized history reason and fresh planning uses current SDK/Azure state. Expected-history CAS and isolation from ordinary writers remain upstream pm-cli#1576 and #1620; the remaining read/write window is documented and measured. Preserve semantic output with intentional audit/plan coordinates, public-tracker differential evidence, native validation and crash/interleaving tests without git."
 type: Chore
 pm_format_version: 2
-status: in_progress
+status: closed
 priority: 2
 tags[3]: "gh:unbraind/pm-ado#46",refactor,sdk-adoption
 created_at: "2026-10-25T16:11:56.608Z"
-updated_at: "2026-11-02T20:30:55.553Z"
+updated_at: "2026-11-02T23:11:38.466Z"
+closed_at: "2026-11-02T23:11:38.242Z"
+completed_at: "2026-11-02T23:11:38.242Z"
 author: codex-agent
 parent: pm-ado-g4v1
 unblock_note: "Owner-approved forward-only policy replaces all automatic pm compensation; SDK read/write window is explicitly accepted and documented (#1576, #1620)."
@@ -618,4 +620,5 @@ docs[6]:
     note: Accurate terminal-step guarantees preserving the orchestrator correction
   - path: README.md
     scope: project
+close_reason: "Delivered by PR #46 (merged 2026-11-02 as 3f25878): settings-aware SDK item reads and guarded forward-only Azure sync persistence. The five CodeRabbit findings of the last round were fixed with revert proofs (recovered creation identity, recovered-effect revision fence, differential symlink refusal, blank move tokens, docs SDK versions). npm and Bun release:check passed at 1094/1094 tests and 100% coverage; CodeRabbit's full review of the final head had no findings; CI green."
 body: ""

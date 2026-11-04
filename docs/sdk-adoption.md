@@ -69,8 +69,11 @@ mutable intent values as authority.
 
 ## Known limitations and measured window
 
-A read and a native write are separate operations. Expected-item-hash/history
-CAS is upstream [pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576).
+A read and a native write remain separate operations in this package. SDK
+2026.11.4 adds expected-item-hash guards
+([pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576)); the existing
+package fence has not yet adopted them, and a monotonic history precondition
+remains a separate requirement.
 The workspace transaction primitive serializes only cooperating transaction
 callers, not ordinary native writers:
 [pm-cli#1620](https://github.com/unbraind/pm-cli/issues/1620). A writer in the

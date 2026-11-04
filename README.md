@@ -194,9 +194,9 @@ An absent or partial base never authorizes overwriting a locally edited or unkno
 
 There is still a window between the final read and the native write. Ordinary
 SDK writers do not join the workspace transaction lock
-([pm-cli#1620](https://github.com/unbraind/pm-cli/issues/1620)), and there is no
-native expected-item-hash precondition
-([pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576)). A writer in that
+([pm-cli#1620](https://github.com/unbraind/pm-cli/issues/1620)), and this
+package has not yet adopted the expected-item-hash guards available since SDK
+2026.11.4 ([pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576)). A writer in that
 window may still be overwritten; post-write detection reports a conflict but
 never attempts rollback. This is not cross-process isolation. Twelve real SDK
 samples measured **34.8–194.7 ms** from the final guard to completed SDK write, an

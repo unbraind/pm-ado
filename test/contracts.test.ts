@@ -422,7 +422,7 @@ test("review-46 required titles share export normalization through an SDK-free d
 /** Legacy stored assignments must be evaluated as the real export value without an extension SDK link. */
 test("review-46 legacy assignees share export normalization through an SDK-free discovery context", async (t) => {
   const copied = isolatedPackage(t, join(repo, "dist"))("./index.js") as typeof built;
-  // Reads trim stored identities, so the reachable raw/writer divergence is the legacy clear token.
+  // Typed sentinel identities remain literal; discovery must diagnose disallowed identities.
   for (const assignee of ["Allowed assignee", "none", "null"]) await t.test(JSON.stringify(assignee), async (sub) => {
     const f = await hostFixture(sub);
     f.typeFields.find((field) => field.referenceName === "System.AssignedTo")!.allowedValues = ["Allowed assignee", ""];
@@ -433,7 +433,7 @@ test("review-46 legacy assignees share export normalization through an SDK-free 
     assert.equal(legacy.assignee, assignee, "the legacy read must retain the actual stored spelling");
     const context = { sdk: runtimeSdk, schema: settings.schema, idPrefix: settings.id_prefix };
     const sent = azureFields(localValues(legacy, context), ["assignee"], STATE_MAP, context)["System.AssignedTo"];
-    // The writer either clears the assignment explicitly or sends the allowed identity;
+    // The writer sends the literal identity after trimming;
     // discovery must agree instead of judging the unreadable raw spelling.
     const compatible = sent === "" || sent === "Allowed assignee";
     const before = snapshot(f.pmRoot);

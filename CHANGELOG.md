@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+No changes.
+
 ## 2026.11.4 - 2026-11-04
 
 ### Changed

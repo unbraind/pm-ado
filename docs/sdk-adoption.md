@@ -3,7 +3,9 @@
 The package uses SDK settings and type-folder registries to locate authoritative
 items, and SDK lifecycle mutations for native writes. Automatic pm-side
 compensation has been removed from native persistence and relation import.
-The pinned SDK (2026.10.28) supplies these development and acceptance primitives.
+The declared minimum SDK (2026.10.23) matches the peer dependency and manifest.
+The development SDK supplies these acceptance primitives; feature-specific host
+requirements are documented separately below.
 Managed extension runtime links require a host SDK of at least 2026.10.27 for
 semantic preview; this minimum is separate from the development pin.
 

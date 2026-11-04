@@ -68,8 +68,9 @@ the injected `ctx.sdk.client`. They load those lazily through the SDK link maint
 by `pm install`, using a canonical module file and standard Node resolution.
 A missing link produces a typed `configuration` refusal with an installation
 remedy. Semantic apply also requires the SDK's regular-file preview contract.
-The pinned SDK (2026.10.28) excludes managed extension runtime dependencies
-from preview, so project SDK links remain intact and reviewed apply works.
+The declared minimum SDK (2026.10.23) matches the peer dependency and manifest.
+SDK 2026.10.27 excludes managed extension runtime dependencies from preview,
+so project SDK links remain intact and reviewed apply works.
 This preview support requires SDK 2026.10.27 or newer on the host.
 Older hosts, including the packed 2026.10.25 acceptance host, still refuse those
 links before preparing an intent; use a global pm-ado installation to keep its
@@ -166,8 +167,9 @@ Status aliases use the configured SDK registry (including custom statuses),
 import-map values and export-map keys. Azure state names remain literal. For
 example, importing `Done` through `{"Done":"CLOSED"}` agrees with native
 `closed`; the default export spelling `Closed` does not force a reverse PATCH.
-Titles and assignments use SDK trimming; assignment `none`/`null` clear the
-field. Title, description and classification text retain literal `none`/`null`;
+Titles and assignments use SDK trimming. Typed assignment `none`/`null`
+remain literal identities (SDK 2026.10.30, GH-1614); clears use
+`unset: ["assignee"]`. Title, description and classification text retain literal `none`/`null`;
 description/classification case, Unicode and whitespace remain literal. Tags
 use SDK normalization followed by the existing code-unit comparison order.
 IDs use native SDK case, hash-marker and configured-prefix resolution. Host

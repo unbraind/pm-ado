@@ -6,24 +6,26 @@ status: in_progress
 priority: 2
 tags[4]: dependencies,"gh:unbraind/pm-ado#87",migration,sdk
 created_at: "2026-11-04T18:56:17.383Z"
-updated_at: "2026-11-04T19:11:40.950Z"
+updated_at: "2026-11-04T19:16:06.400Z"
 assignee: codex-toolchain-1104
 claim_principal: codex-toolchain-1104
 author: codex-toolchain-1104
 acceptance_criteria: Exact requested toolchain pins; meaningful contract assertions; passing package tests and all four unchanged coverage thresholds; typecheck and generated output current; evidence and remaining risks recorded.
-comments[5]{created_at,author,text}:
+comments[6]{created_at,author,text}:
   "2026-11-04T18:56:21.320Z",codex-toolchain-1104,"Plan: synchronized origin/main and confirmed registry latest versions pm-cli 2026.11.4, pm-ops 2026.11.4, pm-changelog 2026.10.31. Reproduce focused failures before changing assertions, then run the full suite and unchanged coverage gate serially."
   "2026-11-04T18:57:09.462Z",codex-toolchain-1104,"Root cause (coupling): test/sdk-adoption.test.ts required docs to echo the exact development pin (main 2026.10.28 versus PR 2026.11.1/new 2026.11.4), so every bump broke it independently of runtime behavior. Replace that assertion with docs matching the declared peer/manifest minimum 2026.10.23; retain separate 2026.10.27 managed-preview capability requirement. Focused baseline: 1 passed, 1 failed."
   "2026-11-04T18:58:36.801Z",codex-toolchain-1104,"Root cause (production): pm-cli 2026.10.30 GH-1614 preserves typed sentinel data. normalizeAssigneeValue and the SDK-free discovery projection instead erased none/null identities, corrupting semantic comparison and Azure export. Removed sentinel interpretation; empty input still follows explicit unset. Existing SDK oracle failed on none, and the new typed-sentinel regression failed against the original implementation (0/1) before the fix. Updated the exact expected normalized null identity and documentation."
   "2026-11-04T19:01:12.946Z",codex-toolchain-1104,"Focused corrected files passed 40/40 tests (contracts, normalization, SDK adoption). Linked pm test rerun passed 9/9; typecheck and docstring gate passed (19 files, 128 declarations). Changelog regenerated after fetching tags; check passes with no changelog drift. No lint script is declared. Only package.json and package-lock.json pin the development toolchain; declared compatibility minimums and historical receipts remain intentional."
   "2026-11-04T19:11:40.942Z",codex-toolchain-1104,"Additional gates passed: native precondition matrix 19/19; production audit found zero vulnerabilities; local pm health --strict-exit --require-merge-drivers exited 0. Full npm test remains in progress through packed project/global runtime acceptance. Author audit retains original Dependabot history; every newly authored commit is checked separately against the exact required SteveBot identity without rewriting history."
-files[8]{path,scope}:
+  "2026-11-04T19:16:03.641Z",codex-toolchain-1104,"Full-suite follow-up: correcting the assignee documentation also changes the generated normalization.d.ts docstring. The exact current declaration snapshot gate correctly detected that comment drift. Reproduced test/public-api.test.ts separately, reviewed the one-line documentation-only declaration diff, and ran the documented current snapshot updater. No exported signatures or immutable published declarations/consumer fixtures changed. This is a generated-artifact consequence of the GH-1614 production fix, not a weakened API assertion."
+files[9]{path,scope}:
   dist/normalization.d.ts,project
   dist/normalization.js,project
   normalization.ts,project
   package-lock.json,project
   package.json,project
   test/contracts.test.ts,project
+  test/fixtures/public-api/current/normalization.d.ts.txt,project
   test/normalization.test.ts,project
   test/sdk-adoption.test.ts,project
 tests[1]{command,scope,timeout_seconds,provenance{author,created_at,source_kind,source_ref}}:

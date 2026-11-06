@@ -57,6 +57,8 @@ export declare class NativeWriteFence {
     assertCurrent(id: string): Promise<void>;
     /** Recheck every captured head so query limits and filters never narrow the fence. */
     assertAll(): Promise<void>;
+    /** Verify owned event suffixes and their document without advancing the decision baseline. */
+    private writtenState;
     /** Re-read changed fields, write forward once, and report races without restoring anything. */
     update(id: string, options: Sdk.PmUpdateActionOptions, transactionId: string): Promise<string>;
 }

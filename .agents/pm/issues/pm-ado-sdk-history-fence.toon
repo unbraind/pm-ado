@@ -4,12 +4,12 @@ description: "Own the #47 adoption slice for SDK withExpectedItemRevisions: bind
 type: Issue
 status: in_progress
 priority: 2
-tags[5]: "gh:unbraind/pm-cli#1576","gh:unbraind/pm-cli#1620",sdk-gap,"upstream:pm-cli#1576","upstream:pm-cli#1620"
+tags[6]: "gh:unbraind/pm-ado#92","gh:unbraind/pm-cli#1576","gh:unbraind/pm-cli#1620",sdk-gap,"upstream:pm-cli#1576","upstream:pm-cli#1620"
 created_at: "2026-10-27T13:44:23.397Z"
-updated_at: "2026-11-06T18:58:46.958Z"
+updated_at: "2026-11-06T23:10:19.329Z"
 author: codex-agent
 parent: pm-ado-sdk-adoption
-comments[23]{created_at,author,text}:
+comments[29]{created_at,author,text}:
   "2026-10-27T16:36:12.343Z",codex-agent,"R7 audit links the already-open upstream issue https://github.com/unbraind/pm-cli/issues/1576. Installed SDK 2026.10.24 BulkItemUpdateMutation.match accepts only a metadata key/value; BulkItemCloseMutation has no match or expectedItemHash/expectedHistoryHead. commitWorkspaceTransaction provides a workspace lease but ordinary native writers acquire item leases independently. mutateItemWithHistoryContext permits history reads inside its callback, but cannot compose a native lifecycle update under that same non-reentrant item lease. The internal runWithItemMutationPrecondition callback is synchronous and not a public SDK export. A beforeMutation hook can inspect history under the native item lease; SDK setActiveExtensionHooks replaces the full registry and offers no public additive scoped guard or registry snapshot. Disabling extensions as in a hook workaround would bypass existing policy/hooks and lose extension-owned runtime schema; hand-applying native update/close/hierarchy behavior would violate SDK adoption. Required public contract: native lifecycle/bulk expectedHistoryHead (length plus record hash), or expectedItemHash, checked under the existing item lease; alternatively an additive request-scoped transactional guard that preserves the active extension runtime. Native sync update sites and resolution agreement publication remain blocked on this contract; not marked fixed. A package-level fixed-clock boundary probe is being captured in disposable source copies with the real SDK."
   "2026-10-27T17:08:11.670Z",codex-agent,"R7 capability check also inspected the public SDK 2026.10.27 declarations from a credential-free npm pack without changing the pin. No native expected item/hash/history-head precondition was exported there either. RelationshipEventStore.expectedVersion guards its separate relationship ledger, not native item parent/dependency/lifecycle writes. Additional SDK facade audit: index.ts importRelations forward updates and compensation also call an opaque PmClient.update without a history precondition; that facade cannot enforce a native item CAS with its current client contract. These sites join sync commitLocal and resolution publication under upstream #1576. The fixed-clock probe fails all 18 cases: history advances in all 18; 15 return incorrect success; 6 overwrite the peer title; all 18 change item state after the peer edit. Revert proof is not applicable to an unimplemented SDK contract; the finding remains unresolved, not marked fixed."
   "2026-10-27T20:28:55.116Z",codex-agent,"R8 implements the owner-approved package fallback for upstream pm-cli#1576: native history length/hash before inspection; SDK lifecycle write inside a workspace transaction; locked post-write native author/op/patch verification; selective append-only compensation and typed conflict if another entry intervened. Journal keys bind the head, and unverified dispatch/verified-but-uncommitted journals resume without redispatch. The missing native pre-write API remains an upstream follow-up, rather than an unmet package acceptance criterion. Existing SDK hooks and runtime remain active; native clients and sync adapters share history-fence.ts."
@@ -33,19 +33,27 @@ comments[23]{created_at,author,text}:
   "2026-11-06T17:50:45.401Z",codex-astra,"Behavioral revert proofs in a disposable rebuilt source copy: restoring only NativeWriteFence.update to main behavior makes every new regression scenario fail (23/23 reported tests including three parent tests). Replacing only the saved decision hash with a later readItemRevision makes both pre-dispatch decision-binding cases fail (3/7 reported failures including parent; four controls pass). Restored implementation rebuilt and passes all 23/23, no skips. Command: node --test --test-reporter=spec --test-concurrency=2 --test-name-pattern=\"decision-bound revision guards\" test/history-fence.test.ts; late-read mutant uses pattern \"decision-bound revision guards refuse unjournalled\". Original checkout never reverted. The passing corpus includes 12 separate-process field interleavings, two owned-write scope-advancement cases, unjournalled legacy document edits, decision binding and unchecked dispatch."
   "2026-11-06T18:08:07.511Z",codex-astra,"Bounded #47 adoption is implemented in PR92, implementation commit 9a6665e15f387d03ba81a4d772181e45688a8d1c. Native fixed-clock precondition acceptance also passes 19/19 through the pinned PM runner. Combined evidence: linked fence/adoption80, Azure recovery/relation18, focused regression restore23, selected packed7, native matrix19; all executed cases pass. Revert proofs fail23/23 and the late-read mutant fails both decision-binding cases (3/7 including parent). Typecheck, test compilation, docstrings128/128 and changelog check pass. Full coverage/release and final-head bot reviews remain pending in PR92; skipped/unavailable bots are not approval. No rollback, SDK pin bump, history rewrite, live provider call, release or merge. Releasing only this author claim without closing the item."
   "2026-11-06T18:58:34.856Z",codex-astra,"CI fixture correction: the independent peer now retains only PM_ADO_STATEMENT_SOURCES and PM_ADO_STATEMENT_REPORT_DIR among PM_ variables, so its inherited instrumentation hook can load and report counters. Credentials and tracker settings remain filtered. In a disposable copy using Node 22.23.4 and the exact preload generated by scripts/coverage-gate.ts, node --test --test-reporter=spec --test-concurrency=2 --test-name-pattern=\"decision-bound revision guards\" test/history-fence.test.ts passes 23/23 with zero skips. Reverting only the environment-filter correction fails 21/23; two unchecked-dispatch controls still pass. Production guard code is unchanged. Typecheck, test compilation, docstrings (19 files, 128 declarations), and diff checks pass."
-files[11]{path,scope}:
+  "2026-11-06T22:46:03.153Z",codex-agent,"PR92 review round: verified unresolved threads PRRT_kwDOUMUq1860sqqP (owned partial lifecycle failures lose validation cause) and PRRT_kwDOUMUq1860sqqd (unchecked adapter dispatch lacks read-back evidence). Latest CodeRabbit review contains no outside-diff findings. Reused only saved source/test hunks. Shared history ownership and replay verification preserves native failures without adopting their partial baseline, and detects unjournalled edits after owned dispatches. Fresh regression and behavioral revert proofs follow."
+  "2026-11-06T22:55:12.018Z",codex-agent,"Native SDK evidence: combined field/close routing intentionally strips the message from its pre-close update. Author/message alone cannot prove ownership. Use public runWithAgentSessionContext provenance with a fresh operation nonce, while keeping native author and validation behavior. Permit only the first attributed message-less update for a routed close. New real-process regressions include peers reusing the author and transaction message, ABA, partial validation failure, combined success and unjournalled post-write edits. Initial test run exposed a fixture governance preset mistake; corrected to custom strict governance. No history is rewritten. Default-home health reports a global extension host-version skew; isolated-home strict health passes."
+  "2026-11-06T22:58:00.853Z",codex-agent,"Final ownership design uses the SDK-scoped operation nonce for every internal lifecycle event, including message-less pre-close updates; older hosts retain message-based detection. Intentional peer fixtures now dispatch through independent processes instead of inheriting the owned callback context. New review regression subset passes 21/21 before the additional combined-success control; final full fence, packed compatibility and consumer checks follow. Full npm/Bun release gates are deferred to CI under the owner time-budget exception: shared-host load has exceeded 50 and the initial focused fence run alone took 256 seconds; two full 1119-case coverage/statement suites plus packed matrices are not expected to finish within about one hour here. All thresholds remain unchanged."
+  "2026-11-06T23:03:56.319Z",codex-agent,"GraphQL fetch now succeeds with reviewThreads(first:100) and comments(first:20): exactly two unresolved threads, one comment each, no further thread/comment pages. Latest CodeRabbit review at 2026-11-06T21:21:43Z contains no Outside diff range findings. Full pinned-PM fence run passes 104/104; isolated Git-identity API/SDK/identity/contracts pass 43/43 and Azure sync/recovery integration passes 18/18. Added append-only previous-writer peer fixture with absent provenance; expanded owned-failure controls pass 15/15. Packed 2026.10.25 compatibility subtest passes; launcher matrix and final native acceptance still running. Fresh final revert corpus includes the previous-writer case."
+  "2026-11-06T23:05:53.398Z",codex-agent,"Final behavioral revert proofs in disposable rebuilt copies (source and dist): reverting only the update catch to assertCurrent fails 3/15 reported tests (both owned strict-close cases plus parent); restoring the empty unchecked conflict fails 5/5; removing writtenState read-back comparison fails 3/3; removing operation attribution fails 7/15 (same-author, copied-message and provenance-free legacy peers plus parent). Commands: node --test --test-reporter=tap --test-concurrency=2 --test-name-pattern=\"owned partial close failures\" test/history-fence.test.ts; patterns \"unchecked host dispatch\" and \"successful owned dispatch\" for their mutations. Restoring fixed functions and rebuilding passes 26/26 with pattern \"owned partial close failures|unchecked host dispatch|successful owned dispatch|combined field and close success\", zero skips. The package worktree was never reverted; every temporary implementation restored in finally and disposable copies removed. All original native peer, ABA and no-rollback assertions retained."
+  "2026-11-06T23:10:17.904Z",codex-agent,"Final review-round validation: pinned PM runner fence106/106, isolated-identity SDK/API/compatibility/contracts43/43, selected Azure import/revision-conflict/relation/recovery/native-hook integration18/18, complete npm/Bun/npx/bunx/local/copied packed matrix13/13 (430.5 seconds), native-precondition19/19. All zero failures/skips; no host timeout remains. Behavioral restore26/26; revert failures3/15,5/5,3/3,7/15 as detailed above. Typecheck/build/test compilation, docstrings19 files/128 declarations, production audit0 vulnerabilities, pack dry-run52 files and release-attestation/date checks pass. No lint script exists. Regenerate/check the changelog after release of this claim and verify isolated-home strict health before commit; default-home health has unrelated global extension skew. Full npm/Bun release/coverage gates remain pending CI under the owner time budget, with 100% thresholds unchanged. Final-head checks: https://github.com/unbraind/pm-ado/pull/92/checks . No roadmap item is closed; existing monotonic final-interval and backend conformance limits remain. No pm SDK capability gap was needed: public session provenance supplies event ownership. No thread replies/resolution, mentions, merge, release or provider writes. Only this item was touched in this review round."
+files[13]{path,scope}:
+  dist/history-fence.js,project
   history-fence.ts,project
   index.ts,project
   README.md,project
   resolution.ts,project
   scripts/sdk-native-precondition-probe.ts,project
   sync.ts,project
+  test/fixtures/public-api/current/history-fence.d.ts.txt,project
   test/helpers/native-revision-peer.ts,project
   test/helpers/workspace-lock-probe.ts,project
   test/history-fence.test.ts,project
   test/packed-install-shapes.test.ts,project
   test/sync.test.ts,project
-tests[3]:
+tests[8]:
   - command: node test/helpers/workspace-lock-probe.ts
     scope: project
     provenance:
@@ -66,6 +74,46 @@ tests[3]:
     provenance:
       author: codex-astra
       created_at: "2026-11-06T17:52:09.944Z"
+      source_kind: local_mutation
+      source_ref: backend-revision-bound-reconciliation
+  - command: node --test --test-concurrency=2 test/history-fence.test.ts
+    scope: project
+    timeout_seconds: 900
+    provenance:
+      author: codex-agent
+      created_at: "2026-11-06T22:47:14.701Z"
+      source_kind: local_mutation
+      source_ref: backend-revision-bound-reconciliation
+  - command: node --test --test-concurrency=2 test/sdk-adoption.test.ts test/public-api.test.ts test/identity-audit.test.ts test/compatibility-floor.test.ts test/contracts.test.ts
+    scope: project
+    timeout_seconds: 900
+    provenance:
+      author: codex-agent
+      created_at: "2026-11-06T23:03:54.036Z"
+      source_kind: local_mutation
+      source_ref: backend-revision-bound-reconciliation
+  - command: "node --test --test-reporter=tap --test-concurrency=2 --test-name-pattern=\"first import|412 export conflict|relations round trip|resolution recovery|native close recovery|forward-only native validation hook\" test/sync.test.ts"
+    scope: project
+    timeout_seconds: 900
+    provenance:
+      author: codex-agent
+      created_at: "2026-11-06T23:05:46.671Z"
+      source_kind: local_mutation
+      source_ref: backend-revision-bound-reconciliation
+  - command: node --test --test-reporter=tap --test-concurrency=2 test/packed-install-shapes.test.ts
+    scope: project
+    timeout_seconds: 900
+    provenance:
+      author: codex-agent
+      created_at: "2026-11-06T23:05:49.092Z"
+      source_kind: local_mutation
+      source_ref: backend-revision-bound-reconciliation
+  - command: "npm run test:native-precondition"
+    scope: project
+    timeout_seconds: 900
+    provenance:
+      author: codex-agent
+      created_at: "2026-11-06T23:05:51.052Z"
       source_kind: local_mutation
       source_ref: backend-revision-bound-reconciliation
 docs[2]{path,scope}:

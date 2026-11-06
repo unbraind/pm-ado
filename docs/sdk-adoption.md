@@ -79,6 +79,19 @@ checkpoints, mapped fields, close/assignment transitions, relation import and
 agreement publication. Resolution prepare/settle already compare their decision
 state within `mutateItemWithHistoryContext` and retain that sequencing.
 
+Unchecked dispatches report that the revision check did not run, together with
+read-back field differences, and retain the original baseline. When native close
+validation fails after an owned field update, the original validation error is
+preserved only if every added event belongs to this operation and the current
+document matches its native replay. A peer event, including ABA, or an
+unjournalled post-write edit still reports `sync_conflict`. SDK session
+provenance carries a fresh operation nonce so a peer reusing the author or
+message cannot impersonate an owned event. The native pre-close field update
+omits its message, so attribution covers every internal lifecycle event. Older
+hosts without session provenance retain message-based detection. Failed
+operations never advance the fence baseline; replan from the durable partial
+state.
+
 The pinned 2026.11.4 SDK's `ExpectedItemRevision` accepts only `id` and
 `itemHash`. It has no expected native-history coordinate; history reads remain
 separate. The package therefore retains its monotonic head checks before and

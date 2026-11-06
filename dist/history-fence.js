@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 /** Validate portable witnesses, including a legacy tracker with no native history yet. */
 export function isNativeHead(value) {
     if (typeof value !== "object" || value === null || Array.isArray(value))
@@ -102,6 +103,23 @@ export class NativeWriteFence {
         for (const id of [...this.heads.keys()])
             await this.assertCurrent(id);
     }
+    /** Verify owned event suffixes and their document without advancing the decision baseline. */
+    async writtenState(id, expected, message, operation) {
+        const { entries } = await this.sdk.readHistorySnapshot(this.sdk.getHistoryPath(this.pmRoot, id), id);
+        const current = await this.document(id);
+        const suffix = entries.slice(expected.length);
+        const document = suffix.length ? this.sdk.replayToItemDocument(this.sdk.replayHistoryToTarget(entries, entries.length - 1)) : this.snapshots.get(id);
+        if (suffix.some((entry) => entry.author !== this.author || (operation === undefined ?
+            entry.message !== message : entry.agent_provenance?.ado_operation?.value !== operation)) ||
+            !this.sdk.stableValueEquals(current, document)) {
+            const conflict = this.conflict(id, current);
+            if (!Object.keys(conflict.fields).length)
+                conflict.fields.history = { base: expected, current: await nativeHead(this.sdk, this.pmRoot, id) };
+            throw conflict;
+        }
+        const last = entries.at(-1);
+        return { current, head: { length: entries.length, hash: last === undefined ? "empty" : last.record_hash ?? this.sdk.hashHistoryRecord(last) } };
+    }
     /** Re-read changed fields, write forward once, and report races without restoring anything. */
     async update(id, options, transactionId) {
         if (!this.snapshots.has(id))
@@ -118,18 +136,21 @@ export class NativeWriteFence {
         // Bind to the decision document, never a later revision read that could adopt a peer edit.
         // Older supported hosts retain their documented history-detection-only behavior.
         const readAt = performance.now();
+        let unchecked = false;
+        const operation = typeof this.sdk.runWithAgentSessionContext === "function" ? randomUUID() : undefined;
         try {
-            const write = () => this.write(id, { ...options, author: this.author, message });
+            const dispatch = () => this.write(id, { ...options, author: this.author, message });
+            const write = () => operation === undefined ? dispatch() :
+                this.sdk.runWithAgentSessionContext({ provenance: { ado_operation: operation } }, dispatch);
             if (typeof this.sdk.withExpectedItemRevisions === "function") {
                 const receipt = await this.sdk.withExpectedItemRevisions([{ id, itemHash: this.sdk.hashDocument(this.snapshots.get(id)) }], write, { pmRoot: this.pmRoot });
-                if (receipt.unchecked.length)
-                    throw new NativeHistoryConflict(id);
+                unchecked = receipt.unchecked.length > 0;
             }
             else
                 await write();
         }
         catch (error) {
-            await this.assertCurrent(id);
+            await this.writtenState(id, expected, message, operation);
             if (typeof this.sdk.isItemRevisionConflict === "function" && this.sdk.isItemRevisionConflict(error))
                 throw this.conflict(id, await this.document(id));
             throw error;
@@ -137,13 +158,14 @@ export class NativeWriteFence {
         finally {
             this.lastWriteWindowMs = performance.now() - readAt;
         }
-        const { entries } = await this.sdk.readHistorySnapshot(this.sdk.getHistoryPath(this.pmRoot, id), id);
-        const current = await this.document(id);
-        if (entries.slice(expected.length).some((entry) => entry.author !== this.author || entry.message !== message))
-            throw this.conflict(id, current);
+        if (unchecked) {
+            const conflict = this.conflict(id, await this.document(id));
+            conflict.message = "Native dispatch completed without a revision check; re-read both trackers and re-plan from current tracker state.";
+            throw conflict;
+        }
+        const { current, head } = await this.writtenState(id, expected, message, operation);
         this.snapshots.set(id, current);
-        const last = entries.at(-1);
-        this.heads.set(id, { length: entries.length, hash: last === undefined ? "empty" : last.record_hash ?? this.sdk.hashHistoryRecord(last) });
+        this.heads.set(id, head);
         await this.assertCurrent(id);
         return current.metadata.updated_at;
     }

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { devNull } from "node:os";
 import test from "node:test";
+import { PmClient } from "@unbrained/pm-cli/sdk";
+import { fixtureDirectory, packageRoot } from "./helpers/package-runtime.ts";
+import { runCommand } from "./helpers/process-fixture.ts";
 
 /** The release workflow source, read once and asserted against as text. */
 const workflow = readFileSync(
@@ -504,4 +508,46 @@ test("every changelog generator agrees on empty releases", () => {
   for (const name of ["changelog:full", "changelog:check", "release:notes"]) {
     assert.match(scripts[name], /--include-empty/, name);
   }
+});
+
+test("changelog:full retains generated Unreleased content after a tagged release", async (t) => {
+  const { root, cleanup } = fixtureDirectory("ado-unreleased-content-");
+  t.after(cleanup);
+  const pkg = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as {
+    version: string; scripts: Record<string, string>;
+  };
+  writeFileSync(join(root, "package.json"), JSON.stringify({
+    name: "changelog-content-fixture", version: pkg.version,
+    scripts: { "changelog:full": pkg.scripts["changelog:full"] },
+  }));
+  symlinkSync(join(packageRoot, "node_modules"), join(root, "node_modules"), "junction");
+  const childEnv = { ...process.env };
+  for (const key of Object.keys(childEnv)) {
+    if (/token|secret|password|credential|api.?key|authorization/iu.test(key) ||
+      /^(?:GIT_|PM_|NPM_MEDIA_SERVER$|npm_config_)/iu.test(key)) delete childEnv[key];
+  }
+  Object.assign(childEnv, {
+    NPM_CONFIG_USERCONFIG: devNull, npm_config_userconfig: devNull,
+    PM_AUTHOR: "fixture-agent",
+    GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
+  });
+  const pm = new PmClient({ cwd: root, pmRoot: join(root, ".agents/pm"), author: "fixture-agent" });
+  await pm.init("fixture");
+  for (const args of [
+    ["init", "--initial-branch=main"], ["add", "package.json", ".agents/pm"],
+    ["-c", "user.name=SteveBot", "-c", "user.email=1153461+unbraind@users.noreply.github.com", "commit", "-m", "Fixture release"],
+    ["tag", `v${pkg.version}`],
+  ]) await runCommand("git", args, { cwd: root, env: childEnv });
+  const title = "Pending fixture delivery after the tagged release";
+  const { item } = await pm.create({ title, type: "Task" });
+  await pm.close(item.id, "Fixture implementation verified");
+  await runCommand(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "changelog:full"], {
+    cwd: root, env: childEnv, shell: process.platform === "win32", timeout: 60_000,
+  });
+  const generated = readFileSync(join(root, "CHANGELOG.md"), "utf8");
+  const unreleased = generated.split(/^## /mu).find((section) => /^Unreleased\r?\n/u.test(section));
+  assert.ok(unreleased, "regeneration must retain an Unreleased section after a tagged release");
+  assert.ok(unreleased.includes(title), "the pending delivery must remain inside Unreleased");
+  assert.ok(generated.includes(`## ${pkg.version} - `), "the tagged release must also remain present");
 });

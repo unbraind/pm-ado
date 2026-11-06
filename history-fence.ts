@@ -125,10 +125,22 @@ export class NativeWriteFence {
     await this.assertCurrent(id);
     const expected = this.heads.get(id)!;
     const message = `bulk-item-transaction ${transactionId} apply${options.message === undefined ? "" : `; ${options.message}`}`;
-    // Native CAS is missing (#1576, #1620): an ordinary writer can still enter after this read.
+    // Bind to the decision document, never a later revision read that could adopt a peer edit.
+    // Older supported hosts retain their documented history-detection-only behavior.
     const readAt = performance.now();
-    try { await this.write(id, { ...options, author: this.author, message }); }
-    catch (error) { await this.assertCurrent(id); throw error; }
+    try {
+      const write = () => this.write(id, { ...options, author: this.author, message });
+      if (typeof this.sdk.withExpectedItemRevisions === "function") {
+        const receipt = await this.sdk.withExpectedItemRevisions(
+          [{ id, itemHash: this.sdk.hashDocument(this.snapshots.get(id)!) }], write, { pmRoot: this.pmRoot });
+        if (receipt.unchecked.length) throw new NativeHistoryConflict(id);
+      } else await write();
+    }
+    catch (error) {
+      await this.assertCurrent(id);
+      if (typeof this.sdk.isItemRevisionConflict === "function" && this.sdk.isItemRevisionConflict(error)) throw this.conflict(id, await this.document(id));
+      throw error;
+    }
     finally { this.lastWriteWindowMs = performance.now() - readAt; }
     const { entries } = await this.sdk.readHistorySnapshot(this.sdk.getHistoryPath(this.pmRoot, id), id);
     const current = await this.document(id);

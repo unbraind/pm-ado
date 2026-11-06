@@ -8,6 +8,8 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import type { AdoWorkItem, ResolutionPlan } from "../index.ts";
+import { NativeWriteFence } from "../history-fence.ts";
+import { loadResolutionSdk } from "../resolution.ts";
 
 const execute = promisify(execFile);
 const repo = resolve(import.meta.dirname, "..");
@@ -36,11 +38,12 @@ test("packed npm-global, bun-global, npx, bunx, local-bin and copied-extension c
   writeFileSync(join(home, ".config/.bunfig.toml"), `[install]\nglobalDir = ${JSON.stringify(bunGlobal)}\nglobalBinDir = ${JSON.stringify(bunBin)}\n`);
   const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, ".config"),
     npm_config_cache: join(root, "npm-cache"), npm_config_prefix: join(root, "npm-prefix"), npm_config_ignore_scripts: "true", npm_config_update_notifier: "false", npm_config_audit: "false", npm_config_fund: "false",
-    npm_config_userconfig: join(home, ".npmrc"), NPM_CONFIG_USERCONFIG: join(home, ".npmrc"),
+    npm_config_userconfig: "/dev/null", NPM_CONFIG_USERCONFIG: "/dev/null",
     BUN_INSTALL: bunHome, BUN_INSTALL_GLOBAL_DIR: bunGlobal, BUN_INSTALL_BIN: bunBin, BUN_INSTALL_CACHE_DIR: join(root, "bun-cache"), PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1",
     GIT_CEILING_DIRECTORIES: tmpdir(), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
   // Never inherit a real Azure credential or private npm configuration.
   for (const key of ["ADO_ORG_URL", "ADO_TOKEN", "ADO_PROJECT", "ADO_STATUS_MAP", "ADO_EXPORT_STATE_MAP", "NODE_PATH", "NPM_TOKEN", "NODE_AUTH_TOKEN", "PM_PATH", "PM_ROOT", "PM_GLOBAL_PATH", "PM_GLOBAL_ROOT"]) delete env[key];
+  for (const key of Object.keys(env)) if (/(?:TOKEN|SECRET|PASSWORD|API_KEY|ACCESS_KEY|CREDENTIAL|NPM_MEDIA_SERVER)/iu.test(key)) delete env[key];
   await command(process.execPath, [npm, "pack", "--ignore-scripts", "--pack-destination", artifacts, repo], root, env);
   await command(process.execPath, [npm, "pack", "--ignore-scripts", "--pack-destination", artifacts, "@unbrained/pm-cli@2026.10.25"], root, env);
   const packageTar = join(artifacts, readdirSync(artifacts).find((file) => file.startsWith("pm-ado-"))!);
@@ -53,6 +56,23 @@ test("packed npm-global, bun-global, npx, bunx, local-bin and copied-extension c
   await command(process.execPath, [npm, "install", "--global", "--prefix", npmPrefix, "--ignore-scripts", "--no-audit", hostTar], root, env);
   await command(bun, ["add", "--global", "--ignore-scripts", hostTar], root, env);
   await command(process.execPath, [npm, "install", "--prefix", local, "--ignore-scripts", "--no-audit", hostTar], root, env);
+  await t.test("older real host retains explicit history-detection compatibility", async () => {
+    const sdk = loadResolutionSdk([join(local, "package.json")]);
+    assert.equal(typeof sdk.withExpectedItemRevisions, "undefined");
+    const tracker = join(root, "legacy-guard"); mkdirSync(tracker);
+    const pmRoot = join(tracker, ".agents/pm");
+    const pm = new sdk.PmClient({ cwd: tracker, pmRoot, author: "fixture-agent", noExtensions: true });
+    await pm.run("init", { prefix: "legacy" });
+    const { item } = await pm.create({ type: "Task", title: "Legacy host" });
+    const fence = new NativeWriteFence(sdk, pmRoot, "fixture-agent");
+    await fence.capture(item.id);
+    await fence.update(item.id, { title: "Compatible write" }, "legacy-compatible");
+    await assert.rejects(fence.update(item.id, { priority: 99 }, "legacy-validation"), /priority/iu);
+    assert.equal((await pm.get(item.id)).item.title, "Compatible write");
+    await pm.update(item.id, { title: "Peer edit" });
+    await assert.rejects(fence.update(item.id, { title: "Stale" }, "legacy-stale"), { kind: "sync_conflict" });
+    assert.equal((await pm.get(item.id)).item.title, "Peer edit");
+  });
   // Prime npm exec's version-keyed cache once; all acceptance invocations below are offline.
   assert.equal((await command(process.execPath, [npx, "--yes", "--package", "@unbrained/pm-cli@2026.10.25", "pm", "--version"], root, env)).trim(), "2026.10.25");
   const npmPm = join(npmPrefix, "bin/pm"), bunPm = join(bunBin, "pm"), localPm = join(local, "node_modules/.bin/pm");

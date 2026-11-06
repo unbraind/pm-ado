@@ -1,5 +1,7 @@
 /** Real native histories and forward-only refusal without restoring saved state. */
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +9,94 @@ import test from "node:test";
 import * as sdk from "@unbrained/pm-cli/sdk";
 import { NativeWriteFence, NativeHistoryConflict, nativeHead, isNativeHead } from "../history-fence.ts";
 import { NativeWriteFence as BuiltNativeWriteFence } from "../dist/history-fence.js";
+
+/** Commit through an independent OS process so the peer cannot inherit a revision scope. */
+async function peerWrite(pmRoot: string, id: string, options: sdk.PmUpdateActionOptions, mode = "update"): Promise<void> {
+  const childEnv: NodeJS.ProcessEnv = { ...process.env, NPM_CONFIG_USERCONFIG: "/dev/null" };
+  for (const key of Object.keys(childEnv)) if (/(?:TOKEN|SECRET|PASSWORD|API_KEY|ACCESS_KEY|CREDENTIAL|NPM_MEDIA_SERVER|^PM_)/iu.test(key)) delete childEnv[key];
+  await promisify(execFile)(process.execPath, [join(import.meta.dirname, "helpers/native-revision-peer.ts"), pmRoot, id, JSON.stringify(options), mode],
+    { env: childEnv, timeout: 30000 });
+}
+
+test("decision-bound revision guards refuse process writes in the final dispatch interval", async (t) => {
+  for (const [name, Fence] of [["source", NativeWriteFence], ["built", BuiltNativeWriteFence]] as const) {
+    for (const field of ["title", "body", "assignee", "status", "parent", "dependencies"]) await t.test(`${name}:${field}`, async (sub) => {
+      const f = await fixture(sub);
+      const other = (await f.pm.create({ type: "Task", title: "Other endpoint" })).item;
+      const patches: Record<string, { peer: sdk.PmUpdateActionOptions; own: sdk.PmUpdateActionOptions }> = {
+        title: { peer: { title: "Peer title" }, own: { title: "Azure title" } },
+        body: { peer: { body: "Peer body" }, own: { description: "Azure description" } },
+        assignee: { peer: { assignee: "peer-agent" }, own: { assignee: "azure-agent", force: true } },
+        status: { peer: { status: "blocked" }, own: { status: "closed", closeReason: "Azure close" } },
+        parent: { peer: { parent: other.id }, own: { unset: ["parent"] } },
+        dependencies: { peer: { dep: [`id=${other.id},kind=related`] }, own: { clearDeps: true } },
+      };
+      const patch = patches[field]!;
+      let peer: sdk.ItemDocument | undefined, history: string | null | undefined;
+      const fence = new Fence(sdk, f.pmRoot, "history-agent", async (id, options) => {
+        await peerWrite(f.pmRoot, id, patch.peer);
+        const settings = await sdk.readSettings(f.pmRoot);
+        const located = await sdk.locateItem(f.pmRoot, id, settings.id_prefix, settings.item_format);
+        peer = (await sdk.readLocatedItem(located!, { schema: settings.schema })).document;
+        history = (await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, id), id)).raw;
+        return f.pm.update(id, options);
+      });
+      await fence.capture(f.item.id);
+      await assert.rejects(fence.update(f.item.id, patch.own, `revision-${field}`), { kind: "sync_conflict", item: f.item.id });
+      assert.ok(peer, "the real peer committed after the final package read");
+      const settings = await sdk.readSettings(f.pmRoot);
+      const located = await sdk.locateItem(f.pmRoot, f.item.id, settings.id_prefix, settings.item_format);
+      assert.deepEqual((await sdk.readLocatedItem(located!, { schema: settings.schema })).document, peer, "refuse before any local lifecycle mutation");
+      assert.equal((await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, f.item.id), f.item.id)).raw, history, "retain exactly the peer history");
+      const retry = new Fence(sdk, f.pmRoot, "history-agent");
+      await retry.capture(f.item.id);
+      await retry.update(f.item.id, { description: "Fresh reviewed decision", force: true }, "revision-retry");
+      assert.equal((await f.pm.get(f.item.id)).item.description, "Fresh reviewed decision");
+    });
+  }
+});
+
+test("decision-bound revision guards refuse unjournalled document edits and unchecked dispatch", async (t) => {
+  for (const [name, Fence] of [["source", NativeWriteFence], ["built", BuiltNativeWriteFence]] as const) {
+    for (const mode of ["document", "decision", "unchecked"]) await t.test(`${name}:${mode}`, async (sub) => {
+      const f = await fixture(sub);
+      const history = (await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, f.item.id), f.item.id)).raw;
+      const fence = new Fence(sdk, f.pmRoot, "history-agent", async (id, options) => {
+        if (mode === "unchecked") return;
+        if (mode === "document") await peerWrite(f.pmRoot, id, { body: "Legacy peer body" }, "document");
+        return f.pm.update(id, options);
+      });
+      await fence.capture(f.item.id);
+      if (mode === "decision") await peerWrite(f.pmRoot, f.item.id, { body: "Legacy peer body" }, "document");
+      await assert.rejects(fence.update(f.item.id, { title: "Must refuse" }, "revision-unchecked"), { kind: "sync_conflict", item: f.item.id });
+      const item = (await f.pm.get(f.item.id, { depth: "full" })).item;
+      assert.equal(item.title, "Initial");
+      if (mode !== "unchecked") assert.equal(item.body, "Legacy peer body");
+      assert.equal((await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, f.item.id), f.item.id)).raw, history);
+    });
+  }
+});
+
+test("decision-bound revision guards advance own lifecycle writes but refuse the next peer revision", async (t) => {
+  for (const [name, Fence] of [["source", NativeWriteFence], ["built", BuiltNativeWriteFence]] as const) await t.test(name, async (sub) => {
+    const f = await fixture(sub);
+    let history: string | null | undefined;
+    const fence = new Fence(sdk, f.pmRoot, "history-agent", async (id, options) => {
+      await f.pm.update(id, { ...options, status: "closed", closeReason: "Owned close", title: "Owned title" });
+      await f.pm.update(id, { ...options, description: "Owned follow-up", title: "Owned title" });
+      await peerWrite(f.pmRoot, id, { title: "Peer after own writes" });
+      history = (await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, id), id)).raw;
+      return f.pm.update(id, options);
+    });
+    await fence.capture(f.item.id);
+    await assert.rejects(fence.update(f.item.id, { title: "Stale final title" }, "revision-own-advance"), { kind: "sync_conflict", item: f.item.id });
+    const item = (await f.pm.get(f.item.id)).item;
+    assert.equal(item.status, "closed", "successful owned close is retained");
+    assert.equal(item.description, "Owned follow-up", "scope advances for the second owned write");
+    assert.equal(item.title, "Peer after own writes", "the third write cannot adopt an ordinary peer");
+    assert.equal((await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, f.item.id), f.item.id)).raw, history);
+  });
+});
 
 test("review lifecycle property accepts every native event in an owned transition and refuses every later peer event", async (t) => {
   for (const [name, Fence] of [["source", NativeWriteFence], ["built", BuiltNativeWriteFence]] as const) {

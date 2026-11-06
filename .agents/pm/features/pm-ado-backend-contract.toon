@@ -1,0 +1,13 @@
+id: pm-ado-backend-contract
+title: Consume backend-bound reconciliation authority and recovery capabilities
+description: "Replace path-bound authoritative document, audit settlement and operation intent access with the shared backend contract. Retain the existing Azure-specific reconciliation design and provider authority."
+type: Feature
+status: open
+priority: 2
+tags[3]: backend,roadmap,"upstream:pm-cli#1587"
+created_at: "2026-11-06T17:35:39.785Z"
+updated_at: "2026-11-06T17:35:39.785Z"
+author: codex-astra
+acceptance_criteria: "Use backend-bound authoritative normalized document and version reads, mutation preview, audit lookup, durable operation identity and lease fencing without deriving storage paths.; Refuse unsupported or projection-only authority before local or provider effects; preserve organization/project identity, Azure System.Rev and JSON Patch rev assertions, field constraints and typed relation provenance.; Persist prepared/applied/reconciled recovery identity across ambiguous PATCH success, local commit failure, lease loss and interruption; avoid holding a database transaction across REST I/O while retaining reviewed-version checks."
+parent: pm-ado-github-5532dc4b9a65-47
+body: ""

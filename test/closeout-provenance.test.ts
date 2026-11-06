@@ -30,9 +30,8 @@ test("statement enforcement delivery record and history identify PR 19, not the 
   assert.match(item.resolution ?? "", /PR 16 only recorded the gap and is not the delivery/u);
   for (const field of ["actual_result", "close_reason"] as const) {
     const value = item[field] ?? "";
-    assert.ok(value.includes(delivery), `${field} must identify PR 19`);
-    assert.ok(value.includes(merge), `${field} must identify the delivery merge`);
-    assert.ok(value.includes(mergedAt), `${field} must identify the delivery merge time`);
+    assert.equal(value.split(": ", 1)[0], `${delivery}, merged ${mergedAt}, merge ${merge}`,
+      `${field} must identify the exact delivery URL, merge and time`);
   }
   for (const field of ["completed_at", "resolution", "actual_result", "close_reason"] as const) {
     const lastWrite = history.flatMap((event) => event.patch).filter((patch) => patch.path === `/metadata/${field}`).at(-1);

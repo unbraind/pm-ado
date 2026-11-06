@@ -522,9 +522,10 @@ test("changelog:full retains generated Unreleased content after a tagged release
   }));
   symlinkSync(join(packageRoot, "node_modules"), join(root, "node_modules"), "junction");
   const childEnv = { ...process.env };
+  // Preserve Node options and statement-preloader settings for spawned CLI coverage.
   for (const key of Object.keys(childEnv)) {
     if (/token|secret|password|credential|api.?key|authorization/iu.test(key) ||
-      /^(?:GIT_|PM_|NPM_MEDIA_SERVER$|npm_config_)/iu.test(key)) delete childEnv[key];
+      /^(?:GIT_|NPM_MEDIA_SERVER$|npm_config_)/iu.test(key)) delete childEnv[key];
   }
   Object.assign(childEnv, {
     NPM_CONFIG_USERCONFIG: devNull, npm_config_userconfig: devNull,

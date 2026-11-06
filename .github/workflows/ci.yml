@@ -100,6 +100,9 @@ jobs:
       - name: Verify Bun can install the package graph
         run: bun install --no-save
 
+      - name: Verify native monotonic preconditions (pm-cli issue 1576)
+        run: npm run test:native-precondition
+
   release-gate:
     name: release gate (${{ matrix.runtime }})
     runs-on: ubuntu-latest

@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026.11.5 - 2026-11-05
+
+No changes.
+
+## 2026.11.4 - 2026-11-04
+
+### Changed
+
+- Use SDK settings-aware item reads and guarded sync persistence ([pm-ado-sdk-adoption](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-sdk-adoption.toon))
+
+## 2026.11.2 - 2026-11-02
+
+### Fixed
+
+- The daily release generated its changelog with a drifted copy of the generator flags and its own check refused it ([pm-ado-r5ps](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-r5ps.toon))
+- Restore the prepared 2026.10.29 release notes ([pm-ado-release-notes-1029](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-release-notes-1029.toon))
+
+## 2026.10.29 - 2026-10-29
+
+No changes.
+
 ## 2026.10.28 - 2026-10-28
 
 ### Added

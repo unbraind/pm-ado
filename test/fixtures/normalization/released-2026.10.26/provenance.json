@@ -1,0 +1,7 @@
+{
+  "package": "pm-ado",
+  "version": "2026.10.26",
+  "integrity": "sha512-Z5W5zm+9ajs+KzQH14Jf5efP/KNdlfZydsoAPdZyasiiBxv/ha/JZ+KsU586dPX6QNs3O7ce0nLOgwmj0+WbnA==",
+  "source_file": "dist/resolution.js",
+  "fixture": "Released version-2 plan, pending intent and settled receipt; native pinned SDK; synthetic content; no git. Runtime code, links, caches and journals excluded."
+}

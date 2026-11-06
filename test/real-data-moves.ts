@@ -1,23 +1,11 @@
+import { readOnlyTracker } from "./helpers/readonly-tracker.ts";
+import { authoritativeDigest } from "./helpers/authoritative-digest.ts";
 /** Reproduce public-tracker measurements on an exported, non-git copy without pm mutations. */
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
-import { PmClient } from "@unbrained/pm-cli/sdk";
 import { MoveRefusal, RELATION_MAP, simulateMove } from "../index.ts";
 import { moveItem, moveService } from "./fixtures/move-service.ts";
 
-const root = process.argv[2]!;
-const pmRoot = join(root, ".agents/pm");
-/** Digest authoritative files; derived runtime caches are excluded. */
-function digest() {
-  return Object.fromEntries(readdirSync(pmRoot, { recursive: true, withFileTypes: true }).filter((entry) => entry.isFile() && !join(entry.parentPath, entry.name).includes(`${join(pmRoot, "runtime")}/`)).map((entry) => {
-    const path = join(entry.parentPath, entry.name);
-    return [path.slice(pmRoot.length), createHash("sha256").update(readFileSync(path)).digest("hex")];
-  }));
-}
-const before = digest();
-const pm = new PmClient({ cwd: root, pmRoot, author: "fixture-agent" });
+const { pmRoot, before, pm } = readOnlyTracker(process.argv[2]!);
 const snapshot = await pm.listAllComplete();
 const original = [...snapshot.items].sort((a, b) => a.id < b.id ? -1 : Number(a.id > b.id));
 assert.ok(original.length > 0 && original.length <= 50);
@@ -51,7 +39,7 @@ const result = await simulateMove(service.config, service.request, options);
 const elapsed = Math.round(performance.now() - start);
 assert.deepEqual(await simulateMove(service.config, service.request, { ...options, ids: [...options.ids].reverse() }), result);
 assert.equal(JSON.stringify([...service.items]), remoteBefore);
-assert.deepEqual(digest(), before);
+assert.deepEqual(authoritativeDigest(pmRoot), before);
 console.log(JSON.stringify({
   source: "unbraind/pm-ado", source_head: process.argv[3], source_items: original.length,
   authoritative_files: Object.keys(before).length, authoritative_files_changed: 0,

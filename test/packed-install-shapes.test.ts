@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import type { AdoWorkItem } from "../index.ts";
+import type { AdoWorkItem, ResolutionPlan } from "../index.ts";
 
 const execute = promisify(execFile);
 const repo = resolve(import.meta.dirname, "..");
@@ -59,13 +59,15 @@ test("packed npm-global, bun-global, npx, bunx, local-bin and copied-extension c
   assert.ok(lstatSync(npmPm).isSymbolicLink(), "npm global bin must be the actual symlink");
   assert.ok(existsSync(bunPm), "Bun global executable must be in its private configured prefix");
   let remote: AdoWorkItem;
+  const extra = new Map<number, AdoWorkItem>();
+  let queryIds = [1];
   const calls: string[] = [];
   const server = createServer(async (req, res) => {
     const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const body = JSON.parse(Buffer.concat(chunks).toString()) as { ids?: number[] };
     calls.push(req.url!); res.setHeader("content-type", "application/json");
-    if (req.url!.includes("/wiql")) res.end(JSON.stringify({ workItems: [{ id: 1 }] }));
-    else if (req.url!.includes("workitemsbatch")) res.end(JSON.stringify({ value: body.ids!.map(() => remote) }));
+    if (req.url!.includes("/wiql")) res.end(JSON.stringify({ workItems: queryIds.map((id) => ({ id })) }));
+    else if (req.url!.includes("workitemsbatch")) res.end(JSON.stringify({ value: body.ids!.map((id) => id === 1 ? remote : extra.get(id)) }));
     else { res.statusCode = 500; res.end("{}"); }
   });
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
@@ -81,8 +83,27 @@ test("packed npm-global, bun-global, npx, bunx, local-bin and copied-extension c
     { name: "project-local-bin", binary: localPm, prefix: [] },
     { name: "copied-tracker-extension", binary: npmPm, prefix: [] },
   ];
+  /** Exercise a changed inverse endpoint through the real launcher in either installation scope. */
+  async function assertEndpointPreserved(pm: (args: string[]) => Promise<string>) {
+    for (const id of [2, 3]) extra.set(id, { id, rev: 1, relations: [], fields: { ...remote.fields, "System.Title": `Packed peer ${id}`, "System.State": "New" } });
+    remote.fields["System.State"] = "New";
+    remote.relations = [{ rel: "System.LinkTypes.Hierarchy-Forward", url: `${org}/_apis/wit/workItems/2` }]; remote.rev++;
+    extra.get(2)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Reverse", url: `${org}/_apis/wit/workItems/1` }];
+    queryIds = [1, 2, 3]; assert.equal((JSON.parse(await pm(["ado", "import"])) as { ok: boolean }).ok, true);
+    const graph = (JSON.parse(await pm(["list", "--all", "--full"])) as { items: { id: string; ado_id: number }[] }).items;
+    const child = graph.find((item) => item.ado_id === 2)!;
+    await pm(["update", child.id, "--unset", "parent"]);
+    const before = (JSON.parse(await pm(["get", child.id])) as { item: unknown }).item;
+    remote.relations = []; remote.rev++;
+    extra.get(2)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Reverse", url: `${org}/_apis/wit/workItems/3` }]; extra.get(2)!.rev++;
+    extra.get(3)!.relations = [{ rel: "System.LinkTypes.Hierarchy-Forward", url: `${org}/_apis/wit/workItems/2` }]; extra.get(3)!.rev++;
+    queryIds = [3];
+    await assert.rejects(pm(["ado", "sync", "--limit", "1"]), /ADO_CONFLICT/u);
+    assert.deepEqual((JSON.parse(await pm(["get", child.id])) as { item: unknown }).item, before, "the entire unselected endpoint survives");
+  }
   for (const shape of shapes) {
     await t.test(shape.name, async () => {
+      extra.clear(); queryIds = [1];
       const tracker = join(root, `tracker-${shape.name}`); mkdirSync(tracker);
       /** Invoke the real package-manager executable, never its resolved CLI target. */
       const pm = (args: string[]) => command(shape.binary, [...shape.prefix, "--pm-path", join(tracker, ".agents/pm"), ...args, "--json"], tracker, runtime);
@@ -102,21 +123,87 @@ test("packed npm-global, bun-global, npx, bunx, local-bin and copied-extension c
       remote = { id: 1, rev: 2, relations: [], fields: { "System.Title": "Packed remote", "System.Description": "Details", "System.State": "Closed",
         "System.WorkItemType": "Task", "Microsoft.VSTS.Common.Priority": 2, "System.Tags": "fixture", "System.AreaPath": "Example", "System.IterationPath": "Example" } };
       for (const mode of ["import", "export", "sync", "refresh-plan"]) {
+        if (shape.name === "copied-tracker-extension" && mode !== "refresh-plan") {
+          await assert.rejects(pm(["ado", mode]), /ADO_USAGE[\s\S]*host links its SDK/u);
+          continue;
+        }
         const result = JSON.parse(await pm(["ado", mode, ...(mode === "refresh-plan" ? ["--fields", "title,status,relations"] : [])])) as { ok: boolean; cost?: { pm_mutations: number } };
         assert.equal(result.ok, true, `${shape.name}: ${mode}`);
         if (result.cost) assert.equal(result.cost.pm_mutations, 0);
       }
       const rows = JSON.parse(await pm(["list", "--all", "--full"])) as { items: { id: string; status: string; ado_rev: number }[] };
-      assert.equal(rows.items.length, 1); assert.equal(rows.items[0]!.status, "closed"); assert.equal(rows.items[0]!.ado_rev, 2);
+      assert.equal(rows.items.length, 1); assert.equal(rows.items[0]!.status, shape.name === "copied-tracker-extension" ? "open" : "closed"); assert.equal(rows.items[0]!.ado_rev, shape.name === "copied-tracker-extension" ? 1 : 2);
+      await pm(["update", created.id, "--field", "ado_rev=2", "--field", 'ado_sync_base={"ado_base_partial":1,"relations":[]}']);
+      const presence = JSON.parse(await pm(["ado", "refresh-plan", "--fields", "title,relations"])) as { hydrate: unknown[]; accounting: { cached: number; read: number }[] };
+      assert.equal(presence.hydrate.length, 1); assert.ok(presence.accounting.every((row) => row.cached === 0 && row.read === 1));
+      const presenceToon = await command(shape.binary, [...shape.prefix, "--pm-path", join(tracker, ".agents/pm"), "ado", "refresh-plan", "--fields", "title,relations", "--output-format", "toon"], tracker, runtime);
+      assert.match(presenceToon, /title,0,1,0,0/u);
       if (shape.name !== "copied-tracker-extension") {
         const plan = JSON.parse(await pm(["ado", "resolve-plan", "--item", created.id])) as { ok: boolean };
         assert.equal(plan.ok, true, "resolution's lazy module link must also survive this launcher");
+        await pm(["update", created.id, "--field", `ado_sync_base=${JSON.stringify({ ado_base_partial: 1, relations: [] })}`]);
+        remote.fields["System.Title"] = "Concurrent packed title"; remote.rev++;
+        const partial = JSON.parse(await pm(["ado", "resolve-plan", "--item", created.id])) as { ok: boolean; plan: ResolutionPlan };
+        assert.equal(partial.ok, true); assert.ok(partial.plan.fields.every((field) => field.base === null));
+        assert.equal(partial.plan.fields.find((field) => field.field === "title")!.conflict, true);
+        const toon = await command(shape.binary, [...shape.prefix, "--pm-path", join(tracker, ".agents/pm"), "ado", "resolve-plan", "--item", created.id, "--output-format", "toon"], tracker, runtime);
+        assert.match(toon, /title,null,/u);
+        partial.plan.choices = partial.plan.fields.filter((field) => field.local !== field.remote).map(({ field }) => ({ field, take: "remote" }));
+        const artifact = join(tracker, "reviewed-partial.json"); writeFileSync(artifact, JSON.stringify(partial.plan));
+        const before = (JSON.parse(await pm(["get", created.id])) as { item: unknown }).item;
+        await assert.rejects(pm(["ado", "resolve-apply", "--artifact", artifact]), /configuration[\s\S]*SDK semantic preview/u);
+        assert.deepEqual((JSON.parse(await pm(["get", created.id])) as { item: unknown }).item, before, "SDK storage guards precede preparation");
+        await assertEndpointPreserved(pm);
+
       } else {
         await assert.rejects(pm(["ado", "resolve-plan", "--item", created.id]), /configuration[\s\S]*pm install/u);
         await assert.rejects(pm(["ado", "resolve-plan"]), /Supply --item/u);
         await assert.rejects(pm(["ado", "resolve-apply"]), /Supply exactly one/u);
       }
-      t.diagnostic(`${shape.name}: 4/4 commands, SDK state readback and lazy resolution runtime checks passed; no git executable`);
+      t.diagnostic(`${shape.name}: ${shape.name === "copied-tracker-extension" ? "read-only refresh succeeds; guarded writes name the missing SDK link" : "4/4 commands and SDK state readback pass"}; lazy resolution checks pass; no git executable`);
+    });
+  }
+  for (const shape of shapes.filter((shape) => shape.name !== "copied-tracker-extension")) {
+    await t.test(`global-runtime ${shape.name}`, async () => {
+      extra.clear(); queryIds = [1];
+      remote = { id: 1, rev: 2, relations: [], fields: { "System.Title": "Packed global remote", "System.Description": "Details", "System.State": "Closed",
+        "System.WorkItemType": "Task", "Microsoft.VSTS.Common.Priority": 2, "System.Tags": "fixture", "System.AreaPath": "Example", "System.IterationPath": "Example" } };
+      const tracker = join(root, `global-tracker-${shape.name}`), globalHome = join(root, `global-home-${shape.name}`);
+      mkdirSync(tracker); mkdirSync(globalHome); mkdirSync(join(globalHome, ".config"));
+      const globals: NodeJS.ProcessEnv = { ...runtime, HOME: globalHome, XDG_CONFIG_HOME: join(globalHome, ".config") };
+      await command(shape.binary, [...shape.prefix, "install", packageRoot, "--global", "--json"], tracker, globals);
+      /** Keep the SDK-managed global module link outside this non-git tracker. */
+      const pm = (args: string[]) => command(shape.binary, [...shape.prefix, "--pm-path", join(tracker, ".agents/pm"), ...args, "--json"], tracker, globals);
+      await pm(["init", "--prefix", "fixture"]);
+      assert.equal((JSON.parse(await pm(["ado", "import"])) as { ok: boolean }).ok, true);
+      const created = (JSON.parse(await pm(["list", "--all", "--full"])) as { items: { id: string }[] }).items[0]!;
+      await pm(["update", created.id, "--field", `ado_sync_base=${JSON.stringify({ ado_base_partial: 1, relations: [] })}`]);
+      remote.fields["System.Title"] = "Reviewed packed title"; remote.rev++;
+      const partial = JSON.parse(await pm(["ado", "resolve-plan", "--item", created.id])) as { ok: boolean; plan: ResolutionPlan };
+      assert.equal(partial.ok, true); assert.ok(partial.plan.fields.every((field) => field.base === null));
+      const toon = await command(shape.binary, [...shape.prefix, "--pm-path", join(tracker, ".agents/pm"), "ado", "resolve-plan", "--item", created.id, "--output-format", "toon"], tracker, globals);
+      assert.match(toon, /title,null,/u);
+      partial.plan.choices = partial.plan.fields.filter((field) => field.local !== field.remote).map(({ field }) => ({ field, take: "remote" }));
+      const artifact = join(tracker, "reviewed-partial.json"); writeFileSync(artifact, JSON.stringify(partial.plan));
+      assert.equal((JSON.parse(await pm(["ado", "resolve-apply", "--artifact", artifact])) as { ok: boolean }).ok, true);
+      assert.equal((JSON.parse(await pm(["get", created.id])) as { item: { title: string } }).item.title, "Reviewed packed title");
+      globals.ADO_STATUS_MAP = JSON.stringify({ Done: " CLOSED " });
+      remote.fields["System.State"] = "Done"; remote.fields["System.Title"] = " Reviewed packed Done "; remote.rev++;
+      const normalized = JSON.parse(await pm(["ado", "resolve-plan", "--item", ` #${created.id.toUpperCase()} `])) as { plan: ResolutionPlan };
+      assert.equal(normalized.plan.fields.find((field) => field.field === "status")!.local, normalized.plan.fields.find((field) => field.field === "status")!.remote);
+      normalized.plan.choices = normalized.plan.fields.filter((field) => field.local !== field.remote).map(({ field }) => ({ field, take: "remote" }));
+      writeFileSync(artifact, JSON.stringify(normalized.plan));
+      assert.equal((JSON.parse(await pm(["ado", "resolve-apply", "--artifact", artifact])) as { ok: boolean }).ok, true);
+      const afterAlias = (JSON.parse(await pm(["get", created.id])) as { item: { title: string; status: string } }).item;
+      assert.equal(afterAlias.title, "Reviewed packed Done"); assert.equal(afterAlias.status, "closed");
+      const replay = JSON.parse(await pm(["ado", "resolve-apply", "--artifact", artifact])) as { ok: boolean; replayed: boolean };
+      assert.equal(replay.ok, true); assert.equal(replay.replayed, true);
+      assert.deepEqual((JSON.parse(await pm(["get", created.id])) as { item: unknown }).item, afterAlias);
+      assert.equal(remote.fields["System.State"], "Done");
+      delete globals.ADO_STATUS_MAP;
+      await assertEndpointPreserved(pm);
+      assert.equal(existsSync(join(tracker, ".git")), false);
+      t.diagnostic(`${shape.name}: global SDK runtime supports partial-base apply and preserves unselected endpoint edits`);
     });
   }
   assert.ok(calls.length >= 24);

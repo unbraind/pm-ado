@@ -1,3 +1,4 @@
+import { type ValueNormalization, type ItemReferenceNormalization } from "./normalization.ts";
 /** Revision-bound classification previews using the shared contract and Azure's non-saving validator. */
 import type { CommandHandlerContext } from "@unbrained/pm-cli/sdk/authoring";
 import type { ItemMetadata } from "@unbrained/pm-cli/sdk";
@@ -103,7 +104,7 @@ export interface MovePreview {
  * through revision-checked PATCH validateOnly=true, bypassRules=false. No changes are saved.
  * Single-item validations are observations, not a transaction or a future permission grant.
  */
-export declare function simulateMove(config: AdoConfig, request: AdoTransport, options: MoveOptions): Promise<MovePreview>;
+export declare function simulateMove(config: AdoConfig, request: AdoTransport, options: MoveOptions, normalization?: ValueNormalization | ItemReferenceNormalization): Promise<MovePreview>;
 /** Read the complete host snapshot and delegate rendering to the pm command runtime. */
 export declare function runMoveCommand(ctx: CommandHandlerContext): Promise<MovePreview | {
     ok: boolean;

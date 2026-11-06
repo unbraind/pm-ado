@@ -1,0 +1,22 @@
+id: pm-ado-packed-timeout
+title: Packed install matrix exceeds its parent timeout under shared-host load
+description: "The unchanged packed-install integration test exceeds its existing 900000 ms parent deadline during full release checks under shared-host load. Node 24 disk-backed attempt reached 903139 ms; Node 26 memory-backed attempt reached 901979 ms. All six project launcher cases and the first global-runtime cases passed before later cases were canceled. Investigate setup cost and bounded test structure without reducing launcher coverage, lowering coverage thresholds, or increasing worker count. This is separate from the revisionConflict normalization fix."
+type: Issue
+status: open
+priority: 2
+tags[2]: release-gate,testing
+created_at: "2026-11-02T05:52:15.908Z"
+updated_at: "2026-11-02T10:44:25.756Z"
+author: codex-sol
+parent: pm-ado-sdk-adoption
+repro_steps: "Run NPM_CONFIG_USERCONFIG=/dev/null npm run release:check with at most two workers on a busy host."
+expected_result: All packed launcher and global-runtime scenarios complete within the existing bounded test policy.
+actual_result: The parent times out and cancels remaining global-runtime cases despite prior assertions passing.
+comments[4]{created_at,author,text}:
+  "2026-11-02T06:45:06.674Z",codex-sol,"Completed Node 26 npm release attempt: 1079 total, 1075 pass, 2 fail, 2 canceled, no skips. Parent timed out at 901979 ms against its existing 900000 ms limit; global-runtime npx was canceled, and bunx/local-bin did not start. All six project launchers and global npm/Bun cases passed. V8 coverage reports 100 percent lines/branches/functions across all 13 sources. No code, timeout or threshold change made for this follow-up."
+  "2026-11-02T06:57:35.808Z",codex-sol,"Later Bun V8 control passes all eleven packed launcher/global-runtime cases at 579923 ms with the same Node 26 runtime, TMPDIR class, source, 900000 ms parent limit and two-worker policy. The earlier timeout remains reproducible evidence of load-sensitive bounded-fixture setup/runtime, not an assertion regression in normalization."
+  "2026-11-02T09:01:03.264Z",codex-sol,"The full Bun gate passes both 1079-test suites. Its packed matrix passes again in the independent statement run at 753244 ms, below the unchanged 900000 ms limit. Earlier npm timeout remains an environment-sensitive follow-up; no timeout or workload reduction is part of the normalization patch."
+  "2026-11-02T10:44:25.755Z",codex-sol,The later complete npm retry also passes both 1079-test suites and all four 100 percent coverage gates. Packed matrix passes at 562638 ms V8 and 410955 ms statements without timeout/workload/worker changes. Retain this open follow-up for the earlier observed shared-host timing failures; normalization code and regressions are verified separately.
+files[1]{path,scope}:
+  test/packed-install-shapes.test.ts,project
+body: ""

@@ -13,7 +13,8 @@ import { NativeWriteFence as BuiltNativeWriteFence } from "../dist/history-fence
 /** Commit through an independent OS process so the peer cannot inherit a revision scope. */
 async function peerWrite(pmRoot: string, id: string, options: sdk.PmUpdateActionOptions, mode = "update"): Promise<void> {
   const childEnv: NodeJS.ProcessEnv = { ...process.env, NPM_CONFIG_USERCONFIG: "/dev/null" };
-  for (const key of Object.keys(childEnv)) if (/(?:TOKEN|SECRET|PASSWORD|API_KEY|ACCESS_KEY|CREDENTIAL|NPM_MEDIA_SERVER|^PM_)/iu.test(key)) delete childEnv[key];
+  // Keep the inherited coverage preload's inputs; drop tracker settings and credentials.
+  for (const key of Object.keys(childEnv)) if (/(?:TOKEN|SECRET|PASSWORD|API_KEY|ACCESS_KEY|CREDENTIAL|NPM_MEDIA_SERVER|^PM_(?!ADO_STATEMENT_(?:SOURCES|REPORT_DIR)$))/iu.test(key)) delete childEnv[key];
   await promisify(execFile)(process.execPath, [join(import.meta.dirname, "helpers/native-revision-peer.ts"), pmRoot, id, JSON.stringify(options), mode],
     { env: childEnv, timeout: 30000 });
 }

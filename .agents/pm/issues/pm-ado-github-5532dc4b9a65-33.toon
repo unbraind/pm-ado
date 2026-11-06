@@ -2,14 +2,26 @@ id: pm-ado-github-5532dc4b9a65-33
 title: Closeout records gap-reporting PR #16 as statement-enforcement delivery instead of #19
 description: "GH issue #33: https://github.com/unbraind/pm-ado/issues/33 · author @unbraind · created 2026-10-17T08:42:43Z · updated 2026-10-20T16:59:19Z"
 type: Issue
-status: open
+status: in_progress
 priority: 2
 tags[2]: "gh:unbraind/pm-ado#33","github_author:unbraind"
 created_at: "2026-10-17T08:42:43Z"
-updated_at: "2026-10-29T07:10:20.401Z"
+updated_at: "2026-11-06T15:18:50.421Z"
 author: pm-github
-comments[1]{created_at,author,text}:
+comments[5]{created_at,author,text}:
   "2026-10-23T08:25:45.901Z",codex-agent,"Ownership check: this repository only configures the reusable pm-github closeout workflow and package version. Delivery candidate selection and chronology are implemented in pm-github closeout.ts (runCloseout), not in pm-ado configuration. Issue #33 belongs to pm-github selection/provenance logic; no existing history rewritten and no item closed here."
+  "2026-11-06T15:12:39.809Z",codex-sol,"Read issue 33 and its full discussion. Main 0b3d5a3 already contains the record correction from merged PR 44 (9f7158b): PR 19 is the delivery, completed_at is its merge time, and history appends the correction without rewriting earlier records. PR 32 is closed. Reproduce the original static comparison and verify PR 19 checks before preparing an evidence-only closeout; no production code change is warranted. The original matcher lives outside this repository and will not be modified."
+  "2026-11-06T15:14:07.398Z",codex-sol,"Static reproduction verified through PmClient in two real non-git temp trackers, loading immutable item/history bytes without SDK mocks: reported PR 32 head 1b1ab501 selects PR 16 and completed_at 2026-10-04T12:58:08.000Z; origin/main selects PR 19 and completed_at 2026-10-08T01:19:51.000Z. Current actual_result and close_reason include PR 19, its merge SHA f297a71431debfe2e00adb8dd1b02874e6dadfe2 and merge time; resolution explicitly rejects PR 16 as delivery. The close event cites PR 19, the following correction records its completion date, all four implementation comments remain, and pre-PR-44 history is a byte-identical prefix. No changes to the already-correct closed item are needed. GitHub verifies PR 19 head 119b225ec6f84bf8c53ee6c953dba0980ddc6f1a: Node 22, Node 26, codeql and CodeQL SUCCESS; skipped/neutral reviewer checks are not review approval. PR 44 merged at 2026-10-24T23:23:14Z. This acceptance concerns static provenance and offline enforcement, not live Azure."
+  "2026-11-06T15:17:53.885Z",codex-sol,"Identical delivery assertions reject the original PR 32 snapshot with an AssertionError and pass current main, in disposable non-git trackers read through PmClient. This is a historical-data sensitivity check; no new implementation or source-function revert is applicable because PR 44 already corrected this repository. The owner discussion identifies the matcher and its class regression as pm-github-owned; that separate implementation is not independently re-reviewed here. Existing linked enforcement tests PASS 3/3, zero skipped; pm test also PASS 3/3 with result tracking disabled by policy. Strict health reports pre-existing extension_host_pm_cli_version_skew (CLI 2026.11.4 versus managed host 2026.11.5), independently reproduced against unchanged main; follow-up pm-ado-extension-host-skew tracks it. No dependency pin or threshold change is part of this closeout."
+  "2026-11-06T15:18:31.904Z",codex-sol,"Preparing an evidence-only closeout PR: production source and existing pm-ado-5w3m item/history remain unchanged. Typecheck and focused tests pass; the docstring gate and test compilation are being verified. No lint script is declared. Full npm release:check has been invoked at unchanged thresholds; remote CI will run the complete Node 22/26 and npm/Bun release gates on the pushed head. Final run results and bot-review rounds will be reported on the PR. The issue item remains in_progress for orchestrator verification, with this agent claim released. Tracked scope is this issue item/history, the discovered health follow-up item/history, and the generated changelog."
+files[3]{path,scope}:
+  .agents/pm/history/pm-ado-5w3m.jsonl,project
+  .agents/pm/issues/pm-ado-5w3m.toon,project
+  test/coverage-gate.test.ts,project
+tests[1]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
+  node --test --test-concurrency=2 --test-name-pattern='statement threshold rejects|statement report fails closed|statement counters merge' test/coverage-gate.test.ts,project,codex-sol,"2026-11-06T15:13:53.637Z",local_mutation,closeout-records-statement-enforcement-delivery
+docs[1]{path,scope}:
+  docs/statement-coverage.md,project
 github_close_reason: ""
 github_closed_at: ""
 github_created_at: "2026-10-17T08:42:43Z"

@@ -952,7 +952,13 @@ export class AdoClient {
       // this caller never read, which is precisely the silent overwrite the
       // revision assertion exists to prevent. The caller re-reads, decides what
       // its change means against the newer state, and writes again.
-      const [current] = await this.getWorkItems([id]);
+      let current: AdoWorkItem | undefined;
+      try { [current] = await this.getWorkItems([id]); }
+      catch (readError) {
+        // Diagnostics cannot change a refused PATCH into an ambiguous transport outcome.
+        try { error.cause ??= readError; } catch { /* A caller may throw a frozen primary error. */ }
+        throw error;
+      }
       throw new RevisionConflict(id, rev, current);
     }
   }

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 /** Validate portable witnesses, including a legacy tracker with no native history yet. */
 export function isNativeHead(value) {
     if (typeof value !== "object" || value === null || Array.isArray(value))
@@ -102,6 +103,111 @@ export class NativeWriteFence {
         for (const id of [...this.heads.keys()])
             await this.assertCurrent(id);
     }
+    /** Compare SDK-planned effects with only SDK-declared commit-time values masked, preserving field presence. */
+    plannedEquals(left, right, clocks) {
+        /** SDK patches work on disposable copies, including nested dependency/log timestamps. */
+        const fields = (document) => this.sdk.applyHistoryPatch(structuredClone({
+            metadata: this.sdk.toItemRecord(document.metadata), body: document.body
+        }), clocks.map((pointer) => ({ op: "replace", path: `/metadata${pointer}`, value: "native-clock" })), 0, "preview");
+        try {
+            return this.sdk.stableValueEquals(fields(left), fields(right));
+        }
+        catch {
+            return false; /* A missing planned field is a different mutation, not a clock value. */
+        }
+    }
+    /** Ask the real SDK apply planner for canonical state, including its own option normalization. */
+    async plannedDocument(id, options) {
+        const request = { transactionId: `ado-fence-${randomUUID()}`, mutations: [{ op: "update", id, options }] };
+        const client = new this.sdk.PmClient({ pmRoot: this.pmRoot, author: this.author });
+        if (typeof client.previewItemMutations !== "function")
+            return undefined;
+        const preview = await client.previewItemMutations(request);
+        const { body, notes_count: _notes, tests_count: _tests, collection_counts: _counts, ...metadata } = preview.records[0].item;
+        return { document: this.sdk.canonicalDocument({ metadata: metadata, body: body }, { schema: (await this.sdk.readSettings(this.pmRoot)).schema }), clocks: preview.records[0].commit_time_fields };
+    }
+    /** Bind every accepted event to the intended SDK mutation, including its message-less pre-close phase. */
+    async mutationPlan(id, options) {
+        const plan = { phases: [], complete: false, legacy: false, closing: false };
+        let previous = this.snapshots.get(id);
+        try {
+            const settings = await this.sdk.readSettings(this.pmRoot), registry = this.sdk.resolveRuntimeStatusRegistry(settings.schema);
+            plan.closing = options.status !== undefined && this.sdk.normalizeStatusForRegistry(options.status, registry) === registry.close_status;
+            if (plan.closing) {
+                // This is the SDK's routed pre-close invocation, planned by the same SDK writer.
+                const partial = await this.plannedDocument(id, { ...options, status: undefined, closeReason: undefined, message: undefined });
+                if (partial === undefined)
+                    plan.legacy = true;
+                else if (!this.plannedEquals(previous, partial.document, ["/updated_at"])) {
+                    plan.phases.push({ ...partial, partial: true });
+                    previous = partial.document;
+                }
+            }
+            if (!plan.legacy) {
+                const document = await this.plannedDocument(id, options);
+                if (document === undefined)
+                    plan.legacy = true;
+                else {
+                    if (!this.plannedEquals(previous, document.document, ["/updated_at"]))
+                        plan.phases.push({ ...document, partial: false });
+                    plan.complete = true;
+                }
+            }
+        }
+        catch { /* Dispatch preserves the native validation error; an unverified success never advances the baseline. */ }
+        await this.assertCurrent(id);
+        const current = await this.document(id);
+        if (!this.sdk.stableValueEquals(current, this.snapshots.get(id)))
+            throw this.conflict(id, current);
+        return plan;
+    }
+    /** Bind effects to an unmodified native SDK receipt, including peers that make the owned write a no-op. */
+    receiptOwned(id, suffix, current, message, closing, result, failed) {
+        if (failed || suffix.length === 0)
+            return suffix.length === 0;
+        if (typeof result !== "object" || result === null)
+            return false;
+        const receipt = result;
+        if (!Array.isArray(receipt.changed_fields) || !receipt.changed_fields.every((key) => typeof key === "string") ||
+            typeof receipt.item !== "object" || receipt.item === null || receipt.item.id !== id)
+            return false;
+        const fields = new Set(receipt.changed_fields);
+        if (suffix.length > (fields.size === 0 ? 0 : closing ? 2 : 1))
+            return false;
+        if (suffix.some((entry, index) => {
+            const changes = entry.patch.filter((patch) => patch.path !== "/metadata/updated_at");
+            return (entry.message !== message && !(closing && index === 0 && entry.op === "update" && entry.message === undefined)) ||
+                changes.length === 0 || changes.some((patch) => !fields.has((patch.path.startsWith("/metadata/") ? patch.path.slice(10) : patch.path.slice(1))
+                .split("/")[0].replaceAll("~1", "/").replaceAll("~0", "~")));
+        }))
+            return false;
+        try {
+            const { body: _body, ...metadata } = receipt.item;
+            return this.sdk.stableValueEquals(current.metadata, this.sdk.canonicalDocument({ metadata: metadata, body: current.body }).metadata);
+        }
+        catch {
+            return false;
+        }
+    }
+    /** Verify the exact planned record sequence and current document without adopting a peer event. */
+    async writtenState(id, expected, message, operation, plan, failed = false, result) {
+        const { entries } = await this.sdk.readHistorySnapshot(this.sdk.getHistoryPath(this.pmRoot, id), id);
+        const current = await this.document(id);
+        const suffix = entries.slice(expected.length);
+        const document = suffix.length ? this.sdk.replayToItemDocument(this.sdk.replayHistoryToTarget(entries, entries.length - 1)) : this.snapshots.get(id);
+        const attributionMismatch = suffix.some((entry) => entry.author !== this.author || entry.agent_provenance?.ado_operation?.value !== operation);
+        if (attributionMismatch || (!failed || plan.legacy) && !this.receiptOwned(id, suffix, current, message, plan.closing, result, failed) || (!plan.legacy && (suffix.length > plan.phases.length || !failed && (suffix.length > 0 && !plan.complete || suffix.length !== plan.phases.length) ||
+            suffix.some((entry, index) => (entry.message !== message && !(plan.phases[index].partial && entry.message === undefined && entry.op === "update")) ||
+                !this.plannedEquals(this.sdk.replayToItemDocument(this.sdk.replayHistoryToTarget(entries, expected.length + index)), plan.phases[index].document, plan.phases[index].clocks)))) ||
+            !this.sdk.stableValueEquals(current, document)) {
+            const conflict = this.conflict(id, current);
+            if (!Object.keys(conflict.fields).length)
+                conflict.fields.history = { base: expected, current: await nativeHead(this.sdk, this.pmRoot, id) };
+            throw conflict;
+        }
+        const last = entries.at(-1);
+        return { current, head: { length: entries.length, hash: last === undefined ? "empty" : last.record_hash ?? this.sdk.hashHistoryRecord(last) } };
+    }
     /** Re-read changed fields, write forward once, and report races without restoring anything. */
     async update(id, options, transactionId) {
         if (!this.snapshots.has(id))
@@ -115,25 +221,45 @@ export class NativeWriteFence {
         await this.assertCurrent(id);
         const expected = this.heads.get(id);
         const message = `bulk-item-transaction ${transactionId} apply${options.message === undefined ? "" : `; ${options.message}`}`;
-        // Native CAS is missing (#1576, #1620): an ordinary writer can still enter after this read.
+        // Bind to the decision document, never a later revision read that could adopt a peer edit.
+        // Older supported hosts retain their documented history-detection-only behavior.
+        const plan = await this.mutationPlan(id, options);
         const readAt = performance.now();
+        let unchecked = false, result;
+        const operation = randomUUID();
         try {
-            await this.write(id, { ...options, author: this.author, message });
+            const dispatch = async () => { result = await this.write(id, { ...options, author: this.author, message }); return result; };
+            const write = () => this.sdk.runWithAgentSessionContext({ provenance: { ado_operation: operation } }, dispatch);
+            if (typeof this.sdk.withExpectedItemRevisions === "function") {
+                const receipt = await this.sdk.withExpectedItemRevisions([{ id, itemHash: this.sdk.hashDocument(this.snapshots.get(id)) }], write, { pmRoot: this.pmRoot });
+                unchecked = receipt.unchecked.length > 0;
+            }
+            else
+                await write();
         }
         catch (error) {
-            await this.assertCurrent(id);
+            try {
+                const { current } = await this.writtenState(id, expected, message, operation, plan, true, result);
+                if (typeof this.sdk.isItemRevisionConflict === "function" && this.sdk.isItemRevisionConflict(error))
+                    throw this.conflict(id, current);
+            }
+            catch (stateError) {
+                if (stateError instanceof NativeHistoryConflict)
+                    throw stateError;
+            }
             throw error;
         }
         finally {
             this.lastWriteWindowMs = performance.now() - readAt;
         }
-        const { entries } = await this.sdk.readHistorySnapshot(this.sdk.getHistoryPath(this.pmRoot, id), id);
-        const current = await this.document(id);
-        if (entries.slice(expected.length).some((entry) => entry.author !== this.author || entry.message !== message))
-            throw this.conflict(id, current);
+        if (unchecked) {
+            const conflict = this.conflict(id, await this.document(id));
+            conflict.message = "Native dispatch completed without a revision check; re-read both trackers and re-plan from current tracker state.";
+            throw conflict;
+        }
+        const { current, head } = await this.writtenState(id, expected, message, operation, plan, false, result);
         this.snapshots.set(id, current);
-        const last = entries.at(-1);
-        this.heads.set(id, { length: entries.length, hash: last === undefined ? "empty" : last.record_hash ?? this.sdk.hashHistoryRecord(last) });
+        this.heads.set(id, head);
         await this.assertCurrent(id);
         return current.metadata.updated_at;
     }

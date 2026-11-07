@@ -192,22 +192,30 @@ base; retrying does not force a peer's status or title back to Azure's value.
 Use the reviewed resolution choices above to choose a conflicting remote value.
 An absent or partial base never authorizes overwriting a locally edited or unknown-ancestry field; native birth proof may initialize untouched fields during first import.
 
-There is still a window between the final read and the native write. Ordinary
-SDK writers do not join the workspace transaction lock
-([pm-cli#1620](https://github.com/unbraind/pm-cli/issues/1620)), and this
-package has not yet adopted the expected-item-hash guards available since SDK
-2026.11.4 ([pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576)). A writer in that
-window may still be overwritten; post-write detection reports a conflict but
-never attempts rollback. This is not cross-process isolation. Twelve real SDK
-samples measured **34.8–194.7 ms** from the final guard to completed SDK write, an
-upper bound on guard-to-write time, not a guaranteed maximum or an
-atomicity claim. Scheduling, I/O and hooks can make the window longer.
+On SDK hosts exposing `withExpectedItemRevisions` (2026.11.4 onward), each
+native lifecycle dispatch also binds the SDK's canonical hash of the saved
+decision document. The SDK checks it under the item write lock and advances it
+past the operation's own writes. A separate process changing that document in
+the final read/write interval is refused before mutation. The guard covers
+the whole document, including fields the Azure update does not write, and an
+unchecked dispatch cannot report success.
+
+Older supported hosts keep the previous pre/post history detection behavior;
+they do not acquire a locked revision guard. Content hashes are not monotonic:
+fixed-clock ABA and history-only events still need the separate history checks,
+and an event in the final interval can be detected only after dispatch. No
+rollback runs. This is not full serializable isolation or a transaction spanning
+Azure and pm. The pinned 2026.11.4 acceptance uses filesystem storage without
+storage overrides; native database backends and the later SDK storage-override
+corrections require separate conformance evidence. See the
+[remaining backend acceptance work](docs/sdk-adoption.md#remaining-backend-roadmap).
 
 Tests guarantee no rollback overwrites a peer, SDK hierarchy validation remains
 active, no rollback creates cycles, and stale intents never require manual
 repair. The crash/peer boundary matrix runs real no-git trackers and second OS
 processes. `npm run test:native-precondition` checks fixed-clock edits before
-native dispatch; it does not certify the remaining read/write window.
+native dispatch. The history-fence suite separately checks ordinary OS-process
+writes during dispatch, native lifecycle transitions and retries.
 
 Resolution outbox intents resume settlement after a post-PATCH lease or write failure.
 Saved resolution plans retain an opaque scope reference instead of organization/project

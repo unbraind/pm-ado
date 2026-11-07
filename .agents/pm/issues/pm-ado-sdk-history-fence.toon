@@ -6,10 +6,10 @@ status: in_progress
 priority: 2
 tags[6]: "gh:unbraind/pm-ado#92","gh:unbraind/pm-cli#1576","gh:unbraind/pm-cli#1620",sdk-gap,"upstream:pm-cli#1576","upstream:pm-cli#1620"
 created_at: "2026-10-27T13:44:23.397Z"
-updated_at: "2026-11-06T23:10:19.329Z"
+updated_at: "2026-11-07T04:56:01.840Z"
 author: codex-agent
 parent: pm-ado-sdk-adoption
-comments[29]{created_at,author,text}:
+comments[40]{created_at,author,text}:
   "2026-10-27T16:36:12.343Z",codex-agent,"R7 audit links the already-open upstream issue https://github.com/unbraind/pm-cli/issues/1576. Installed SDK 2026.10.24 BulkItemUpdateMutation.match accepts only a metadata key/value; BulkItemCloseMutation has no match or expectedItemHash/expectedHistoryHead. commitWorkspaceTransaction provides a workspace lease but ordinary native writers acquire item leases independently. mutateItemWithHistoryContext permits history reads inside its callback, but cannot compose a native lifecycle update under that same non-reentrant item lease. The internal runWithItemMutationPrecondition callback is synchronous and not a public SDK export. A beforeMutation hook can inspect history under the native item lease; SDK setActiveExtensionHooks replaces the full registry and offers no public additive scoped guard or registry snapshot. Disabling extensions as in a hook workaround would bypass existing policy/hooks and lose extension-owned runtime schema; hand-applying native update/close/hierarchy behavior would violate SDK adoption. Required public contract: native lifecycle/bulk expectedHistoryHead (length plus record hash), or expectedItemHash, checked under the existing item lease; alternatively an additive request-scoped transactional guard that preserves the active extension runtime. Native sync update sites and resolution agreement publication remain blocked on this contract; not marked fixed. A package-level fixed-clock boundary probe is being captured in disposable source copies with the real SDK."
   "2026-10-27T17:08:11.670Z",codex-agent,"R7 capability check also inspected the public SDK 2026.10.27 declarations from a credential-free npm pack without changing the pin. No native expected item/hash/history-head precondition was exported there either. RelationshipEventStore.expectedVersion guards its separate relationship ledger, not native item parent/dependency/lifecycle writes. Additional SDK facade audit: index.ts importRelations forward updates and compensation also call an opaque PmClient.update without a history precondition; that facade cannot enforce a native item CAS with its current client contract. These sites join sync commitLocal and resolution publication under upstream #1576. The fixed-clock probe fails all 18 cases: history advances in all 18; 15 return incorrect success; 6 overwrite the peer title; all 18 change item state after the peer edit. Revert proof is not applicable to an unimplemented SDK contract; the finding remains unresolved, not marked fixed."
   "2026-10-27T20:28:55.116Z",codex-agent,"R8 implements the owner-approved package fallback for upstream pm-cli#1576: native history length/hash before inspection; SDK lifecycle write inside a workspace transaction; locked post-write native author/op/patch verification; selective append-only compensation and typed conflict if another entry intervened. Journal keys bind the head, and unverified dispatch/verified-but-uncommitted journals resume without redispatch. The missing native pre-write API remains an upstream follow-up, rather than an unmet package acceptance criterion. Existing SDK hooks and runtime remain active; native clients and sync adapters share history-fence.ts."
@@ -39,21 +39,34 @@ comments[29]{created_at,author,text}:
   "2026-11-06T23:03:56.319Z",codex-agent,"GraphQL fetch now succeeds with reviewThreads(first:100) and comments(first:20): exactly two unresolved threads, one comment each, no further thread/comment pages. Latest CodeRabbit review at 2026-11-06T21:21:43Z contains no Outside diff range findings. Full pinned-PM fence run passes 104/104; isolated Git-identity API/SDK/identity/contracts pass 43/43 and Azure sync/recovery integration passes 18/18. Added append-only previous-writer peer fixture with absent provenance; expanded owned-failure controls pass 15/15. Packed 2026.10.25 compatibility subtest passes; launcher matrix and final native acceptance still running. Fresh final revert corpus includes the previous-writer case."
   "2026-11-06T23:05:53.398Z",codex-agent,"Final behavioral revert proofs in disposable rebuilt copies (source and dist): reverting only the update catch to assertCurrent fails 3/15 reported tests (both owned strict-close cases plus parent); restoring the empty unchecked conflict fails 5/5; removing writtenState read-back comparison fails 3/3; removing operation attribution fails 7/15 (same-author, copied-message and provenance-free legacy peers plus parent). Commands: node --test --test-reporter=tap --test-concurrency=2 --test-name-pattern=\"owned partial close failures\" test/history-fence.test.ts; patterns \"unchecked host dispatch\" and \"successful owned dispatch\" for their mutations. Restoring fixed functions and rebuilding passes 26/26 with pattern \"owned partial close failures|unchecked host dispatch|successful owned dispatch|combined field and close success\", zero skips. The package worktree was never reverted; every temporary implementation restored in finally and disposable copies removed. All original native peer, ABA and no-rollback assertions retained."
   "2026-11-06T23:10:17.904Z",codex-agent,"Final review-round validation: pinned PM runner fence106/106, isolated-identity SDK/API/compatibility/contracts43/43, selected Azure import/revision-conflict/relation/recovery/native-hook integration18/18, complete npm/Bun/npx/bunx/local/copied packed matrix13/13 (430.5 seconds), native-precondition19/19. All zero failures/skips; no host timeout remains. Behavioral restore26/26; revert failures3/15,5/5,3/3,7/15 as detailed above. Typecheck/build/test compilation, docstrings19 files/128 declarations, production audit0 vulnerabilities, pack dry-run52 files and release-attestation/date checks pass. No lint script exists. Regenerate/check the changelog after release of this claim and verify isolated-home strict health before commit; default-home health has unrelated global extension skew. Full npm/Bun release/coverage gates remain pending CI under the owner time budget, with 100% thresholds unchanged. Final-head checks: https://github.com/unbraind/pm-ado/pull/92/checks . No roadmap item is closed; existing monotonic final-interval and backend conformance limits remain. No pm SDK capability gap was needed: public session provenance supplies event ownership. No thread replies/resolution, mentions, merge, release or provider writes. Only this item was touched in this review round."
-files[13]{path,scope}:
+  "2026-11-07T02:48:57.383Z",codex-agent,"Re-review confirms both findings. General rules: ambient execution context is descriptive attribution, not proof of the intended mutation; secondary diagnostic failures must not replace the primary write failure. Scope audit includes all native write-fence call sites (sync, relation imports and resolution), SDK/CLI JSON and TOON rendering, packed and no-git consumers, plus remote revision-conflict read-back and recovery catches. Existing in-process peer fixture in test/sync.test.ts is retained unchanged and will be run before full gates. The prior head failed CI; its passing selected tests did not certify the full release gate. New fixes and revert proofs will extend the existing item history."
+  "2026-11-07T03:01:55.356Z",codex-agent,"Implementation binds native events to real SDK preview/apply phase documents and exact event cardinality, with message and provenance as additional checks. A shared async tag is no longer ownership authority; extra writes, same-message peers, ABA/audit events and peers beside an owned no-op are refused without adopting a baseline. Native field normalization remains SDK-owned. SDK-declared commit-time values are masked only for actual phase comparison, while plan cardinality compares all intended changes except updated_at. Both original native write errors and remote PATCH 412 refusals survive diagnostic failures; Azure diagnostic details remain in cause. The earlier test expecting a diagnostic 503 to replace a known PATCH refusal is strengthened to retain BOTH the 412 classification and the 503 cause, rather than dropping its diagnostic assertion. Journal persistence and crash-observer failures are operational boundaries, not optional diagnostic reads; their deliberate failure-sensitive behavior remains unchanged."
+  "2026-11-07T03:10:09.078Z",codex-agent,"Focused adversarial controls pass135/135 with zero skips: 80 inherited-context before/after peer cases across ordinary fields, relations, ABA/audits, copied messages, no-ops and combined close; 24 primary-error/read-failure cases; source/built remote diagnostics; SDK and actual JSON/TOON export/sync consumers. Existing in-process close fixture remains unchanged and passes. SDK scope enrichment legitimately copies a revision refusal to add details; tests retain exact native validation-error identity and all original revision-refusal facts. SDK namespace preview rejects active ado_sync_base registration in this runtime; the public bound PmClient.previewItemMutations path preserves registration and passes all consumer controls. No SDK pin bump or mock was used. Literal completion-time correction and normalized no-op controls pass. Typecheck/test compilation and docstrings19 files/128 declarations pass. Disposable behavioral reverts and full release gates follow."
+  "2026-11-07T03:18:24.014Z",codex-agent,"Final disposable behavioral reverts (source and rebuilt dist): restoring the old writtenState body fails81/97 property tests (16 already-refused controls pass); removing only the guarded diagnostic catch fails19/25 native-error tests (six missing-item conflict controls still pass); restoring the prior AdoClient.updateWorkItem body fails16/16 remote-error controls. Exact runner: node --test --test-reporter=tap --test-concurrency=1 --test-name-pattern=<pattern> with patterns \"owned mutation property\", \"primary native errors\", and \"diagnostic read failure property|diagnostic transport error\" on their respective history-fence or ado test files. Restoring final functions and rebuilding passes156/156 across history-fence, ado and sync tests, including real SDK/JSON/TOON consumers, clock/no-op controls and incomplete/mismatched close phases. Previous complete fence run215/215 passes before adding16 no-op audit/ABA combinations and five phase-kind/swallowed-failure controls; all added cases are in the full gates. No existing assertions were removed or weakened. npm and Bun full release gates now run sequentially under isolated Git/home identity, credentials excluded and at most two test workers; thresholds unchanged."
+  "2026-11-07T03:35:55.506Z",codex-agent,"The first full gate exposed real SDK2026.10.25 compatibility, not a timeout: its namespace preview declaration returns validation facts without staged records, and PmClient has no bound preview method. Verified from the public released declaration and implementation. Kept the SDK floor/pin unchanged. Added a receipt-based legacy path that checks actual SDK changed_fields, canonical returned metadata, message markers, nonempty patch effects and bounded update/close event count. Common attribution checks apply to both paths; context tags alone are never sufficient. Added real older-SDK before/after copied-message peers at a fixed clock, body/title/audit no-ops, missing/altered adapter receipts, native body/combined-close successes and audit-only extra effects. Three legacy subtests pass; a launchers-filtered diagnostic hit the unchanged aggregate request-count assertion, so it is not a passing full matrix. No acceptance test/assertion was removed. Stopped the known-failing first full gate at298 seconds, corrected compatibility, and will rerun the entire npm/Bun gates with the complete launcher matrix."
+  "2026-11-07T04:03:26.620Z",codex-agent,"Class audit found a peer-substitution case beyond extra-event counting: a peer can perform the exact planned mutation first, then the owned SDK call becomes a no-op. All 8 source/built substitution cases plus their parent failed on the pre-fix implementation (9/9 reported failures). Successful mutations now require the actual native SDK changed-field receipt as well as modern canonical phase matching; pre-close field substitution is covered too. Added a malformed nested dependency receipt control to exercise canonicalization refusal. The npm full-gate attempt was deliberately stopped after 1290 seconds for this required code fix while the existing 500-sequence integration test was still running; this was not a test failure or a host timeout. Focused final checks and disposable revert proofs run before the bounded full-gate retry."
+  "2026-11-07T04:18:20.369Z",codex-agent,"Final disposable behavioral proofs on rebuilt source/dist: restoring provenance-only writtenState reports 81 failures of 97; removing the native receipt guard reports 9/9 substitution failures; removing canonical post-dispatch plan comparison reports 5/5 failures; restoring the unguarded native diagnostic read reports 19 failures of 25; restoring Azure diagnostic error masking reports 16/16 failures. Restored modern controls pass 165/165 plus the independent semantic controls 5/5, zero skipped. The complete packed older-host matrix reports 3 failures of 15 with ownership verification reverted and passes 15/15 after restoration, zero skipped. All reverts and pack builds used disposable copies. Final source/built fence and Azure client files passed 327/327 before the additional semantic controls; public API, Node/Bun consumer, identity, SDK, compatibility and contract files pass 43/43. The source implementation is fixed; final targeted fence coverage and remaining sync/native-precondition gates are in progress."
+  "2026-11-07T04:39:26.460Z",codex-agent,"Coverage audit: the full fence/packed corpus passed 268/268 behavior checks; line and function coverage were 100%, with three unexercised branches. Two branches were a no-session fallback below the supported SDK contract: the real declared-minimum SDK 2026.10.25 exports runWithAgentSessionContext, now asserted by the packed acceptance test. Supported dispatches always use native session context. The third branch translates a genuine SDK revision refusal; a real independent document-only ABA now covers it without SDK mocks. The new controls pass 17/17. Rebuilt final-source modern reverts again fail 81/97, 9/9, 5/5, 19/25 and 16/16; restored controls pass 176/176, zero skipped. Final complete packed controls, target-module V8/Istanbul coverage and integration gates are being certified. Complete npm/Bun release certification remains assigned to CI under the shared-host budget; the earlier npm attempt was interrupted for the required substitution fix after 1290 seconds in its first coverage pass. Final CI evidence will be available at https://github.com/unbraind/pm-ado/pull/92/checks."
+  "2026-11-07T04:41:58.446Z",codex-agent,"Final rebuilt-code gates pass: full fence/Azure client files 338/338; selected import/export/sync, JSON/TOON diagnostic refusal, unchanged close-intent and recovery controls 28/28; SDK/public API/Node+Bun/identity/compatibility/contract files 43/43; native-precondition probe 19/19, all zero skipped. npm typecheck, Bun build and test compilation, docstrings, production audit, pack dry-run and release attestation/date checks pass. Repeated final-source disposable proofs report 81/97 ownership, 9/9 substitution, 5/5 semantic-plan, 19/25 native diagnostic and 16/16 Azure diagnostic failures; restored controls 176/176. Complete packed ownership revert fails 3/15; restored complete packed controls pass 15/15. Final targeted module coverage is running through the pinned PM runner in a disposable tracker; package coverage configuration and all thresholds remain unchanged."
+  "2026-11-07T04:51:23.758Z",codex-agent,"Final targeted fence certification passes through the repo-pinned PM test runner in a disposable tracker: 271/271 tests in the V8 pass and 271/271 in the independent Istanbul pass, zero skipped. Entire history-fence.ts scope measures 266/266 lines, 171/171 branches, 34/34 functions and 174/174 independent statements, all 100%; package-wide coverage scope and thresholds are unchanged. Other final rebuilt-code gates pass: fence/client 338/338, selected sync/CLI/recovery 28/28, SDK/API/Node+Bun/identity/compatibility/contracts 43/43, native-precondition 19/19, complete packed consumers 15/15. Final-source revert failures and restored 176/176 plus 15/15 controls are recorded above. SDK namespace preview omitted active field registrations; the bound client preview fixes that observed context quirk. Published SDK changelog GH-1598 confirms bound previews and canonical records shipped together in 2026.10.30; the actual minimum 2026.10.25 host remains supported and tested. Both current review findings and the additional ownership substitution case are fixed. Full npm/Bun release certification remains pending CI under the explicit host-budget exception; no full local pass is claimed. Releasing this claim while leaving the item in progress. After this final tracker write/release, regenerate and check the changelog, validate isolated strict health and final identity/privacy/history-prefix checks, then commit and push. Final checks: https://github.com/unbraind/pm-ado/pull/92/checks."
+  "2026-11-07T04:56:01.840Z",codex-agent,"Final tracker validation: regenerated changelog and changelog check pass after release. Isolated read-only full health with `pm health --check-only --full --strict-exit --json` exits 0 and reports ok=true; its only warning is telemetry_queue_pending:1. Telemetry configuration is outside this task. Optional tracker folders remain optional under the repository policy. All source, packed, identity and coverage results above pass at unchanged thresholds. The item remains in_progress and unclaimed for orchestrator verification. Regenerate/check once more after this evidence append before committing."
+files[15]{path,scope}:
   dist/history-fence.js,project
+  docs/sdk-adoption.md,project
   history-fence.ts,project
   index.ts,project
   README.md,project
   resolution.ts,project
   scripts/sdk-native-precondition-probe.ts,project
   sync.ts,project
+  test/ado.test.ts,project
   test/fixtures/public-api/current/history-fence.d.ts.txt,project
   test/helpers/native-revision-peer.ts,project
   test/helpers/workspace-lock-probe.ts,project
   test/history-fence.test.ts,project
   test/packed-install-shapes.test.ts,project
   test/sync.test.ts,project
-tests[8]:
+tests[17]:
   - command: node test/helpers/workspace-lock-probe.ts
     scope: project
     provenance:
@@ -114,6 +127,78 @@ tests[8]:
     provenance:
       author: codex-agent
       created_at: "2026-11-06T23:05:51.052Z"
+      source_kind: local_mutation
+      source_ref: backend-revision-bound-reconciliation
+  - command: "node --test --test-reporter=tap --test-concurrency=2 --test-name-pattern=\"owned mutation property|primary native errors|diagnostic read failure property|diagnostic read failures retain|forward-only close intent fixture|diagnostic transport error|SDK phase plans\" test/history-fence.test.ts test/ado.test.ts test/sync.test.ts"
+    scope: project
+    timeout_seconds: 1800
+    provenance:
+      author: codex-agent
+      created_at: "2026-11-07T03:10:07.566Z"
+      source_kind: local_mutation
+      source_ref: backend-revision-bound-reconciliation
+  - command: "npm run release:check"
+    scope: project
+    timeout_seconds: 3600
+    provenance:
+      author: codex-agent
+      created_at: "2026-11-07T03:18:21.864Z"
+      source_kind: local_mutation
+      source_ref: backend-revision-bound-reconciliation
+  - command: "bun run release:check"
+    scope: project
+    timeout_seconds: 3600
+    provenance:
+      author: codex-agent
+      created_at: "2026-11-07T03:18:22.889Z"
+      source_kind: local_mutation
+      source_ref: backend-revision-bound-reconciliation
+  - command: node --test --test-reporter=tap --test-concurrency=2 test/history-fence.test.ts test/ado.test.ts
+    scope: project
+    timeout_seconds: 900
+    provenance:
+      author: codex-agent
+      created_at: "2026-11-07T04:18:21.101Z"
+      source_kind: local_mutation
+      source_ref: backend-revision-bound-reconciliation
+  - command: "node --test --test-reporter=tap --test-concurrency=2 --test-name-pattern=\"native receipts refuse|semantic plans refuse\" test/history-fence.test.ts"
+    scope: project
+    timeout_seconds: 900
+    provenance:
+      author: codex-agent
+      created_at: "2026-11-07T04:18:21.893Z"
+      source_kind: local_mutation
+      source_ref: backend-revision-bound-reconciliation
+  - command: "node --test --test-reporter=tap --test-concurrency=2 --test-name-pattern=\"diagnostic read failures retain|forward-only close intent fixture|first import|412 export conflict|relations round trip|resolution recovery|native close recovery|forward-only native validation hook\" test/sync.test.ts"
+    scope: project
+    timeout_seconds: 900
+    provenance:
+      author: codex-agent
+      created_at: "2026-11-07T04:18:22.713Z"
+      source_kind: local_mutation
+      source_ref: backend-revision-bound-reconciliation
+  - command: node --test --test-reporter=tap --test-concurrency=1 test/history-fence.test.ts test/ado.test.ts
+    scope: project
+    timeout_seconds: 900
+    provenance:
+      author: codex-agent
+      created_at: "2026-11-07T04:41:54.690Z"
+      source_kind: local_mutation
+      source_ref: backend-revision-bound-reconciliation
+  - command: "node --test --test-reporter=tap --test-concurrency=1 --test-name-pattern=\"diagnostic read failures retain|forward-only close intent fixture|first import|412 export conflict|relations round trip|resolution recovery|native close recovery|forward-only native validation hook\" test/sync.test.ts"
+    scope: project
+    timeout_seconds: 900
+    provenance:
+      author: codex-agent
+      created_at: "2026-11-07T04:41:55.836Z"
+      source_kind: local_mutation
+      source_ref: backend-revision-bound-reconciliation
+  - command: node --test --test-concurrency=1 test/sdk-adoption.test.ts test/public-api.test.ts test/identity-audit.test.ts test/compatibility-floor.test.ts test/contracts.test.ts
+    scope: project
+    timeout_seconds: 900
+    provenance:
+      author: codex-agent
+      created_at: "2026-11-07T04:41:57.120Z"
       source_kind: local_mutation
       source_ref: backend-revision-bound-reconciliation
 docs[2]{path,scope}:

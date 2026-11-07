@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -74,6 +74,217 @@ test("decision-bound revision guards refuse unjournalled document edits and unch
       assert.equal(item.title, "Initial");
       if (mode !== "unchecked") assert.equal(item.body, "Legacy peer body");
       assert.equal((await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, f.item.id), f.item.id)).raw, history);
+    });
+  }
+});
+
+test("owned mutation property rejects every additional in-process event even with copied attribution", async (t) => {
+  for (const [name, Fence] of [["source", NativeWriteFence], ["built", BuiltNativeWriteFence]] as const) {
+    for (const mode of ["title", "body", "assignee", "status", "parent", "dependencies", "audit", "aba", "noop", "noop-audit", "noop-aba", "close"]) {
+      for (const phase of ["before", "after"]) for (const copyMessage of [false, true]) await t.test(`${name}:${mode}:${phase}:${copyMessage}`, async (sub) => {
+        const f = await fixture(sub);
+        const other = (await f.pm.create({ type: "Task", title: "Other endpoint" })).item;
+        let peer: sdk.ItemDocument | undefined;
+        const fence = new Fence(sdk, f.pmRoot, "history-agent", async (id, options) => {
+          /** Commit a real peer inside the same inherited revision/provenance scope. */
+          const interfere = async () => {
+            const message = copyMessage ? options.message : undefined;
+            if (mode === "audit" || mode === "noop-audit") await sdk.mutateItemWithHistoryContext({ pmRoot: f.pmRoot, settings: await sdk.readSettings(f.pmRoot),
+              id, author: "history-agent", op: "update", message, historyContext: { peer_audit: true }, mutate: () => ({ changedFields: [] }) });
+            else {
+              const patches: Record<string, sdk.PmUpdateActionOptions> = {
+                title: { title: "Peer title" }, body: { body: "Peer body" }, assignee: { assignee: "peer-agent" },
+                status: { status: "blocked" }, parent: { parent: other.id }, dependencies: { dep: [`id=${other.id},kind=related`] },
+                aba: { title: "Peer transient title" }, "noop-aba": { title: "Peer transient title" }, noop: { body: "Peer beside owned no-op" }, close: { body: "Peer beside owned close" },
+              };
+              await f.pm.update(id, { ...patches[mode]!, message });
+              if (mode === "aba" || mode === "noop-aba") await f.pm.update(id, { title: "Initial", message });
+            }
+          };
+          if (phase === "before") await interfere();
+          const result = await f.pm.update(id, options);
+          if (phase === "after") await interfere();
+          const settings = await sdk.readSettings(f.pmRoot);
+          const located = await sdk.locateItem(f.pmRoot, id, settings.id_prefix, settings.item_format);
+          peer = (await sdk.readLocatedItem(located!, { schema: settings.schema })).document;
+          return result;
+        });
+        await fence.capture(f.item.id);
+        const head = fence.head(f.item.id);
+        const own = mode.startsWith("noop") ? { title: "Initial" } : mode === "close" ?
+          { title: "Owned terminal title", status: "closed", closeReason: "Owned close" } : { description: "Owned description" };
+        await assert.rejects(fence.update(f.item.id, { ...own, force: true }, "in-process-property"), { kind: "sync_conflict" });
+        assert.deepEqual(fence.head(f.item.id), head, "never adopt an event merely because it inherited attribution");
+        assert.ok(peer);
+        const history = (await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, f.item.id), f.item.id)).raw;
+        const settings = await sdk.readSettings(f.pmRoot);
+        const located = await sdk.locateItem(f.pmRoot, f.item.id, settings.id_prefix, settings.item_format);
+        assert.deepEqual((await sdk.readLocatedItem(located!, { schema: settings.schema })).document, peer, "retain all durable effects without compensation");
+        await assert.rejects(fence.update(f.item.id, { title: "Stale retry" }, "in-process-retry"), { kind: "sync_conflict" });
+        assert.equal((await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, f.item.id), f.item.id)).raw, history);
+      });
+    }
+  }
+});
+
+test("native receipts refuse peer substitutions of complete or pre-close intended mutations", async (t) => {
+  for (const [name, Fence] of [["source", NativeWriteFence], ["built", BuiltNativeWriteFence]] as const) {
+    for (const mode of ["title", "body", "close", "pre-close"]) await t.test(`${name}:${mode}`, async (sub) => {
+      const f = await fixture(sub);
+      const fence = new Fence(sdk, f.pmRoot, "history-agent", async (id, options) => {
+        await f.pm.update(id, mode === "pre-close" ? { title: options.title, author: options.author, message: options.message } : options);
+        return f.pm.update(id, options);
+      });
+      await fence.capture(f.item.id);
+      const head = fence.head(f.item.id);
+      const options = mode === "body" ? { body: "Intended body" } : mode === "title" ? { title: "Intended title" } :
+        { title: "Intended title", status: "closed", closeReason: "Intended close" };
+      await assert.rejects(fence.update(f.item.id, options, "peer-substitution"), { kind: "sync_conflict" });
+      assert.deepEqual(fence.head(f.item.id), head);
+      const item = (await f.pm.get(f.item.id, { depth: "full" })).item;
+      if (mode === "body") assert.equal(item.body, "Intended body");
+      else assert.equal(item.title, "Intended title");
+      if (mode === "close" || mode === "pre-close") assert.equal(item.status, "closed");
+      const history = (await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, f.item.id), f.item.id)).raw;
+      await assert.rejects(fence.update(f.item.id, { title: "Stale retry" }, "peer-substitution-retry"), { kind: "sync_conflict" });
+      assert.equal((await sdk.readHistorySnapshot(sdk.getHistoryPath(f.pmRoot, f.item.id), f.item.id)).raw, history);
+    });
+  }
+});
+
+test("semantic plans refuse genuine SDK receipts for different dispatched mutations", async (t) => {
+  for (const [name, Fence] of [["source", NativeWriteFence], ["built", BuiltNativeWriteFence]] as const) {
+    for (const mode of ["title", "missing-close-clocks"]) await t.test(`${name}:${mode}`, async (sub) => {
+      const f = await fixture(sub);
+      const fence = new Fence(sdk, f.pmRoot, "history-agent", (id, options) => f.pm.update(id, mode === "title" ?
+        { ...options, title: "Different dispatched title" } : { ...options, status: "blocked", closeReason: undefined }));
+      await fence.capture(f.item.id);
+      const head = fence.head(f.item.id);
+      await assert.rejects(fence.update(f.item.id, mode === "title" ? { title: "Intended title" } :
+        { status: "closed", closeReason: "Intended close" }, "different-native-dispatch"), { kind: "sync_conflict" });
+      assert.deepEqual(fence.head(f.item.id), head);
+      const item = (await f.pm.get(f.item.id)).item;
+      if (mode === "title") assert.equal(item.title, "Different dispatched title");
+      else assert.equal(item.status, "blocked");
+    });
+  }
+});
+
+test("primary native errors survive failed diagnostic reads while missing-item conflicts still win", async (t) => {
+  for (const [name, Fence] of [["source", NativeWriteFence], ["built", BuiltNativeWriteFence]] as const) {
+    for (const primary of ["validation", "partial-close", "revision"]) for (const failure of ["history", "document", "replay", "missing"]) await t.test(`${name}:${primary}:${failure}`, async (sub) => {
+      const f = await fixture(sub);
+      const settings = await sdk.readSettings(f.pmRoot);
+      if (primary === "partial-close") await sdk.writeSettings(f.pmRoot, { ...settings, governance: { ...settings.governance, preset: "custom", close_validation_default: "strict" } });
+      const located = await sdk.locateItem(f.pmRoot, f.item.id, settings.id_prefix, settings.item_format);
+      const historyPath = sdk.getHistoryPath(f.pmRoot, f.item.id), itemPath = located!.itemPath;
+      let cause: unknown, displaced: string | undefined;
+      const fence = new Fence(sdk, f.pmRoot, "history-agent", async (id, options) => {
+        try {
+          if (primary === "revision") await peerWrite(f.pmRoot, id, { body: "Unjournalled peer" }, "document");
+          return await f.pm.update(id, options);
+        } catch (error) {
+          cause = error;
+          if (failure === "history") { displaced = historyPath; renameSync(historyPath, `${historyPath}.saved`); mkdirSync(historyPath); }
+          if (failure === "document" || failure === "missing") {
+            displaced = itemPath; renameSync(itemPath, `${itemPath}.saved`);
+            if (failure === "document") writeFileSync(itemPath, "invalid item fixture");
+          }
+          if (failure === "replay") {
+            const current = (await sdk.readLocatedItem(located!, { schema: settings.schema })).document;
+            // Append a corrupt new fixture record; never rewrite any existing audit record.
+            await sdk.appendHistoryEntry(historyPath, sdk.createHistoryEntry({ author: "fixture-agent", op: "update",
+              nowIso: new Date().toISOString(), before: sdk.emptyImportedDocument(), after: current }));
+          }
+          throw error;
+        }
+      });
+      await fence.capture(f.item.id);
+      const head = fence.head(f.item.id);
+      try {
+        const options = primary === "validation" ? { priority: 99 } : primary === "partial-close" ?
+          { title: "Owned partial title", status: "closed", closeReason: "Strict refusal" } : { title: "Stale title" };
+        await assert.rejects(fence.update(f.item.id, options, "diagnostic-refusal"), (error: unknown) => {
+          assert.ok(cause instanceof Error);
+          if (failure === "missing") assert.equal((error as NativeHistoryConflict).kind, "sync_conflict");
+          else if (primary === "revision") {
+            // The SDK enriches this error across its scope boundary; retain its original refusal facts.
+            assert.equal((error as Error).message, cause.message);
+            assert.equal((error as { code: string }).code, (cause as { code?: string }).code);
+            for (const key of ["expected_revision", "current_revision"] as const) assert.equal((error as sdk.PmCliError).context?.[key], (cause as sdk.PmCliError).context?.[key]);
+          } else assert.equal(error, cause, "diagnostic failure cannot replace the original write error");
+          return true;
+        });
+        assert.deepEqual(fence.head(f.item.id), head);
+      } finally {
+        if (displaced !== undefined) { rmSync(displaced, { recursive: true, force: true }); renameSync(`${displaced}.saved`, displaced); }
+      }
+    });
+  }
+});
+
+test("revision refusals remain conflicts when a document-only ABA restores the saved state", async (t) => {
+  for (const [name, Fence] of [["source", NativeWriteFence], ["built", BuiltNativeWriteFence]] as const) await t.test(name, async (sub) => {
+    const f = await fixture(sub);
+    const settings = await sdk.readSettings(f.pmRoot), located = await sdk.locateItem(f.pmRoot, f.item.id, settings.id_prefix, settings.item_format);
+    const before = (await sdk.readLocatedItem(located!, { schema: settings.schema })).document;
+    let refusal: unknown;
+    const fence = new Fence(sdk, f.pmRoot, "history-agent", async (id, options) => {
+      await peerWrite(f.pmRoot, id, { body: "Transient unjournalled peer" }, "document");
+      try { return await f.pm.update(id, options); }
+      catch (error) {
+        refusal = error;
+        // The independent peer restores its own transient edit before diagnostics; the package never compensates.
+        await peerWrite(f.pmRoot, id, { body: before.body }, "document");
+        throw error;
+      }
+    });
+    await fence.capture(f.item.id);
+    const head = fence.head(f.item.id);
+    await assert.rejects(fence.update(f.item.id, { title: "Must refuse" }, "revision-aba-refusal"), { kind: "sync_conflict" });
+    assert.ok(sdk.isItemRevisionConflict(refusal));
+    assert.deepEqual(fence.head(f.item.id), head);
+    assert.deepEqual((await sdk.readLocatedItem(located!, { schema: settings.schema })).document, before);
+  });
+});
+
+test("SDK phase plans preserve explicit lifecycle time corrections and normalized no-op inputs", async (t) => {
+  for (const [name, Fence] of [["source", NativeWriteFence], ["built", BuiltNativeWriteFence]] as const) await t.test(name, async (sub) => {
+    const f = await fixture(sub);
+    const fence = new Fence(sdk, f.pmRoot, "history-agent");
+    await fence.capture(f.item.id);
+    await fence.update(f.item.id, { title: "  Native normalized title  ", tags: '["b","a","b"]' }, "normalized-control");
+    const item = (await f.pm.get(f.item.id)).item;
+    assert.equal(item.title, "Native normalized title");
+    const head = fence.head(f.item.id);
+    await fence.update(f.item.id, { title: item.title, tags: JSON.stringify(item.tags) }, "normalized-noop");
+    assert.deepEqual(fence.head(f.item.id), head);
+    await fence.update(f.item.id, { status: "closed", closeReason: "Owned completion" }, "close-control");
+    await fence.update(f.item.id, { completedAt: "2026-01-01T00:00:00Z" }, "completion-correction");
+    assert.equal((await f.pm.get(f.item.id)).item.completed_at, "2026-01-01T00:00:00.000Z");
+    await fence.assertCurrent(f.item.id);
+  });
+});
+
+test("phase ownership refuses swallowed close failures and mismatched pre-close event kinds", async (t) => {
+  for (const [name, Fence] of [["source", NativeWriteFence], ["built", BuiltNativeWriteFence]] as const) {
+    for (const mode of ["swallowed", "wrong-kind"]) await t.test(`${name}:${mode}`, async (sub) => {
+      const f = await fixture(sub), settings = await sdk.readSettings(f.pmRoot);
+      await sdk.writeSettings(f.pmRoot, { ...settings, governance: { ...settings.governance, preset: "custom", close_validation_default: "strict" } });
+      const fence = new Fence(sdk, f.pmRoot, "history-agent", async (id, options) => {
+        if (mode === "wrong-kind") {
+          await sdk.mutateItemWithHistoryContext({ pmRoot: f.pmRoot, settings: await sdk.readSettings(f.pmRoot), id,
+            author: "history-agent", op: "restore", mutate: (document) => { document.metadata.title = options.title!; return { changedFields: ["title"] }; } });
+          throw new Error("Synthetic failure after non-update peer event");
+        }
+        try { return await f.pm.update(id, options); } catch { return undefined; }
+      });
+      await fence.capture(f.item.id);
+      const head = fence.head(f.item.id);
+      await assert.rejects(fence.update(f.item.id, { title: "Owned partial title", status: "closed", closeReason: "Strict close" }, "unverified-phase"), { kind: "sync_conflict" });
+      assert.deepEqual(fence.head(f.item.id), head);
+      assert.equal((await f.pm.get(f.item.id)).item.title, "Owned partial title");
+      assert.equal((await f.pm.get(f.item.id)).item.status, "open");
     });
   }
 });
@@ -405,6 +616,21 @@ test("native history fence refuses unfenced targets and catches read-only ABA", 
   await f.pm.update(f.item.id, { title: "Initial" });
   await assert.rejects(f.fence.assertCurrent(f.item.id), NativeHistoryConflict);
   assert.deepEqual(await nativeHead(sdk, f.pmRoot, "history-absent"), { length: 0, hash: "empty" });
+});
+
+test("all captured heads stay fenced when a later item changes outside the current selection", async (t) => {
+  for (const [name, Fence] of [["source", NativeWriteFence], ["built", BuiltNativeWriteFence]] as const) await t.test(name, async (sub) => {
+    const f = await fixture(sub), other = (await f.pm.create({ type: "Task", title: "Other captured item" })).item;
+    const fence = new Fence(sdk, f.pmRoot, "history-agent");
+    await fence.assertAll();
+    await fence.capture(f.item.id); await fence.capture(other.id);
+    const heads = [fence.head(f.item.id), fence.head(other.id)];
+    await fence.assertAll();
+    await f.pm.update(other.id, { body: "Peer changed the later captured item" });
+    await assert.rejects(fence.assertAll(), { kind: "sync_conflict", item: other.id });
+    assert.deepEqual([fence.head(f.item.id), fence.head(other.id)], heads);
+    assert.equal((await f.pm.get(other.id, { depth: "full" })).item.body, "Peer changed the later captured item");
+  });
 });
 
 test("native history fence accepts a legacy item-state-only birth record without rewriting its stream", async (t) => {

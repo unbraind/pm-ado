@@ -82,15 +82,32 @@ state within `mutateItemWithHistoryContext` and retain that sequencing.
 Unchecked dispatches report that the revision check did not run, together with
 read-back field differences, and retain the original baseline. When native close
 validation fails after an owned field update, the original validation error is
-preserved only if every added event belongs to this operation and the current
-document matches its native replay. A peer event, including ABA, or an
-unjournalled post-write edit still reports `sync_conflict`. SDK session
-provenance carries a fresh operation nonce so a peer reusing the author or
-message cannot impersonate an owned event. The native pre-close field update
-omits its message, so attribution covers every internal lifecycle event. Older
-hosts without session provenance retain message-based detection. Failed
-operations never advance the fence baseline; replan from the durable partial
-state.
+preserved only if every added event is a prefix of the intended SDK mutation
+plan and the current document matches native replay. Planning uses the bound
+`PmClient.previewItemMutations` apply path, including native normalization and
+its canonical intermediate field update before close. Successful operations
+must match the complete planned event sequence; no-ops authorize no new event.
+Every successful write also requires its unmodified native SDK update receipt,
+so a peer cannot substitute the intended effect and turn the owned write into a
+no-op. Older supported SDKs without record-bearing previews rely on this receipt: canonical returned metadata, actual changed-field names,
+message markers and bounded native lifecycle record count. A copied message
+cannot authorize an extra field/event or an edit beside an owned no-op. Missing
+or altered adapter receipts refuse without advancing the baseline. Their failed
+partial writes retain the previous forward-only history-conflict policy.
+Only SDK-declared commit-time values are masked when comparing planned and
+committed documents; field presence and immutable native heads remain checked.
+
+Every supported SDK, including the declared minimum, provides session context.
+Message markers and per-operation provenance are additional checks. An inherited
+async context is descriptive attribution and cannot authorize an extra write,
+even when an in-process peer copies the author and message. This applies to
+ordinary fields, relations, audit-only events, ABA, and failed partial closes.
+Native hooks and guards still run; unplanned effects cannot be silently adopted.
+A failed diagnostic history/document read cannot replace the primary write
+error. A positively identified native conflict, including a missing item, still
+wins. Failed operations never advance the fence baseline; replan from durable
+partial state. Azure PATCH diagnostic read failures likewise preserve the
+original revision refusal and retain available diagnostic details as its cause.
 
 The pinned 2026.11.4 SDK's `ExpectedItemRevision` accepts only `id` and
 `itemHash`. It has no expected native-history coordinate; history reads remain

@@ -1,0 +1,13 @@
+id: pm-ado-monotonic-write-guard
+title: Bind native lifecycle writes to locked monotonic audit coordinates
+description: "The pinned SDK ExpectedItemRevision has only id and itemHash. Its public withExpectedItemRevisions checks canonical content, not an expected history head; readHistorySnapshot is a separate read. Retain current pre/post history detection until a supported atomic monotonic contract can be consumed. Related upstream inventory: pm-cli#1587."
+type: Feature
+status: open
+priority: 2
+tags[3]: backend,sdk-gap,"upstream:pm-cli#1587"
+created_at: "2026-11-06T17:35:43.513Z"
+updated_at: "2026-11-06T17:35:43.513Z"
+author: codex-astra
+acceptance_criteria: "A same-clock ABA edit or history-only audit in the final read/write interval refuses under the same native write lock before any mutation, including each multi-event lifecycle write.; Own lifecycle events advance the expected coordinate; ordinary OS-process peer writers never inherit that authority; no compensation or history rewriting.; Certify transformed, redirected and skipped storage overrides using an artifact containing pm-cli PR1658; certify missing-capability behavior and publish exact compatibility limits."
+parent: pm-ado-github-5532dc4b9a65-47
+body: ""

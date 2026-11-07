@@ -37,7 +37,7 @@ preservation, selected and indirect graph endpoints, and legacy missing history.
 | Audit/review finding | SDK replacement or policy | Behavioral evidence |
 | --- | --- | --- |
 | Prefix-only authoritative lookup | `readSettings`, `resolveItemTypeRegistry`, `locateItem`, `readLocatedItem` | Custom nested folders and whole-document guards work without git; original function-only revert fails lookup regression |
-| Unguarded persistence after a local snapshot | SDK lifecycle update with current-field and native-history detection | Fixed-clock pre-dispatch ordinary/ABA and birth witnesses remain; field evidence names saved/current state |
+| Unguarded persistence after a local snapshot | Decision-document hash bound to SDK `withExpectedItemRevisions`, plus current-field and native-history detection | Separate-process title/body/assignment/status/parent/dependency writes refuse before mutation; own lifecycle and retry controls pass |
 | Compensation can restore a parent cycle | Forward-only SDK writes, no native restore or relation rollback | X stays under B after peer sets A.parent=X and edits X; graph remains acyclic |
 | Own compensated intent becomes a permanent refusal | Obsolete intent discard through an SDK update with a recognized history reason | Old compensation records remain readable; import/export/sync replan rather than require manual repair |
 
@@ -67,30 +67,84 @@ agreement still advances last and per key only after matching current local/Azur
 read-back. Stored native observations refuse older Azure snapshots without using
 mutable intent values as authority.
 
-## Known limitations and measured window
+## Revision guard and compatibility
 
-A read and a native write remain separate operations in this package. SDK
-2026.11.4 adds expected-item-hash guards
-([pm-cli#1576](https://github.com/unbraind/pm-cli/issues/1576)); the existing
-package fence has not yet adopted them, and a monotonic history precondition
-remains a separate requirement.
-The workspace transaction primitive serializes only cooperating transaction
-callers, not ordinary native writers:
-[pm-cli#1620](https://github.com/unbraind/pm-cli/issues/1620). A writer in the
-remaining window may be overwritten; detecting it later never authorizes a
-rollback. This policy explicitly makes no cross-process isolation claim.
+`NativeWriteFence.update` passes `hashDocument` of its saved SDK-normalized
+decision document to `withExpectedItemRevisions`. It never takes a later
+revision read as the expectation: that could adopt an intervening peer edit.
+The scope wraps the existing lifecycle dispatcher, retaining native policies,
+hooks and multi-event transitions. SDK revision conflicts become the existing
+`sync_conflict` receipt; an unchecked scope refuses. The same fence covers sync
+checkpoints, mapped fields, close/assignment transitions, relation import and
+agreement publication. Resolution prepare/settle already compare their decision
+state within `mutateItemWithHistoryContext` and retain that sequencing.
+
+Unchecked dispatches report that the revision check did not run, together with
+read-back field differences, and retain the original baseline. When native close
+validation fails after an owned field update, the original validation error is
+preserved only if every added event is a prefix of the intended SDK mutation
+plan and the current document matches native replay. Planning uses the bound
+`PmClient.previewItemMutations` apply path, including native normalization and
+its canonical intermediate field update before close. Successful operations
+must match the complete planned event sequence; no-ops authorize no new event.
+Every successful write also requires its unmodified native SDK update receipt,
+so a peer cannot substitute the intended effect and turn the owned write into a
+no-op. Older supported SDKs without record-bearing previews rely on this receipt: canonical returned metadata, actual changed-field names,
+message markers and bounded native lifecycle record count. A copied message
+cannot authorize an extra field/event or an edit beside an owned no-op. Missing
+or altered adapter receipts refuse without advancing the baseline. Their failed
+partial writes retain the previous forward-only history-conflict policy.
+Only SDK-declared commit-time values are masked when comparing planned and
+committed documents; field presence and immutable native heads remain checked.
+
+Every supported SDK, including the declared minimum, provides session context.
+Message markers and per-operation provenance are additional checks. An inherited
+async context is descriptive attribution and cannot authorize an extra write,
+even when an in-process peer copies the author and message. This applies to
+ordinary fields, relations, audit-only events, ABA, and failed partial closes.
+Native hooks and guards still run; unplanned effects cannot be silently adopted.
+A failed diagnostic history/document read cannot replace the primary write
+error. A positively identified native conflict, including a missing item, still
+wins. Failed operations never advance the fence baseline; replan from durable
+partial state. Azure PATCH diagnostic read failures likewise preserve the
+original revision refusal and retain available diagnostic details as its cause.
+
+The pinned 2026.11.4 SDK's `ExpectedItemRevision` accepts only `id` and
+`itemHash`. It has no expected native-history coordinate; history reads remain
+separate. The package therefore retains its monotonic head checks before and
+after dispatch. ABA or history-only events in the final interval remain
+detection-only. The new guard does not claim complete monotonic isolation,
+workspace-wide serialization, or atomic Azure REST and local commits.
+
+The peer/manifest floor remains 2026.10.23. Capability detection preserves the
+older host's documented history-detection-only path. A real 2026.10.25 installed
+SDK exercises that path, successful writes, native validation and stale refusal.
+Source/built regressions on the development SDK use real no-git trackers and
+independent OS-process peers across six field classes, plus legacy unjournalled
+document edits and a dispatcher that never evaluates its guard. Legacy native
+histories and no-op writes remain readable and usable.
+
+Certification here is limited to filesystem storage without overrides. The
+storage-override revision advancement corrections in
+[pm-cli PR #1658](https://github.com/unbraind/pm-cli/pull/1658) postdate the
+development pin. This change neither bumps that pin nor certifies transformed,
+redirected or skipped writes on that artifact.
 
 `NativeWriteFence.lastWriteWindowMs` measures the interval from the final
-revision read to SDK dispatch completing. It bounds when that call's native
-write occurred; it is not a guaranteed maximum for later runs. The real SDK
-measurement test prints twelve sample bounds. README Concurrency records a
-sample and the exact guarantee: no rollback overwrites a peer, no rollback
-creates cycles, no obsolete-intent manual-repair states.
+revision read to SDK dispatch completing. The real SDK measurement test prints
+twelve sample bounds; a timing sample is not an atomicity proof. No rollback
+overwrites a peer or creates cycles, and obsolete intents do not require manual
+repair. The standalone `test/helpers/workspace-lock-probe.ts` diagnostic still
+measures the separate coordinator lock, not the item revision guard; its historic
+isolation violations are not passing acceptance evidence.
 
-The standalone SDK capability diagnostic
-`node test/helpers/workspace-lock-probe.ts` remains outside acceptance. On SDK
-2026.10.25 and 2026.10.28 it reports four isolation violations (exit 4), confirming
-the upstream gap; this is not interpreted as a passing isolation test.
+## Remaining backend roadmap
+
+Issue #47 remains open. These Feature items carry the remaining acceptance work:
+
+- [Backend authority and recovery contract](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-backend-contract.toon): replace path-bound reads, preview, settlement and durable intents; distinguish provider authority from projections; preserve Azure identity, revisions and crash recovery without holding database transactions across REST calls.
+- [Locked monotonic audit coordinate](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-monotonic-write-guard.toon): refuse final-interval ABA/history-only writes before mutation; advance own lifecycle events; certify storage-override behavior on a corrected SDK artifact.
+- [Filesystem/native database conformance](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/features/pm-ado-backend-conformance.toon): reuse failure-sensitive resolution fixtures on both backends without a local tracker for the database; cover competing writers, stale Azure revisions, replay, settlement, unsupported capabilities, authorization and typed relation fidelity using synthetic REST.
 
 ## Differential and compatibility proof
 

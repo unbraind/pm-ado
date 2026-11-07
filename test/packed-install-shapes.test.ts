@@ -8,6 +8,8 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import type { AdoWorkItem, ResolutionPlan } from "../index.ts";
+import { NativeWriteFence } from "../history-fence.ts";
+import { loadResolutionSdk } from "../resolution.ts";
 
 const execute = promisify(execFile);
 const repo = resolve(import.meta.dirname, "..");
@@ -36,11 +38,12 @@ test("packed npm-global, bun-global, npx, bunx, local-bin and copied-extension c
   writeFileSync(join(home, ".config/.bunfig.toml"), `[install]\nglobalDir = ${JSON.stringify(bunGlobal)}\nglobalBinDir = ${JSON.stringify(bunBin)}\n`);
   const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, ".config"),
     npm_config_cache: join(root, "npm-cache"), npm_config_prefix: join(root, "npm-prefix"), npm_config_ignore_scripts: "true", npm_config_update_notifier: "false", npm_config_audit: "false", npm_config_fund: "false",
-    npm_config_userconfig: join(home, ".npmrc"), NPM_CONFIG_USERCONFIG: join(home, ".npmrc"),
+    npm_config_userconfig: "/dev/null", NPM_CONFIG_USERCONFIG: "/dev/null",
     BUN_INSTALL: bunHome, BUN_INSTALL_GLOBAL_DIR: bunGlobal, BUN_INSTALL_BIN: bunBin, BUN_INSTALL_CACHE_DIR: join(root, "bun-cache"), PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1",
     GIT_CEILING_DIRECTORIES: tmpdir(), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
   // Never inherit a real Azure credential or private npm configuration.
   for (const key of ["ADO_ORG_URL", "ADO_TOKEN", "ADO_PROJECT", "ADO_STATUS_MAP", "ADO_EXPORT_STATE_MAP", "NODE_PATH", "NPM_TOKEN", "NODE_AUTH_TOKEN", "PM_PATH", "PM_ROOT", "PM_GLOBAL_PATH", "PM_GLOBAL_ROOT"]) delete env[key];
+  for (const key of Object.keys(env)) if (/(?:TOKEN|SECRET|PASSWORD|API_KEY|ACCESS_KEY|CREDENTIAL|NPM_MEDIA_SERVER)/iu.test(key)) delete env[key];
   await command(process.execPath, [npm, "pack", "--ignore-scripts", "--pack-destination", artifacts, repo], root, env);
   await command(process.execPath, [npm, "pack", "--ignore-scripts", "--pack-destination", artifacts, "@unbrained/pm-cli@2026.10.25"], root, env);
   const packageTar = join(artifacts, readdirSync(artifacts).find((file) => file.startsWith("pm-ado-"))!);
@@ -53,6 +56,104 @@ test("packed npm-global, bun-global, npx, bunx, local-bin and copied-extension c
   await command(process.execPath, [npm, "install", "--global", "--prefix", npmPrefix, "--ignore-scripts", "--no-audit", hostTar], root, env);
   await command(bun, ["add", "--global", "--ignore-scripts", hostTar], root, env);
   await command(process.execPath, [npm, "install", "--prefix", local, "--ignore-scripts", "--no-audit", hostTar], root, env);
+  await t.test("older real host retains explicit history-detection compatibility", async () => {
+    const sdk = loadResolutionSdk([join(local, "package.json")]);
+    assert.equal(typeof sdk.withExpectedItemRevisions, "undefined");
+    assert.equal(typeof sdk.runWithAgentSessionContext, "function", "the declared minimum SDK exposes native session context");
+    const tracker = join(root, "legacy-guard"); mkdirSync(tracker);
+    const pmRoot = join(tracker, ".agents/pm");
+    const pm = new sdk.PmClient({ cwd: tracker, pmRoot, author: "fixture-agent", noExtensions: true });
+    assert.equal(typeof pm.previewItemMutations, "undefined", "released older host exercises the namespace-preview fallback");
+    await pm.run("init", { prefix: "legacy" });
+    const { item } = await pm.create({ type: "Task", title: "Legacy host" });
+    const fence = new NativeWriteFence(sdk, pmRoot, "fixture-agent");
+    await fence.capture(item.id);
+    await fence.update(item.id, { title: "Compatible write" }, "legacy-compatible");
+    await assert.rejects(fence.update(item.id, { priority: 99 }, "legacy-validation"), /priority/iu);
+    assert.equal((await pm.get(item.id)).item.title, "Compatible write");
+    await fence.update(item.id, { body: "Legacy owned body" }, "legacy-body");
+    await fence.update(item.id, { title: "Compatible closed", status: "closed", closeReason: "Legacy owned close" }, "legacy-close");
+    assert.equal((await pm.get(item.id)).item.status, "closed");
+    await pm.update(item.id, { title: "Peer edit" });
+    await assert.rejects(fence.update(item.id, { title: "Stale" }, "legacy-stale"), { kind: "sync_conflict" });
+    assert.equal((await pm.get(item.id)).item.title, "Peer edit");
+  });
+  await t.test("older host refuses in-process copied-message peers beside owned writes and no-ops", async (sub) => {
+    const sdk = loadResolutionSdk([join(local, "package.json")]);
+    const tracker = join(root, "legacy-in-process"); mkdirSync(tracker);
+    const pmRoot = join(tracker, ".agents/pm");
+    const pm = new sdk.PmClient({ cwd: tracker, pmRoot, author: "fixture-agent", noExtensions: true });
+    await pm.run("init", { prefix: "legacy" });
+    const { item } = await pm.create({ type: "Task", title: "Legacy baseline" });
+    sub.mock.timers.enable({ apis: ["Date"], now: new Date(item.updated_at) });
+    try {
+      for (const phase of ["before", "after"]) for (const mode of ["changed", "title-noop", "body-noop", "audit-noop"]) {
+        const settings = await sdk.readSettings(pmRoot), located = await sdk.locateItem(pmRoot, item.id, settings.id_prefix, settings.item_format);
+        const before = (await sdk.readLocatedItem(located!, { schema: settings.schema })).document;
+        const fence = new NativeWriteFence(sdk, pmRoot, "fixture-agent", async (id, options) => {
+          const peer = async () => {
+            if (mode === "audit-noop") await sdk.mutateItemWithHistoryContext({ pmRoot, settings, id, author: "fixture-agent", op: "update",
+              message: options.message, historyContext: { legacy_peer_audit: true }, mutate: () => ({ changedFields: [] }) });
+            else await pm.update(id, { body: `Legacy peer ${phase}:${mode}`, message: options.message });
+          };
+          if (phase === "before") await peer();
+          const result = await pm.update(id, options);
+          if (phase === "after") await peer();
+          return result;
+        });
+        await fence.capture(item.id);
+        const head = fence.head(item.id);
+        const options = mode === "changed" ? { description: `Owned ${phase}` } : mode === "body-noop" ? { body: before.body } : { title: "Legacy baseline" };
+        await assert.rejects(fence.update(item.id, options, `legacy-${phase}-${mode}`), { kind: "sync_conflict" });
+        assert.deepEqual(fence.head(item.id), head);
+      }
+      for (const mode of ["title", "body", "pre-close", "close"]) {
+        const { item: target } = await pm.create({ type: "Task", title: `Legacy substitution ${mode}` });
+        const fence = new NativeWriteFence(sdk, pmRoot, "fixture-agent", async (id, options) => {
+          await pm.update(id, mode === "pre-close" ? { title: options.title, author: options.author, message: options.message } : options);
+          return pm.update(id, options);
+        });
+        await fence.capture(target.id);
+        const head = fence.head(target.id);
+        const options = mode === "body" ? { body: "Intended legacy body" } : mode === "title" ? { title: "Intended legacy title" } :
+          { title: "Intended legacy title", status: "closed", closeReason: "Intended legacy close" };
+        await assert.rejects(fence.update(target.id, options, `legacy-substitution-${mode}`), { kind: "sync_conflict" });
+        assert.deepEqual(fence.head(target.id), head);
+      }
+    } finally { sub.mock.timers.reset(); }
+  });
+  await t.test("older host refuses malformed adapter receipts and unmarked or audit-only extra effects", async () => {
+    const sdk = loadResolutionSdk([join(local, "package.json")]);
+    const tracker = join(root, "legacy-receipt"); mkdirSync(tracker);
+    const pmRoot = join(tracker, ".agents/pm");
+    const pm = new sdk.PmClient({ cwd: tracker, pmRoot, author: "fixture-agent", noExtensions: true });
+    await pm.run("init", { prefix: "legacy" });
+    for (const mode of ["missing", "null-result", "scalar", "missing-fields", "wrong-fields", "missing-item", "null-item", "foreign-item", "invalid-item", "invalid-dependencies", "altered-item", "unmarked", "wrong-author", "close-audit"]) {
+      const { item } = await pm.create({ type: "Task", title: `Receipt ${mode}` });
+      const fence = new NativeWriteFence(sdk, pmRoot, "fixture-agent", async (id, options) => {
+        const result = await pm.update(id, { ...options, ...(mode === "unmarked" ? { message: "Unmarked adapter" } : {}), ...(mode === "wrong-author" ? { author: "peer-agent" } : {}) });
+        if (mode === "close-audit") await sdk.mutateItemWithHistoryContext({ pmRoot, settings: await sdk.readSettings(pmRoot), id,
+          author: "fixture-agent", op: "update", message: options.message, historyContext: { peer_audit: true }, mutate: () => ({ changedFields: [] }) });
+        if (mode === "missing") return undefined;
+        if (mode === "null-result") return null;
+        if (mode === "scalar") return 42;
+        if (mode === "missing-fields") return { item: result.item };
+        if (mode === "wrong-fields") return { ...result, changed_fields: [42] };
+        if (mode === "missing-item") return { changed_fields: result.changed_fields };
+        if (mode === "null-item") return { ...result, item: null };
+        if (mode === "foreign-item") return { ...result, item: { ...result.item, id: "legacy-foreign" } };
+        if (mode === "invalid-item") return { ...result, item: { ...result.item, title: null } };
+        if (mode === "invalid-dependencies") return { ...result, item: { ...result.item, dependencies: {} } };
+        if (mode === "altered-item") return { ...result, item: { ...result.item, title: "Altered receipt" } };
+        return result;
+      });
+      await fence.capture(item.id);
+      const head = fence.head(item.id);
+      await assert.rejects(fence.update(item.id, mode === "close-audit" ? { status: "closed", closeReason: "Legacy close" } : { title: "Owned receipt title" }, `receipt-${mode}`), { kind: "sync_conflict" });
+      assert.deepEqual(fence.head(item.id), head);
+    }
+
+  });
   // Prime npm exec's version-keyed cache once; all acceptance invocations below are offline.
   assert.equal((await command(process.execPath, [npx, "--yes", "--package", "@unbrained/pm-cli@2026.10.25", "pm", "--version"], root, env)).trim(), "2026.10.25");
   const npmPm = join(npmPrefix, "bin/pm"), bunPm = join(bunBin, "pm"), localPm = join(local, "node_modules/.bin/pm");

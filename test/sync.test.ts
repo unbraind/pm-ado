@@ -231,6 +231,7 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
   let writeStatus = 0;
   let patchStatus = 0;
   let afterPatchStatus = 200;
+  let refusalDiagnosticStatus = 0;
   const effects: (number | "network-before" | "network-after" | "server-after" | "malformed")[] = [];
   let vanish = false;
   let omitRelations = false;
@@ -274,7 +275,7 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
     const revision = url.pathname.match(/workitems\/(\d+)\/revisions\/(\d+)$/u);
     if (revision) { send(200, revisions.get(`${revision[1]}:${revision[2]}`)); return; }
     const effect = req.method === "PATCH" || url.pathname.includes("/workitems/$") ? effects.shift() : undefined;
-    if (typeof effect === "number") { send(effect, { message: "Synthetic outcome" }); return; }
+    if (typeof effect === "number") { if (effect === 412 && refusalDiagnosticStatus) failStatus = refusalDiagnosticStatus; send(effect, { message: "Synthetic outcome" }); return; }
     if (effect === "network-before") { req.socket.destroy(); return; }
     const tail = decodeURIComponent(url.pathname.split("/").at(-1)!);
     if (req.method === "GET") { send(200, items.get(Number(tail))); return; }
@@ -382,6 +383,7 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
     response: (endpoint: string, value: unknown) => { responses.set(endpoint, value); },
     effect: (outcome: (typeof effects)[number]) => { effects.push(outcome); },
     failPatch: (status: number) => { patchStatus = status; },
+    refusalDiagnosticFailure: (status: number) => { effects.push(412); refusalDiagnosticStatus = status; },
     afterPatchStatus: (status: number) => { afterPatchStatus = status; },
     failWrite: (status: number) => { writeStatus = status; },
     vanish: () => { vanish = true; },
@@ -3849,6 +3851,31 @@ test("forward-only close intent fixture never restores an obsolete intent over d
   const events = (await runtimeSdk.readHistorySnapshot(runtimeSdk.getHistoryPath(f.pmRoot, item.id), item.id)).entries;
   assert.ok(events.every((event) => event.message !== "Verify native Azure mutation"));
   }); } finally { process.chdir(cwd); }
+});
+
+test("diagnostic read failures retain revision-conflict semantics in SDK and JSON TOON commands", async (t) => {
+  for (const mode of ["export", "sync"] as const) for (const runtime of ["source", "built", "json", "toon"]) await t.test(`${mode}:${runtime}`, async (sub) => {
+    const f = await fixture(sub);
+    const initial = await f.command("import");
+    assert.equal(initial.ok, true, JSON.stringify(initial));
+    const item = await row(f.pm);
+    await f.pm.update(item.id, { title: "Local candidate" });
+    const remote = structuredClone(f.items.get(1)!);
+    f.refusalDiagnosticFailure(503);
+    if (runtime === "source" || runtime === "built") {
+      const result = await f.observed(mode, async () => {}, {}, undefined, runtime === "built" ? runBuiltSyncCommand : runSyncCommand);
+      assert.equal(result.ok, false); assert.equal(result.code, "ADO_CONFLICT"); assert.equal(result.exit_code, 4);
+    } else {
+      const result = await f.host(["ado", mode, ...(runtime === "json" ? ["--json"] : ["--output-format", "toon"])]);
+      assert.equal(result.code, 4);
+      assert.match(result.stdout, /ADO_CONFLICT/u);
+      if (runtime === "json") assert.equal((JSON.parse(result.stdout) as { ok: boolean }).ok, false);
+    }
+    assert.equal((await f.pm.get(item.id)).item.title, "Local candidate");
+    assert.deepEqual(f.items.get(1), remote);
+    assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 1);
+    assert.equal(existsSync(join(f.root, ".git")), false);
+  });
 });
 
 /** Legacy checkpoint contents are advisory even during explicit conflict resolution. */

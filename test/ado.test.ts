@@ -264,16 +264,49 @@ test("a conflict where the item cannot be re-read surfaces the original revision
   );
 });
 
-test("a transport error during the diagnostic re-read is surfaced, not masked as a conflict", async () => {
-  // If the re-read itself fails with a transport error (not a 412), that error
-  // propagates directly rather than being swallowed or misclassified as a
-  // conflict. The caller sees the real failure: the service is unreachable.
+test("a diagnostic transport error is retained as cause without masking the refused PATCH", async () => {
+  // Preserve both facts: the PATCH was refused, and its optional diagnostic read
+  // failed. A read failure cannot turn a known refusal into an ambiguous write.
   const { transport } = recordingTransport([
     { status: 412, body: "" }, // PATCH → 412 (conflict)
     { status: 503, body: "" }, // re-read → 503 (transport error)
   ]);
-  await assertStateUpdateRefused(transport, (error: unknown) => isCommandFailure(error, EXIT_CODE.remote) && /503/u.test(error.message),
-  );
+  await assertStateUpdateRefused(transport, (error: unknown) => {
+    assert.ok(isCommandFailure(error, EXIT_CODE.conflict));
+    assert.ok(isCommandFailure(error.cause, EXIT_CODE.remote));
+    assert.match(error.cause.message, /503/u);
+    return true;
+  });
+});
+
+test("diagnostic read failure property retains PATCH refusal across source and packed SDK entrypoints", async (t) => {
+  for (const [name, Client] of [["source", AdoClient], ["built", built.AdoClient]] as const) {
+    for (const mode of ["network", "503", "403", "412", "malformed", "frozen", "existing-cause"]) await t.test(`${name}:${mode}`, async () => {
+      const diagnostic = new Error("Synthetic diagnostic transport failure");
+      const original = name === "built" ? new built.CommandError("Original PATCH refusal", EXIT_CODE.conflict) : new CommandError("Original PATCH refusal", EXIT_CODE.conflict);
+      if (mode === "existing-cause") original.cause = new Error("Original causal chain");
+      if (mode === "frozen") Object.freeze(original);
+      const calls: string[] = [];
+      const client = new Client(CONFIG, async (method) => {
+        calls.push(method);
+        if (method === "PATCH") {
+          if (mode === "frozen" || mode === "existing-cause") throw original;
+          return { status: 412, body: "" };
+        }
+        if (mode === "network" || mode === "frozen" || mode === "existing-cause") throw diagnostic;
+        return { status: mode === "malformed" ? 200 : Number(mode), body: mode === "malformed" ? "invalid JSON" : "" };
+      });
+      await assert.rejects(client.updateWorkItem(5, 7, { "System.State": "Active" }), (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal((error as Error & { exitCode: number }).exitCode, EXIT_CODE.conflict);
+        if (mode === "frozen" || mode === "existing-cause") assert.equal(error, original);
+        else { assert.equal((error as Error & { status: number }).status, 412); assert.ok(error.cause instanceof Error); }
+        if (mode === "existing-cause") assert.match(String(error.cause), /Original causal chain/u);
+        return true;
+      });
+      assert.deepEqual(calls, ["PATCH", "POST"], "one refused write and one optional read; no retry");
+    });
+  }
 });
 
 test("a non-conflict write error is not reclassified as a conflict", async () => {

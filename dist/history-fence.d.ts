@@ -57,6 +57,16 @@ export declare class NativeWriteFence {
     assertCurrent(id: string): Promise<void>;
     /** Recheck every captured head so query limits and filters never narrow the fence. */
     assertAll(): Promise<void>;
+    /** Compare SDK-planned effects with only SDK-declared commit-time values masked, preserving field presence. */
+    private plannedEquals;
+    /** Ask the real SDK apply planner for canonical state, including its own option normalization. */
+    private plannedDocument;
+    /** Bind every accepted event to the intended SDK mutation, including its message-less pre-close phase. */
+    private mutationPlan;
+    /** Bind effects to an unmodified native SDK receipt, including peers that make the owned write a no-op. */
+    private receiptOwned;
+    /** Verify the exact planned record sequence and current document without adopting a peer event. */
+    private writtenState;
     /** Re-read changed fields, write forward once, and report races without restoring anything. */
     update(id: string, options: Sdk.PmUpdateActionOptions, transactionId: string): Promise<string>;
 }

@@ -1,6 +1,6 @@
 /** Adversarial child-process contracts use Node itself as the option parser oracle. */
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdtempSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, mkdtempSync } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
@@ -102,6 +102,31 @@ test("target preload receipts reject stale launches, wrappers and different comm
   }
   writeFileSync(file, readFileSync(file, "utf8").slice(0, checkpoint) + JSON.stringify(target) + "\n");
   assert.doesNotThrow(assertLoaded);
+});
+
+test("target preload receipts compare filesystem identities across cwd aliases", async (t) => {
+  const { root, cleanup } = fixtureDirectory("ado-receipt-alias-");
+  t.after(cleanup);
+  const physical = join(root, "physical"), other = join(root, "other");
+  mkdirSync(physical); mkdirSync(other);
+  const aliases = [physical, join(root, "alias"), join(root, "chain")];
+  symlinkSync(physical, aliases[1], process.platform === "win32" ? "junction" : "dir");
+  symlinkSync(aliases[1], aliases[2], process.platform === "win32" ? "junction" : "dir");
+  const receipt = join(root, "receipts.jsonl");
+  const entry = join(physical, "cli.js");
+  for (const requested of aliases) {
+    const result = await runCommand(process.execPath, ["-e", "process.stdout.write(process.cwd())"], { cwd: requested });
+    for (const recorded of [...aliases, result.stdout]) for (const expected of aliases) {
+      writeFileSync(receipt, JSON.stringify({ cwd: recorded, argv: [process.execPath, entry, "--json"] }) + "\n");
+      assert.doesNotThrow(() => assertTargetPreloaded(receipt, 0, expected, /cli\.js$/u, ["--json"]));
+      assert.throws(() => assertTargetPreloaded(receipt, 0, other, /cli\.js$/u, ["--json"]), /fresh target/u);
+    }
+  }
+  // Cross-suite audits consume receipts after the child has removed its tracker.
+  rmSync(physical, { recursive: true });
+  writeFileSync(receipt, JSON.stringify({ cwd: physical, argv: [process.execPath, entry, "--json"] }) + "\n");
+  assert.doesNotThrow(() => assertTargetPreloaded(receipt, 0, physical, /cli\.js$/u, ["--json"]));
+  assert.throws(() => assertTargetPreloaded(receipt, 0, other, /cli\.js$/u, ["--json"]), /fresh target/u);
 });
 
 test("every selected-test process keeps the consumer budget plus startup allowance", (t) => {

@@ -1,6 +1,6 @@
 /** Shared real child-process execution and scoped environment restoration for native fixtures. */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { execFile } from "node:child_process";
 import { isAbsolute, relative, resolve } from "node:path";
@@ -67,11 +67,16 @@ export function relocateNodePreloads(options: string, root: string): string {
   return relocated;
 }
 
+/** Canonicalize live directory aliases and retain exact paths for already-cleaned fixture receipts. */
+function receiptDirectory(path: string): string {
+  return existsSync(path) ? realpathSync(path) : resolve(path);
+}
+
 /** Require a fresh receipt from the actual entry point and, when supplied, exact command arguments. */
 export function assertTargetPreloaded(file: string, checkpoint: number, cwd: string, entry: RegExp, args?: readonly string[]): void {
   const receipts = readFileSync(file, "utf8").slice(checkpoint).split("\n").filter(Boolean)
     .map((line) => JSON.parse(line) as { cwd: string; argv: string[] });
-  assert.ok(receipts.some((receipt) => resolve(receipt.cwd) === resolve(cwd) &&
+  assert.ok(receipts.some((receipt) => receiptDirectory(receipt.cwd) === receiptDirectory(cwd) &&
     entry.test(receipt.argv[1] ?? "") &&
     (args === undefined || JSON.stringify(receipt.argv.slice(2)) === JSON.stringify(args))),
   "a fresh target entry-point receipt must prove this command loaded the preload");

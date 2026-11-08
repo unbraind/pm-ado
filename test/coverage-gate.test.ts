@@ -14,7 +14,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import test from "node:test";
@@ -860,7 +860,30 @@ test("statement preloads encode reserved filesystem characters for both runner a
   t.after(fixture.cleanup);
   writeRunnableFixture(fixture.dir);
   writeStandardGate(fixture.dir);
+  // This module is executed only by an independent child with no --import argv.
+  // The runner's explicit preload cannot satisfy its coverage obligation.
+  writeSource(fixture.dir, "descendant", "export const childOnly = 73;\n");
+  writeFileSync(join(fixture.dir, "test/src.test.ts"), `
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { value } from "../src.ts";
+assert.equal(value, 42);
+const child = spawnSync(process.execPath, ["--input-type=module", "-e",
+  'import { childOnly } from "./descendant.ts"; if (childOnly !== 73) process.exit(1);'], { encoding: "utf8" });
+assert.ifError(child.error);
+assert.equal(child.status, 0, child.stderr);
+writeFileSync("child-pid.json", JSON.stringify(child.pid));
+`);
   const result = await runGate(fixture.dir);
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /thresholds met/u);
+  const childPid = JSON.parse(readFileSync(join(fixture.dir, "child-pid.json"), "utf8")) as number;
+  const reportDir = join(fixture.dir, "coverage/statements");
+  assert.ok(readdirSync(reportDir).includes(`${childPid}.json`), "the independent child must write its own report");
+  const report = JSON.parse(readFileSync(join(reportDir, `${childPid}.json`), "utf8")) as Record<string, { s: Record<string, number> }>;
+  const childCoverage = report[join(fixture.dir, "descendant.ts")];
+  assert.ok(childCoverage, "descendant-only source must be instrumented through NODE_OPTIONS");
+  assert.ok(Object.values(childCoverage.s).length > 0);
+  assert.ok(Object.values(childCoverage.s).every((count) => count > 0));
 });

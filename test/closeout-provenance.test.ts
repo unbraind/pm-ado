@@ -1,16 +1,20 @@
 /** Guard the delivered statement-enforcement record through real native tracker reads. */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import type { TestContext } from "node:test";
+import { pathToFileURL } from "node:url";
 import { PmClient, readHistoryEntries } from "@unbrained/pm-cli/sdk";
 import { fixtureDirectory, packageRoot } from "./helpers/package-runtime.ts";
 
 /** One patch returned by the SDK's validated native history reader. */
 type NativeHistoryPatch = Awaited<ReturnType<typeof readHistoryEntries>>[number]["patch"][number];
 
-test("statement enforcement delivery record and history identify PR 19, not the earlier gap report", async (t) => {
+/** Own a fresh copy of the authoritative non-git tracker for one scenario. */
+async function deliveryFixture(t: TestContext) {
   const { root, cleanup } = fixtureDirectory("ado-closeout-provenance-");
   t.after(cleanup);
   const pmRoot = join(root, ".agents/pm");
@@ -24,8 +28,14 @@ test("statement enforcement delivery record and history identify PR 19, not the 
   const historyPath = join(pmRoot, "history", `${id}.jsonl`);
   await verifyDelivery(pm, id, historyPath);
   const { item: original } = await pm.get(id, { full: true });
+  return { pm, id, historyPath, original };
+}
+
+test("statement enforcement delivery record and history identify PR 19, not the earlier gap report", { timeout: 120_000 }, async (t) => {
+  await deliveryFixture(t);
   for (const field of ["resolution", "actual_result", "close_reason"] as const) {
-    await t.test(`reject contradictory ${field} even with matching history`, async () => {
+    await t.test(`reject contradictory ${field} even with matching history`, async (sub) => {
+      const { pm, id, historyPath, original } = await deliveryFixture(sub);
       await pm.reopen(id, "Adversarial matching close fixture");
       await pm.close(id, field === "close_reason" ? `${original.close_reason} Delivered by PR 20.` : original.close_reason ?? "", {
         resolution: field === "resolution" ? `${original.resolution} Delivered by PR 20.` : original.resolution,
@@ -40,7 +50,8 @@ test("statement enforcement delivery record and history identify PR 19, not the 
       await verifyDelivery(pm, id, historyPath);
     });
   }
-  await t.test("pin every historical event through the correction while permitting appends", async () => {
+  await t.test("pin every historical event through the correction while permitting appends", async (sub) => {
+    const { pm, id, historyPath } = await deliveryFixture(sub);
     const baseline = readFileSync(historyPath, "utf8");
     const lines = baseline.split("\n");
     try {
@@ -55,12 +66,45 @@ test("statement enforcement delivery record and history identify PR 19, not the 
     }
     await verifyDelivery(pm, id, historyPath);
   });
-  await t.test("reject a wrong close resolution followed by a correct update", async () => {
+  await t.test("reject a wrong close resolution followed by a correct update", async (sub) => {
+    const { pm, id, historyPath, original } = await deliveryFixture(sub);
     await pm.reopen(id, "Adversarial fixture");
     await pm.close(id, original.close_reason ?? "", { resolution: "Delivered by PR 16", actualResult: original.actual_result, completedAt: original.completed_at });
     await pm.update(id, { resolution: original.resolution, completedAt: original.completed_at });
     await assert.rejects(verifyDelivery(pm, id, historyPath), /close evidence/u);
   });
+});
+
+test("a failed close affects only its own provenance subtest", (t) => {
+  const { root, cleanup } = fixtureDirectory("ado-closeout-failure-");
+  t.after(cleanup);
+  const preload = join(root, "fail-close.mjs");
+  const titles = ["reject contradictory resolution", "reject contradictory actual_result", "reject contradictory close_reason",
+    "pin every historical event", "reject a wrong close resolution"];
+  const childEnv = { ...process.env };
+  for (const key of Object.keys(childEnv))
+    if (/token|secret|password|credential|api.?key|authorization|^NODE_TEST_/iu.test(key)) delete childEnv[key];
+  const [file, pattern] = ["test/closeout-provenance.test.ts", "^statement enforcement delivery record"];
+  for (const failedCase of [0, 1, 2]) {
+    writeFileSync(preload, `import { PmClient } from ${JSON.stringify(import.meta.resolve("@unbrained/pm-cli/sdk"))};
+const close = PmClient.prototype.close;
+let call = 0;
+PmClient.prototype.close = function (...args) {
+  if (++call === ${failedCase * 2 + 1}) throw new Error("injected close failure");
+  return close.apply(this, args);
+};`);
+    const result = spawnSync(process.execPath, ["--import", pathToFileURL(preload).href,
+      "--test", "--test-concurrency=1", "--test-reporter=tap",
+      `--test-name-pattern=${pattern}`, file], {
+      cwd: packageRoot, env: childEnv, encoding: "utf8", timeout: 180_000,
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stdout, /injected close failure/u);
+    for (const [index, title] of titles.entries())
+      assert.match(result.stdout, new RegExp(`^\\s*${index === failedCase ? "not ok" : "ok"} ${index + 1} - ${title}`, "mu"));
+    assert.match(result.stdout, /# fail 2\b/u, "only the injected subtest and its parent may fail");
+  }
 });
 
 /** Compare every delivery-bearing value and the immutable correction prefix in a non-git tracker. */

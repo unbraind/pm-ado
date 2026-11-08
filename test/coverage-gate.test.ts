@@ -853,3 +853,14 @@ test("statement instrumentation preserves existing Node options", async (t) => {
     else process.env.NODE_OPTIONS = previous;
   }
 });
+
+
+test("statement preloads encode reserved filesystem characters for both runner and descendants", async (t) => {
+  const fixture = createFixture("cg-esm-#-%-");
+  t.after(fixture.cleanup);
+  writeRunnableFixture(fixture.dir);
+  writeStandardGate(fixture.dir);
+  const result = await runGate(fixture.dir);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /thresholds met/u);
+});

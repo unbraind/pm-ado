@@ -5,7 +5,7 @@ import { devNull } from "node:os";
 import test from "node:test";
 import { PmClient } from "@unbrained/pm-cli/sdk";
 import { fixtureDirectory, packageRoot } from "./helpers/package-runtime.ts";
-import { fixtureProcessTimeoutMs, relocateNodePreloads, runCommand } from "./helpers/process-fixture.ts";
+import { assertTargetPreloaded, fixtureProcessTimeoutMs, relocateNodePreloads, runCommand } from "./helpers/process-fixture.ts";
 
 /** The release workflow source, read once and asserted against as text. */
 const workflow = readFileSync(
@@ -566,6 +566,10 @@ for (const timing of ["before", "after"] as const) {
     assert.ok(generated.includes(`## ${pkg.version} - `), "the tagged release must also remain present");
     const tagged = generated.split(/^## /mu).find((section) => section.startsWith(`${pkg.version} - `));
     assert.ok(tagged);
+    if (timing === "before") {
+      assert.ok(tagged.includes(seed.title), "the included seed must remain in the tagged release");
+      assert.ok(!unreleased.includes(seed.title), "the included seed must not leak into Unreleased");
+    }
     assert.ok(!tagged.includes(title), "pending delivery must not also appear in the tagged release");
   });
 }
@@ -620,11 +624,23 @@ appendFileSync(${JSON.stringify(receipts)}, JSON.stringify({ cwd: process.cwd(),
     assert.match(result.stdout, /(?:# pass|ℹ pass) [1-9]/u, `${file} must pass a selected acceptance test`);
     const loaded = readFileSync(receipts, "utf8").trim().split("\n").filter(Boolean)
       .map((line) => JSON.parse(line) as { cwd: string; argv: string[] });
-    assert.ok(loaded.some((receipt) => relative(packageRoot, receipt.cwd) !== "" && receipt.argv.length > 1),
-      `${file}: a relocated fixture child must observably load the inherited probe`);
+    const targetEntry = file === "test/release-workflow.test.ts" ? /(?:[/\\]pm-changelog|[/\\]pm-changelog[/\\].*cli\.js)$/u
+      : file === "test/prepare-merge-driver.test.ts" ? /[/\\]prepare-merge-driver\.ts$/u
+      : file === "test/public-api.test.ts" ? /[/\\]consumer\.mjs$/u : /[/\\]cli\.js$/u;
+    assert.ok(loaded.some((receipt) => relative(packageRoot, receipt.cwd) !== "" && targetEntry.test(receipt.argv[1] ?? "")),
+      `${file}: the relocated target entry point must observably load the inherited probe`);
+    if (file === "test/public-api.test.ts") {
+      for (const mode of ["built", "published"]) {
+        const consumer = loaded.find((receipt) => basename(receipt.cwd) === "consumer" &&
+          receipt.argv[1] === join(receipt.cwd, `out-${mode}/consumer.mjs`) &&
+          basename(receipt.argv[2] ?? "") === `${mode}-node`);
+        assert.ok(consumer, `${mode}: the Node consumer entry point must load the probe`);
+        assertTargetPreloaded(receipts, 0, consumer.cwd, /[/\\\\]consumer\.mjs$/u, consumer.argv.slice(2));
+      }
+    }
     if (file === "test/prepare-merge-driver.test.ts") {
       for (const fixture of process.platform === "win32" ? ["invalid-global-path"] : ["full", "invalid-global-path"]) {
-        assert.ok(loaded.some((receipt) => basename(receipt.cwd) === fixture),
+        assert.ok(loaded.some((receipt) => basename(receipt.cwd) === fixture && targetEntry.test(receipt.argv[1] ?? "")),
           `prepare fixture ${fixture} must load the probe through its own child environment`);
       }
     }

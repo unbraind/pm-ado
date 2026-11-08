@@ -1,6 +1,9 @@
 /** Shared real child-process execution and scoped environment restoration for native fixtures. */
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { execFile } from "node:child_process";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
 /** Preserve Node's actual executable, buffer and failure semantics in every host fixture. */
@@ -52,11 +55,32 @@ export function relocateNodePreloads(options: string, root: string): string {
     if (!argument || path === undefined || !/^\.\.?[\\/]/u.test(path)) continue;
     // NODE_OPTIONS escaping is not JSON escaping: literal newlines/tabs stay
     // literal, and only backslashes and double quotes need escaping.
-    const absolute = resolve(root, path).replace(/[\\"]/gu, "\\$&");
+    const absolute = resolve(root, path);
+    const specifier = (inline?.[1] === "--import" || token.value === "--import")
+      ? new URL(path.replace(/\\/gu, "/"), pathToFileURL(resolve(root) + "/")).href : absolute;
+    const encoded = specifier.replace(/[\\"]/gu, "\\$&");
     edits.push({ start: argument.start, end: argument.end,
-      value: `${inline ? `${inline[1]}=` : ""}"${absolute}"` });
+      value: `${inline ? `${inline[1]}=` : ""}"${encoded}"` });
   }
   let relocated = options;
   for (const edit of edits.reverse()) relocated = relocated.slice(0, edit.start) + edit.value + relocated.slice(edit.end);
   return relocated;
+}
+
+/** Require a fresh receipt from the actual entry point and, when supplied, exact command arguments. */
+export function assertTargetPreloaded(file: string, checkpoint: number, cwd: string, entry: RegExp, args?: readonly string[]): void {
+  const receipts = readFileSync(file, "utf8").slice(checkpoint).split("\n").filter(Boolean)
+    .map((line) => JSON.parse(line) as { cwd: string; argv: string[] });
+  assert.ok(receipts.some((receipt) => resolve(receipt.cwd) === resolve(cwd) &&
+    entry.test(receipt.argv[1] ?? "") &&
+    (args === undefined || JSON.stringify(receipt.argv.slice(2)) === JSON.stringify(args))),
+  "a fresh target entry-point receipt must prove this command loaded the preload");
+}
+
+/** Add a fixture-owned filesystem preload without accidentally creating a bare package specifier. */
+export function withFixturePreload(options: string, root: string, preload: string): string {
+  const path = relative(root, preload);
+  const specifier = isAbsolute(path) ? path : `./${path}`;
+  const encoded = specifier.replace(/[\\"]/gu, "\\$&");
+  return relocateNodePreloads(`${options} --require="${encoded}"`, root);
 }

@@ -1,0 +1,19 @@
+id: pm-ado-resolution-recovery-race
+title: Investigate intermittent same-decision recovery writer failure under coverage load
+description: "PR 91 serial release validation observed the unchanged test resolution recovery serializes two writers using the same prepared decision fail during the Bun V8 coverage suite. The same test passed in the earlier npm suite and passes a focused retry, so the underlying interleaving remains unresolved. This is separate from the fixture preload and closeout provenance review fixes. Preserve the original failure and do not weaken writer safety assertions to mask it."
+type: Issue
+status: open
+priority: 2
+tags[3]: concurrency,recovery,testing
+created_at: "2026-11-08T08:03:32.358Z"
+updated_at: "2026-11-08T08:15:15.152Z"
+author: codex-agent
+acceptance_criteria: "Capture the exact failing assertion and refusal values; reproduce the relevant interleaving with real native trackers under coverage; determine whether production recovery or the acceptance oracle is wrong; preserve one remote PATCH, at least one accepted writer, deterministic replay and unchanged coverage thresholds."
+comments[1]{created_at,author,text}:
+  "2026-11-08T08:15:13.251Z",codex-agent,"Final broad-suite failure detail: the assertion in test/sync.test.ts:1509 rejects the concurrent writer refusal because its code is outside ado_partial_apply/apply_failed. The reporter does not include the actual refusal code, so capture it during investigation rather than assuming a production or test-only cause. The test passed in the earlier npm V8 suite and its subsequent focused retry passes 1/1; the Bun broad suite failed it once. No safety assertion was relaxed. That suite was separately cancelled at the 1650-second local gate limit; cancellation and partial coverage are not this assertion failure."
+files[2]{path,scope}:
+  resolution.ts,project
+  test/sync.test.ts,project
+tests[1]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
+  node --test --test-concurrency=2 --test-name-pattern='resolution recovery serializes two writers' test/sync.test.ts,project,codex-agent,"2026-11-08T08:15:15.069Z",local_mutation,closeout-records-statement-enforcement-delivery
+body: ""

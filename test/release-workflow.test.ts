@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { basename, join, relative, resolve } from "node:path";
 import { devNull } from "node:os";
 import test from "node:test";
 import { PmClient } from "@unbrained/pm-cli/sdk";
 import { fixtureDirectory, packageRoot } from "./helpers/package-runtime.ts";
-import { runCommand } from "./helpers/process-fixture.ts";
+import { relocateNodePreloads, runCommand } from "./helpers/process-fixture.ts";
 
 /** The release workflow source, read once and asserted against as text. */
 const workflow = readFileSync(
@@ -510,45 +510,108 @@ test("every changelog generator agrees on empty releases", () => {
   }
 });
 
-test("changelog:full retains generated Unreleased content after a tagged release", async (t) => {
-  const { root, cleanup } = fixtureDirectory("ado-unreleased-content-");
+for (const timing of ["before", "after"] as const) {
+  test(`changelog:full keeps an omitted ${timing}-tag delivery exclusively in Unreleased`, async (t) => {
+    const { root, cleanup } = fixtureDirectory("ado-unreleased-content-");
+    t.after(cleanup);
+    const pkg = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as {
+      version: string; scripts: Record<string, string>;
+    };
+    writeFileSync(join(root, "package.json"), JSON.stringify({
+      name: "changelog-content-fixture", version: pkg.version,
+      scripts: { "changelog:full": pkg.scripts["changelog:full"] },
+    }));
+    symlinkSync(join(packageRoot, "node_modules"), join(root, "node_modules"), "junction");
+    const childEnv = { ...process.env };
+    if (childEnv.NODE_OPTIONS) childEnv.NODE_OPTIONS = relocateNodePreloads(childEnv.NODE_OPTIONS, packageRoot);
+    // Preserve Node options and statement-preloader settings for spawned CLI coverage.
+    for (const key of Object.keys(childEnv)) {
+      if (/token|secret|password|credential|api.?key|authorization/iu.test(key) ||
+        /^(?:GIT_|NPM_MEDIA_SERVER$|npm_config_)/iu.test(key)) delete childEnv[key];
+    }
+    Object.assign(childEnv, {
+      NPM_CONFIG_USERCONFIG: devNull, npm_config_userconfig: devNull,
+      PM_AUTHOR: "fixture-agent",
+      GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_NOSYSTEM: "1",
+      GIT_AUTHOR_DATE: timing === "before" ? "2099-01-01T00:00:00Z" : "2000-01-01T00:00:00Z",
+      GIT_COMMITTER_DATE: timing === "before" ? "2099-01-01T00:00:00Z" : "2000-01-01T00:00:00Z",
+    });
+    const pm = new PmClient({ cwd: root, pmRoot: join(root, ".agents/pm"), author: "fixture-agent" });
+    await pm.init("fixture");
+    const { item: seed } = await pm.create({ title: "Included release seed", type: "Task" });
+    await pm.close(seed.id, "Seed delivery verified");
+    const title = `Pending fixture delivery ${timing} the tagged release`;
+    if (timing === "before") {
+      const { item } = await pm.create({ title, type: "Task" });
+      await pm.close(item.id, "Fixture implementation verified");
+    }
+    for (const args of [
+      ["init", "--initial-branch=main"], ["add", "package.json", ".agents/pm"],
+      // Commit a tracker-bearing snapshot, deliberately excluding the omitted item.
+      ...(timing === "before" ? [["reset", "--", ".agents/pm/tasks", ".agents/pm/history"], ["add", `.agents/pm/tasks/${seed.id}.toon`, `.agents/pm/history/${seed.id}.jsonl`]] : []),
+      ["-c", "user.name=SteveBot", "-c", "user.email=1153461+unbraind@users.noreply.github.com", "commit", "-m", "Fixture release"],
+      ["tag", `v${pkg.version}`],
+    ]) await runCommand("git", args, { cwd: root, env: childEnv });
+    if (timing === "after") {
+      const { item } = await pm.create({ title, type: "Task" });
+      await pm.close(item.id, "Fixture implementation verified");
+    }
+    await runCommand(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "changelog:full"], {
+      cwd: root, env: childEnv, shell: process.platform === "win32", timeout: 60_000,
+    });
+    const generated = readFileSync(join(root, "CHANGELOG.md"), "utf8");
+    const unreleased = generated.split(/^## /mu).find((section) => /^Unreleased\r?\n/u.test(section));
+    assert.ok(unreleased, "regeneration must retain an Unreleased section after a tagged release");
+    assert.ok(unreleased.includes(title), "the pending delivery must remain inside Unreleased");
+    assert.ok(generated.includes(`## ${pkg.version} - `), "the tagged release must also remain present");
+    const tagged = generated.split(/^## /mu).find((section) => section.startsWith(`${pkg.version} - `));
+    assert.ok(tagged);
+    assert.ok(!tagged.includes(title), "pending delivery must not also appear in the tagged release");
+  });
+}
+
+test("relocated children preserve every supported relative preload spelling", async (t) => {
+  const { root, cleanup } = fixtureDirectory("ado-preload-");
   t.after(cleanup);
-  const pkg = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as {
-    version: string; scripts: Record<string, string>;
-  };
-  writeFileSync(join(root, "package.json"), JSON.stringify({
-    name: "changelog-content-fixture", version: pkg.version,
-    scripts: { "changelog:full": pkg.scripts["changelog:full"] },
-  }));
-  symlinkSync(join(packageRoot, "node_modules"), join(root, "node_modules"), "junction");
-  const childEnv = { ...process.env };
-  // Preserve Node options and statement-preloader settings for spawned CLI coverage.
-  for (const key of Object.keys(childEnv)) {
-    if (/token|secret|password|credential|api.?key|authorization/iu.test(key) ||
-      /^(?:GIT_|NPM_MEDIA_SERVER$|npm_config_)/iu.test(key)) delete childEnv[key];
+  writeFileSync(join(root, "probe.cjs"), "globalThis.fixturePreloaded = true;");
+  writeFileSync(join(root, "probe space.cjs"), "globalThis.fixturePreloaded = true;");
+  for (const flag of ["--import", "--require", "-r"]) {
+    for (const separator of flag === "-r" ? [" "] : ["=", " "]) {
+      for (const path of ["./probe.cjs", '"./probe.cjs"', '"./probe space.cjs"', `../${basename(root)}/probe.cjs`]) {
+        const options = relocateNodePreloads(`--no-warnings ${flag}${separator}${path}`, root);
+        assert.ok(options.startsWith("--no-warnings "));
+        await runCommand(process.execPath, ["-e", "if (!globalThis.fixturePreloaded) process.exit(1)"], {
+          cwd: packageRoot, env: { NODE_OPTIONS: options },
+        });
+      }
+    }
   }
-  Object.assign(childEnv, {
-    NPM_CONFIG_USERCONFIG: devNull, npm_config_userconfig: devNull,
-    PM_AUTHOR: "fixture-agent",
-    GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_NOSYSTEM: "1",
-    GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
-  });
-  const pm = new PmClient({ cwd: root, pmRoot: join(root, ".agents/pm"), author: "fixture-agent" });
-  await pm.init("fixture");
-  for (const args of [
-    ["init", "--initial-branch=main"], ["add", "package.json", ".agents/pm"],
-    ["-c", "user.name=SteveBot", "-c", "user.email=1153461+unbraind@users.noreply.github.com", "commit", "-m", "Fixture release"],
-    ["tag", `v${pkg.version}`],
-  ]) await runCommand("git", args, { cwd: root, env: childEnv });
-  const title = "Pending fixture delivery after the tagged release";
-  const { item } = await pm.create({ title, type: "Task" });
-  await pm.close(item.id, "Fixture implementation verified");
-  await runCommand(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "changelog:full"], {
-    cwd: root, env: childEnv, shell: process.platform === "win32", timeout: 60_000,
-  });
-  const generated = readFileSync(join(root, "CHANGELOG.md"), "utf8");
-  const unreleased = generated.split(/^## /mu).find((section) => /^Unreleased\r?\n/u.test(section));
-  assert.ok(unreleased, "regeneration must retain an Unreleased section after a tagged release");
-  assert.ok(unreleased.includes(title), "the pending delivery must remain inside Unreleased");
-  assert.ok(generated.includes(`## ${pkg.version} - `), "the tagged release must also remain present");
+  const untouched = String.raw`--no-warnings --import=node:fs --require=module --require="C:\preload.cjs"`;
+  assert.equal(relocateNodePreloads(untouched, root), untouched);
+});
+
+/** Relocation must work in every host fixture, including installed CLI JSON/TOON consumers. */
+test("relative preloads survive every installed host fixture cwd change", async (t) => {
+  const root = mkdtempSync(join(packageRoot, "test/.preload-fixture-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const probe = join(root, "probe.cjs");
+  writeFileSync(probe, "// Synthetic inherited preload.\n");
+  const childEnv = { ...process.env };
+  for (const key of Object.keys(childEnv)) {
+    if (/token|secret|password|credential|api.?key|authorization|^NODE_TEST_/iu.test(key)) delete childEnv[key];
+  }
+  childEnv.NODE_OPTIONS = `${relocateNodePreloads(childEnv.NODE_OPTIONS ?? "", packageRoot)} --import=${JSON.stringify(`./${relative(packageRoot, probe)}`)}`;
+  for (const [file, pattern] of [
+    ["test/sync.test.ts", "actual CLI import/export/sync apply"],
+    ["test/moves.test.ts", "installed no-git CLI and SDK command"],
+    ["test/prepare-merge-driver.test.ts", "a full install registers every merge driver"],
+    ["test/contracts.test.ts", "non-git command previews complete SDK values"],
+    ["test/refresh.test.ts", "round-6 SDK and copied CLI JSON TOON"],
+    ["test/public-api.test.ts", "unchanged published consumer compiles"],
+  ]) {
+    const result = await runCommand(process.execPath, ["--test", "--test-concurrency=1", `--test-name-pattern=${pattern}`, file], {
+      cwd: packageRoot, env: childEnv, timeout: 120_000,
+    });
+    assert.match(result.stdout, /(?:# tests|ℹ tests) [1-9]/u, `${file} must execute its selected acceptance test`);
+  }
 });

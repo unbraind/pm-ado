@@ -1,3 +1,4 @@
+import { relocateNodePreloads } from "./helpers/process-fixture.ts";
 /** Published consumer and built declarations protect additive public API changes. */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -45,7 +46,7 @@ test("unchanged published consumer compiles and runs against built code under No
   symlinkSync(process.execPath, join(safeBin, "node"));
   symlinkSync(bun, join(safeBin, "bun"));
   const consumerHome = join(root, "home"); mkdirSync(consumerHome);
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: consumerHome, PATH: safeBin, XDG_CONFIG_HOME: join(consumerHome, ".config"), BUN_INSTALL: join(root, "bun-home"), BUN_INSTALL_CACHE_DIR: join(root, "bun-cache"), PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1", GIT_CEILING_DIRECTORIES: tmpdir() };
+  const env: NodeJS.ProcessEnv = { ...process.env, NODE_OPTIONS: relocateNodePreloads(process.env.NODE_OPTIONS ?? "", repo), HOME: consumerHome, PATH: safeBin, XDG_CONFIG_HOME: join(consumerHome, ".config"), BUN_INSTALL: join(root, "bun-home"), BUN_INSTALL_CACHE_DIR: join(root, "bun-cache"), PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1", GIT_CEILING_DIRECTORIES: tmpdir() };
   for (const key of ["PM_PATH", "PM_ROOT", "PM_GLOBAL_PATH", "ADO_ORG_URL", "ADO_PROJECT", "ADO_TOKEN"]) delete env[key];
   for (const mode of ["built", "published"] as const) {
     if (mode === "published") for (const [name, digest] of Object.entries(provenance.declarations)) {

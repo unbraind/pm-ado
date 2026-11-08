@@ -1,3 +1,4 @@
+import { relocateNodePreloads } from "./helpers/process-fixture.ts";
 /** Packed non-git consumers exercise real package-manager launchers without changing global state. */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -36,7 +37,7 @@ test("packed npm-global, bun-global, npx, bunx, local-bin and copied-extension c
   const bunHome = join(root, "bun-home"), bunGlobal = join(root, "bun-global"), bunBin = join(root, "bun-bin");
   mkdirSync(join(home, ".config"));
   writeFileSync(join(home, ".config/.bunfig.toml"), `[install]\nglobalDir = ${JSON.stringify(bunGlobal)}\nglobalBinDir = ${JSON.stringify(bunBin)}\n`);
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, ".config"),
+  const env: NodeJS.ProcessEnv = { ...process.env, NODE_OPTIONS: relocateNodePreloads(process.env.NODE_OPTIONS ?? "", repo), HOME: home, XDG_CONFIG_HOME: join(home, ".config"),
     npm_config_cache: join(root, "npm-cache"), npm_config_prefix: join(root, "npm-prefix"), npm_config_ignore_scripts: "true", npm_config_update_notifier: "false", npm_config_audit: "false", npm_config_fund: "false",
     npm_config_userconfig: "/dev/null", NPM_CONFIG_USERCONFIG: "/dev/null",
     BUN_INSTALL: bunHome, BUN_INSTALL_GLOBAL_DIR: bunGlobal, BUN_INSTALL_BIN: bunBin, BUN_INSTALL_CACHE_DIR: join(root, "bun-cache"), PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1",

@@ -1,7 +1,7 @@
 import { authoritativeDigest as snapshot, isRuntimeCacheEntry } from "./helpers/authoritative-digest.ts";
 import { listenOnLoopback } from "./helpers/http-fixture.ts";
 import { isolatedPackage, installFixtureExtension, fixtureItemPath, fixtureDirectory, packageRoot as repo } from "./helpers/package-runtime.ts";
-import { runCommand as run } from "./helpers/process-fixture.ts";
+import { relocateNodePreloads, runCommand as run } from "./helpers/process-fixture.ts";
 /** REST metadata contracts, real host rendering and non-git SDK tracker checks. */
 import assert from "node:assert/strict";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
@@ -173,7 +173,7 @@ async function hostFixture(t: test.TestContext) {
   const item = await pm.create({ title: "Synthetic task", type: "Task" });
   installFixtureExtension(pmRoot);
   const noGit = join(root, "bin"); mkdirSync(noGit); symlinkSync(process.execPath, join(noGit, "node"));
-  const env = { ...process.env, ADO_ORG_URL: `http://127.0.0.1:${address.port}/example`, ADO_TOKEN: config.token, ADO_PROJECT: "Ignored implicit project", ADO_EXPORT_STATE_MAP: "{}", ADO_STATUS_MAP: "{}", PM_NO_UPDATE_CHECK: "1", PM_AUTHOR: "fixture-agent", GIT_CEILING_DIRECTORIES: tmpdir(), PATH: noGit };
+  const env = { ...process.env, NODE_OPTIONS: relocateNodePreloads(process.env.NODE_OPTIONS ?? "", repo), ADO_ORG_URL: `http://127.0.0.1:${address.port}/example`, ADO_TOKEN: config.token, ADO_PROJECT: "Ignored implicit project", ADO_EXPORT_STATE_MAP: "{}", ADO_STATUS_MAP: "{}", PM_NO_UPDATE_CHECK: "1", PM_AUTHOR: "fixture-agent", GIT_CEILING_DIRECTORIES: tmpdir(), PATH: noGit };
   const harness = await createExtensionTestHarness(extension, { name: "pm-ado", capabilities: ["commands", "schema", "preflight"] });
   assert.deepEqual(harness.activation.failed, []);
   /** Run the registered handler with the real host SDK, preserving process globals. */

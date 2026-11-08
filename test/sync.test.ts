@@ -1,3 +1,4 @@
+import { relocateNodePreloads } from "./helpers/process-fixture.ts";
 import { applyFixtureRelation } from "./helpers/relation-fixture.ts";
 import { listenOnLoopback } from "./helpers/http-fixture.ts";
 import { isolatedPackage } from "./helpers/package-runtime.ts";
@@ -337,7 +338,7 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
   mkdirSync(join(root, "node_modules/@unbrained"), { recursive: true });
   symlinkSync(join(repo, "node_modules/@unbrained/pm-cli"), join(root, "node_modules/@unbrained/pm-cli"), "junction");
   writeFileSync(join(installed, "manifest.json"), readFileSync(join(repo, "manifest.json")));
-  const env: NodeJS.ProcessEnv = { ...process.env, PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1", ADO_ORG_URL: org,
+  const env: NodeJS.ProcessEnv = { ...process.env, NODE_OPTIONS: relocateNodePreloads(process.env.NODE_OPTIONS ?? "", repo), PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1", ADO_ORG_URL: org,
     ADO_PROJECT: "Project", ADO_TOKEN: "synthetic-token" };
   delete env.ADO_STATUS_MAP;
   delete env.ADO_EXPORT_STATE_MAP;

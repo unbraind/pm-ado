@@ -1,6 +1,7 @@
 /** Guard the delivered statement-enforcement record through real native tracker reads. */
 import assert from "node:assert/strict";
-import { cpSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { cpSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { PmClient, readHistoryEntries } from "@unbrained/pm-cli/sdk";
@@ -21,7 +22,18 @@ test("statement enforcement delivery record and history identify PR 19, not the 
   }
   assert.equal(existsSync(join(root, ".git")), false, "provenance reads must work without git");
   const { item } = await pm.get(id, { full: true });
-  const history = await readHistoryEntries(join(pmRoot, "history", `${id}.jsonl`), id);
+  const historyPath = join(pmRoot, "history", `${id}.jsonl`);
+  // The 17 events before PR 44 are immutable evidence, independently pinned from
+  // commit 42170123973a632f51fbcbb128823583c9315c5a at
+  // .agents/pm/history/pm-ado-5w3m.jsonl.
+  // Hash raw bytes: SDK validation and latest-value checks cannot prove that an
+  // older event was never rewritten. Later corrective/appended events are allowed.
+  const priorBytes = readFileSync(historyPath).subarray(0, 27_087);
+  assert.equal(priorBytes.length, 27_087, "pre-PR-44 history must not be truncated");
+  assert.equal(createHash("sha256").update(priorBytes).digest("hex"),
+    "1c004298e4879ab71a2447b6e5a4c57b174a66a9df6bc1768707820a8c99621a",
+    "pre-PR-44 history must remain a byte-identical prefix");
+  const history = await readHistoryEntries(historyPath, id);
   const delivery = "https://github.com/unbraind/pm-ado/pull/19";
   const merge = "f297a71431debfe2e00adb8dd1b02874e6dadfe2";
   const mergedAt = "2026-10-08T01:19:51Z";

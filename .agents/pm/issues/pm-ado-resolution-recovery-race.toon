@@ -6,18 +6,19 @@ status: open
 priority: 2
 tags[3]: concurrency,recovery,testing
 created_at: "2026-11-08T08:03:32.358Z"
-updated_at: "2026-11-08T13:02:12.865Z"
+updated_at: "2026-11-08T20:03:11.693Z"
 author: codex-agent
 acceptance_criteria: "Capture the exact failing assertion and refusal values; reproduce the relevant interleaving with real native trackers under coverage; determine whether production recovery or the acceptance oracle is wrong; preserve one remote PATCH, at least one accepted writer, deterministic replay and unchanged coverage thresholds."
-comments[3]{created_at,author,text}:
+comments[4]{created_at,author,text}:
   "2026-11-08T08:15:13.251Z",codex-agent,"Final broad-suite failure detail: the assertion in test/sync.test.ts:1509 rejects the concurrent writer refusal because its code is outside ado_partial_apply/apply_failed. The reporter does not include the actual refusal code, so capture it during investigation rather than assuming a production or test-only cause. The test passed in the earlier npm V8 suite and its subsequent focused retry passes 1/1; the Bun broad suite failed it once. No safety assertion was relaxed. That suite was separately cancelled at the 1650-second local gate limit; cancellation and partial coverage are not this assertion failure."
   "2026-11-08T12:27:27.674Z",codex-agent,"PR 91 review PRRT_kwDOUMUq1860_Uoy: documented the TypeScript runtime prerequisite in the item body rather than rewriting historical evidence. The current continuation uses Node 24.19.0. Search of package retry records found this one focused retry entry; package engines already require Node 22.18+. Preserve the original command and name filter. The production concurrency investigation remains open."
   "2026-11-08T12:39:33.038Z",codex-agent,"Runtime documentation regression passes through the pinned pm test runner: 1/1, zero skipped/cancelled. Native-parser and package-wide deadline regression baseline passes 3/3; removing only this prerequisite body in a disposable package copy makes its documentation contract fail 0/1, and restoration passes. This resolves only review PRRT_kwDOUMUq1860_Uoy; the underlying intermittent same-decision writer observation remains an open investigation. No production recovery assertion or audit event changed."
+  "2026-11-08T19:59:48.654Z",codex-agent,"PR 91 final review PRRT_kwDOUMUq1861CPxG: replaced both executable test links with double-quoted test-name patterns for POSIX shells and Windows cmd.exe. Historical comments and history bytes are unchanged; this adjusts current executable links only. The package-wide audit found and corrected the same pattern in four other linked commands. Production same-decision recovery investigation remains unresolved and this item will return to open without a claim."
 files[3]{path,scope}:
   resolution.ts,project
   test/process-fixture.test.ts,project
   test/sync.test.ts,project
 tests[2]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
-  node --test --test-concurrency=2 --test-name-pattern='resolution recovery serializes two writers' test/sync.test.ts,project,codex-agent,"2026-11-08T08:15:15.069Z",local_mutation,closeout-records-statement-enforcement-delivery
-  node --test --test-concurrency=2 --test-name-pattern='recorded TypeScript recovery retry' test/process-fixture.test.ts,project,codex-agent,"2026-11-08T12:34:54.546Z",local_mutation,closeout-records-statement-enforcement-delivery
+  "node --test --test-concurrency=2 --test-name-pattern=\"resolution recovery serializes two writers\" test/sync.test.ts",project,codex-agent,"2026-11-08T19:54:37.314Z",local_mutation,closeout-records-statement-enforcement-delivery
+  "node --test --test-concurrency=2 --test-name-pattern=\"recorded TypeScript recovery retry\" test/process-fixture.test.ts",project,codex-agent,"2026-11-08T19:54:39.159Z",local_mutation,closeout-records-statement-enforcement-delivery
 body: "Focused retry prerequisite: use Node 22.18+ or Node 24+ with built-in TypeScript type stripping enabled. Node 23.0–23.5 requires --experimental-strip-types. The recorded retry keeps its original target and test-name filter. This retry is historical evidence of intermittency, not proof that the broad-suite concurrency issue is resolved."

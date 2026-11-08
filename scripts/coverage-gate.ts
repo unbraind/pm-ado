@@ -279,7 +279,9 @@ process.on("exit", () => {
 });
 `);
   const preloadUrl = pathToFileURL(preload).href;
-  const result = spawnSync(runner.executable, [...runner.args, "--import", preloadUrl, "--test", "--test-concurrency=2", ...tests], {
+  // Pass the URL only through NODE_OPTIONS: shells can expand percent escapes
+  // even inside double quotes, and descendants need this same preload anyway.
+  const result = spawnSync(runner.executable, [...runner.args, "--test", "--test-concurrency=2", ...tests], {
     cwd: rootDir,
     stdio,
     shell: runner.shell ?? false,

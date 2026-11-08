@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, mkdtempSync } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { PmClient } from "@unbrained/pm-cli/sdk";
 import { pathToFileURL } from "node:url";
 import * as ts from "typescript/unstable/ast";
 import { API } from "typescript/unstable/sync";
@@ -96,12 +97,14 @@ test("target preload receipts reject stale launches, wrappers and different comm
     { ...target, argv: [process.execPath, join(root, "npx-cli.js"), ...target.argv.slice(2)] },
     { ...target, argv: [process.execPath, join(root, "cli.js"), "ado", "export", "--json"] },
     { ...target, cwd: join(root, "different") },
+    { ...target, argv: [...target.argv.slice(0, -1), "--output-format", "toon"] },
   ]) {
     writeFileSync(file, readFileSync(file, "utf8").slice(0, checkpoint) + JSON.stringify(receipt) + "\n");
     assert.throws(assertLoaded, /fresh target/u);
   }
   writeFileSync(file, readFileSync(file, "utf8").slice(0, checkpoint) + JSON.stringify(target) + "\n");
   assert.doesNotThrow(assertLoaded);
+  assert.throws(() => assertTargetPreloaded(file, checkpoint, root, /cli\.js$/u, ["ado", "import", "--output-format", "toon"]), /fresh target/u);
 });
 
 test("target preload receipts compare filesystem identities across cwd aliases", async (t) => {
@@ -245,5 +248,21 @@ test("recorded TypeScript recovery retry declares a compatible runtime", () => {
   const item = readFileSync(resolve(packageRoot, ".agents/pm/issues/pm-ado-resolution-recovery-race.toon"), "utf8");
   assert.match(item, /Node 22\.18\+ or Node 24\+/u);
   assert.match(item, /Node 23\.0–23\.5 requires --experimental-strip-types/u);
-  assert.match(item, /node --test --test-concurrency=2 --test-name-pattern='resolution recovery serializes two writers' test\/sync\.test\.ts/u);
+  assert.match(item, /node --test --test-concurrency=2 --test-name-pattern=\\"resolution recovery serializes two writers\\" test\/sync\.test\.ts/u);
+});
+
+/** Current executable links use grouping understood by both POSIX shells and cmd.exe. */
+test("all linked test-name patterns use portable grouping", async () => {
+  const pm = new PmClient({ cwd: packageRoot, pmRoot: join(packageRoot, ".agents/pm"), noExtensions: true });
+  const invalid = /--test-name-pattern(?:=|\s+)'/u;
+  for (const command of ["node --test --test-name-pattern='two words'", "node --test --test-name-pattern 'a|b'"])
+    assert.match(command, invalid, "the audit must reject either single-quoted spelling");
+  const { items } = await pm.listAllComplete();
+  let checked = 0;
+  for (const item of items) for (const link of item.tests ?? []) {
+    if (!link.command?.includes("--test-name-pattern")) continue;
+    assert.doesNotMatch(link.command, invalid, item.id);
+    checked++;
+  }
+  assert.ok(checked >= 6, "the audit must read all current linked commands");
 });

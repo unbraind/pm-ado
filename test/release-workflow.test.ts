@@ -629,6 +629,15 @@ appendFileSync(${JSON.stringify(receipts)}, JSON.stringify({ cwd: process.cwd(),
       : file === "test/public-api.test.ts" ? /[/\\]consumer\.mjs$/u : /[/\\]cli\.js$/u;
     assert.ok(loaded.some((receipt) => relative(packageRoot, receipt.cwd) !== "" && targetEntry.test(receipt.argv[1] ?? "")),
       `${file}: the relocated target entry point must observably load the inherited probe`);
+    if (["test/moves.test.ts", "test/contracts.test.ts", "test/refresh.test.ts"].includes(file)) {
+      for (const format of [["--json"], ["--output-format", "toon"]]) {
+        const target = loaded.find((receipt) => relative(packageRoot, receipt.cwd) !== "" &&
+          targetEntry.test(receipt.argv[1] ?? "") &&
+          JSON.stringify(receipt.argv.slice(-format.length)) === JSON.stringify(format));
+        assert.ok(target, `${file}: ${format.join(" ")} must independently load the inherited probe`);
+        assertTargetPreloaded(receipts, 0, target.cwd, targetEntry, target.argv.slice(2));
+      }
+    }
     if (file === "test/public-api.test.ts") {
       for (const mode of ["built", "published"]) {
         const consumer = loaded.find((receipt) => basename(receipt.cwd) === "consumer" &&

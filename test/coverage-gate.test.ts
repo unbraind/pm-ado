@@ -701,8 +701,6 @@ test("coverage gate normalises absolute SF: paths in the lcov report", async (t)
   // exits 0. The gate must normalise the absolute path to a repo-relative
   // one so the presence check matches the walked source set.
   const fakeNode = writeNodeCommand(fixture.dir, "fake-node", [
-    'import { spawnSync } from "node:child_process";',
-    'if (process.argv.includes("--import")) process.exit(spawnSync(process.execPath, process.argv.slice(2), { stdio: "ignore" }).status ?? 1);',
     'import { writeFileSync } from "node:fs";',
     'import { join } from "node:path";',
     'const prefix = "--test-reporter-destination=";',
@@ -712,6 +710,7 @@ test("coverage gate normalises absolute SF: paths in the lcov report", async (t)
   ].join("\n"));
   const { code, stdout, stderr } = await captureOutput(() => Promise.resolve(runCoverageGate(fixture.dir, "ignore", {
     runner: { executable: process.execPath, args: [fakeNode] },
+    statementRunner: { executable: process.execPath, args: [] },
   })));
   assert.strictEqual(code, 0, `gate should pass with absolute SF: paths; stderr: ${stderr}`);
   assert.match(stdout, /thresholds met/);
@@ -856,7 +855,7 @@ test("statement instrumentation preserves existing Node options", async (t) => {
 
 
 test("statement preloads encode reserved filesystem characters for both runner and descendants", async (t) => {
-  const fixture = createFixture("cg-esm-#-%-");
+  const fixture = createFixture("cg-esm-#-%-$PM_ADO_SHELL_PROBE-");
   t.after(fixture.cleanup);
   writeRunnableFixture(fixture.dir);
   writeStandardGate(fixture.dir);
@@ -875,7 +874,20 @@ assert.ifError(child.error);
 assert.equal(child.status, 0, child.stderr);
 writeFileSync("child-pid.json", JSON.stringify(child.pid));
 `);
-  const result = await runGate(fixture.dir);
+  const savedProbe = process.env.PM_ADO_SHELL_PROBE;
+  const savedPercentProbe = process.env["23-"];
+  process.env.PM_ADO_SHELL_PROBE = "expanded";
+  process.env["23-"] = "expanded"; // cmd.exe expands %23-% inside the encoded URL.
+  t.after(() => {
+    if (savedProbe === undefined) delete process.env.PM_ADO_SHELL_PROBE;
+    else process.env.PM_ADO_SHELL_PROBE = savedProbe;
+    if (savedPercentProbe === undefined) delete process.env["23-"];
+    else process.env["23-"] = savedPercentProbe;
+  });
+  const result = await captureOutput(() => Promise.resolve(runCoverageGate(fixture.dir, "ignore", {
+    compiler: { executable: process.execPath, args: [join(NODE_MODULES_BIN, "../typescript/bin/tsc")] },
+    statementRunner: { executable: process.execPath, args: [], shell: true },
+  })));
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /thresholds met/u);
   const childPid = JSON.parse(readFileSync(join(fixture.dir, "child-pid.json"), "utf8")) as number;

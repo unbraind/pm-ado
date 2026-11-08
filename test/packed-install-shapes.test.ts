@@ -2,10 +2,10 @@ import { relocateNodePreloads } from "./helpers/process-fixture.ts";
 /** Packed non-git consumers exercise real package-manager launchers without changing global state. */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import type { AdoWorkItem, ResolutionPlan } from "../index.ts";
@@ -37,7 +37,10 @@ test("packed npm-global, bun-global, npx, bunx, local-bin and copied-extension c
   const bunHome = join(root, "bun-home"), bunGlobal = join(root, "bun-global"), bunBin = join(root, "bun-bin");
   mkdirSync(join(home, ".config"));
   writeFileSync(join(home, ".config/.bunfig.toml"), `[install]\nglobalDir = ${JSON.stringify(bunGlobal)}\nglobalBinDir = ${JSON.stringify(bunBin)}\n`);
-  const env: NodeJS.ProcessEnv = { ...process.env, NODE_OPTIONS: relocateNodePreloads(process.env.NODE_OPTIONS ?? "", repo), HOME: home, XDG_CONFIG_HOME: join(home, ".config"),
+  const preload = join(root, "fixture-preload.cjs"), preloadReceipts = join(root, "preload-receipts.jsonl");
+  writeFileSync(preloadReceipts, "");
+  writeFileSync(preload, `require("node:fs").appendFileSync(${JSON.stringify(preloadReceipts)}, JSON.stringify(process.cwd()) + "\\n");`);
+  const env: NodeJS.ProcessEnv = { ...process.env, NODE_OPTIONS: relocateNodePreloads(`${process.env.NODE_OPTIONS ?? ""} --require=${JSON.stringify(relative(repo, preload))}`, repo), HOME: home, XDG_CONFIG_HOME: join(home, ".config"),
     npm_config_cache: join(root, "npm-cache"), npm_config_prefix: join(root, "npm-prefix"), npm_config_ignore_scripts: "true", npm_config_update_notifier: "false", npm_config_audit: "false", npm_config_fund: "false",
     npm_config_userconfig: "/dev/null", NPM_CONFIG_USERCONFIG: "/dev/null",
     BUN_INSTALL: bunHome, BUN_INSTALL_GLOBAL_DIR: bunGlobal, BUN_INSTALL_BIN: bunBin, BUN_INSTALL_CACHE_DIR: join(root, "bun-cache"), PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1",
@@ -45,6 +48,11 @@ test("packed npm-global, bun-global, npx, bunx, local-bin and copied-extension c
   // Never inherit a real Azure credential or private npm configuration.
   for (const key of ["ADO_ORG_URL", "ADO_TOKEN", "ADO_PROJECT", "ADO_STATUS_MAP", "ADO_EXPORT_STATE_MAP", "NODE_PATH", "NPM_TOKEN", "NODE_AUTH_TOKEN", "PM_PATH", "PM_ROOT", "PM_GLOBAL_PATH", "PM_GLOBAL_ROOT"]) delete env[key];
   for (const key of Object.keys(env)) if (/(?:TOKEN|SECRET|PASSWORD|API_KEY|ACCESS_KEY|CREDENTIAL|NPM_MEDIA_SERVER)/iu.test(key)) delete env[key];
+  /** Every real launcher must load the probe inside its own non-git tracker. */
+  function assertPreloaded(tracker: string): void {
+    const receipts = readFileSync(preloadReceipts, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as string);
+    assert.ok(receipts.some((cwd) => relative(tracker, cwd) === ""), "the actual tracker child must load the relative preload");
+  }
   await command(process.execPath, [npm, "pack", "--ignore-scripts", "--pack-destination", artifacts, repo], root, env);
   await command(process.execPath, [npm, "pack", "--ignore-scripts", "--pack-destination", artifacts, "@unbrained/pm-cli@2026.10.25"], root, env);
   const packageTar = join(artifacts, readdirSync(artifacts).find((file) => file.startsWith("pm-ado-"))!);
@@ -262,6 +270,7 @@ test("packed npm-global, bun-global, npx, bunx, local-bin and copied-extension c
         await assert.rejects(pm(["ado", "resolve-plan"]), /Supply --item/u);
         await assert.rejects(pm(["ado", "resolve-apply"]), /Supply exactly one/u);
       }
+      assertPreloaded(tracker);
       t.diagnostic(`${shape.name}: ${shape.name === "copied-tracker-extension" ? "read-only refresh succeeds; guarded writes name the missing SDK link" : "4/4 commands and SDK state readback pass"}; lazy resolution checks pass; no git executable`);
     });
   }
@@ -305,6 +314,7 @@ test("packed npm-global, bun-global, npx, bunx, local-bin and copied-extension c
       delete globals.ADO_STATUS_MAP;
       await assertEndpointPreserved(pm);
       assert.equal(existsSync(join(tracker, ".git")), false);
+      assertPreloaded(tracker);
       t.diagnostic(`${shape.name}: global SDK runtime supports partial-base apply and preserves unselected endpoint edits`);
     });
   }

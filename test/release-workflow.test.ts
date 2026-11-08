@@ -5,7 +5,7 @@ import { devNull } from "node:os";
 import test from "node:test";
 import { PmClient } from "@unbrained/pm-cli/sdk";
 import { fixtureDirectory, packageRoot } from "./helpers/package-runtime.ts";
-import { relocateNodePreloads, runCommand } from "./helpers/process-fixture.ts";
+import { fixtureProcessTimeoutMs, relocateNodePreloads, runCommand } from "./helpers/process-fixture.ts";
 
 /** The release workflow source, read once and asserted against as text. */
 const workflow = readFileSync(
@@ -595,23 +595,38 @@ test("relative preloads survive every installed host fixture cwd change", async 
   const root = mkdtempSync(join(packageRoot, "test/.preload-fixture-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const probe = join(root, "probe.cjs");
-  writeFileSync(probe, "// Synthetic inherited preload.\n");
+  const receipts = join(root, "receipts.jsonl");
+  writeFileSync(probe, `const { appendFileSync } = require("node:fs");
+appendFileSync(${JSON.stringify(receipts)}, JSON.stringify({ cwd: process.cwd(), argv: process.argv }) + "\\n");`);
   const childEnv = { ...process.env };
   for (const key of Object.keys(childEnv)) {
     if (/token|secret|password|credential|api.?key|authorization|^NODE_TEST_/iu.test(key)) delete childEnv[key];
   }
   childEnv.NODE_OPTIONS = `${relocateNodePreloads(childEnv.NODE_OPTIONS ?? "", packageRoot)} --import=${JSON.stringify(`./${relative(packageRoot, probe)}`)}`;
   for (const [file, pattern] of [
+    ["test/release-workflow.test.ts", "changelog:full keeps an omitted"],
     ["test/sync.test.ts", "actual CLI import/export/sync apply"],
     ["test/moves.test.ts", "installed no-git CLI and SDK command"],
-    ["test/prepare-merge-driver.test.ts", "a full install registers every merge driver"],
+    ["test/prepare-merge-driver.test.ts", "a full install registers every merge driver|an invalid global lookup path preserves the installer failure"],
     ["test/contracts.test.ts", "non-git command previews complete SDK values"],
     ["test/refresh.test.ts", "round-6 SDK and copied CLI JSON TOON"],
     ["test/public-api.test.ts", "unchanged published consumer compiles"],
   ]) {
+    writeFileSync(receipts, "");
     const result = await runCommand(process.execPath, ["--test", "--test-concurrency=1", `--test-name-pattern=${pattern}`, file], {
-      cwd: packageRoot, env: childEnv, timeout: 120_000,
+      cwd: packageRoot, env: childEnv, timeout: fixtureProcessTimeoutMs,
     });
     assert.match(result.stdout, /(?:# tests|ℹ tests) [1-9]/u, `${file} must execute its selected acceptance test`);
+    assert.match(result.stdout, /(?:# pass|ℹ pass) [1-9]/u, `${file} must pass a selected acceptance test`);
+    const loaded = readFileSync(receipts, "utf8").trim().split("\n").filter(Boolean)
+      .map((line) => JSON.parse(line) as { cwd: string; argv: string[] });
+    assert.ok(loaded.some((receipt) => relative(packageRoot, receipt.cwd) !== "" && receipt.argv.length > 1),
+      `${file}: a relocated fixture child must observably load the inherited probe`);
+    if (file === "test/prepare-merge-driver.test.ts") {
+      for (const fixture of process.platform === "win32" ? ["invalid-global-path"] : ["full", "invalid-global-path"]) {
+        assert.ok(loaded.some((receipt) => basename(receipt.cwd) === fixture),
+          `prepare fixture ${fixture} must load the probe through its own child environment`);
+      }
+    }
   }
 });

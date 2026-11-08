@@ -30,3 +30,8 @@
 ".agents/pm/extensions/**" merge=text
 ".agents/pm/extensions/.managed-extensions.json" merge=pm-json
 # pm-cli:merge-drivers:v2:end
+
+# Byte-pinned provenance and declaration baselines must survive autocrlf checkouts.
+.agents/pm/history/*.jsonl text eol=lf
+test/fixtures/public-api/** text eol=lf
+dist/*.d.ts text eol=lf

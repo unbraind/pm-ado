@@ -2,12 +2,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import type { TestContext } from "node:test";
 import { pathToFileURL } from "node:url";
 import { PmClient, readHistoryEntries } from "@unbrained/pm-cli/sdk";
+import { runCommand } from "./helpers/process-fixture.ts";
 import { fixtureDirectory, packageRoot } from "./helpers/package-runtime.ts";
 
 /** One patch returned by the SDK's validated native history reader. */
@@ -105,6 +106,31 @@ PmClient.prototype.close = function (...args) {
       assert.match(result.stdout, new RegExp(`^\\s*${index === failedCase ? "not ok" : "ok"} ${index + 1} - ${title}`, "mu"));
     assert.match(result.stdout, /# fail 2\b/u, "only the injected subtest and its parent may fail");
   }
+});
+
+test("byte-pinned history and public consumer baselines retain LF under autocrlf checkouts", async (t) => {
+  const { root, cleanup } = fixtureDirectory("ado-lf-checkout-");
+  t.after(cleanup);
+  const fixtures = "test/fixtures/public-api";
+  const files = [".agents/pm/history/pm-ado-5w3m.jsonl",
+    ...readdirSync(join(packageRoot, fixtures), { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile()).map((entry) => join(entry.parentPath, entry.name).slice(packageRoot.length + 1)),
+    ...readdirSync(join(packageRoot, "dist")).filter((entry) => entry.endsWith(".d.ts")).map((entry) => `dist/${entry}`)];
+  const original = new Map(files.map((file) => [file, readFileSync(join(packageRoot, file))]));
+  cpSync(join(packageRoot, ".gitattributes"), join(root, ".gitattributes"));
+  const env = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, HOME: root,
+    GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+  for (const [file, bytes] of original) {
+    mkdirSync(dirname(join(root, file)), { recursive: true });
+    writeFileSync(join(root, file), bytes);
+  }
+  await runCommand("git", ["init", "--quiet"], { cwd: root, env });
+  await runCommand("git", ["config", "core.autocrlf", "true"], { cwd: root, env });
+  await runCommand("git", ["add", "--", ".gitattributes", ...files], { cwd: root, env });
+  for (const file of files) rmSync(join(root, file));
+  await runCommand("git", ["checkout-index", "--all", "--force"], { cwd: root, env });
+  for (const [file, bytes] of original)
+    assert.deepEqual(readFileSync(join(root, file)), bytes, `${file}: checkout must preserve pinned bytes`);
 });
 
 /** Compare every delivery-bearing value and the immutable correction prefix in a non-git tracker. */

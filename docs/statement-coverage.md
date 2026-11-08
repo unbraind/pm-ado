@@ -50,7 +50,7 @@ its status check from `runCoverageGate`, leaving imports, implementation and tes
 intact. Run:
 
 ```sh
-node --test --test-name-pattern='statement threshold rejects|statement report fails closed' test/coverage-gate.test.ts
+node --test --test-concurrency=2 --test-name-pattern="statement threshold rejects|statement report fails closed" test/coverage-gate.test.ts
 ```
 
 Both tests load and fail assertions because the gate returns 0 instead of 1.

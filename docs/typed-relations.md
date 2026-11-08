@@ -83,11 +83,10 @@ cycles and competing remote parents fail with a conflict. Valid reparenting
 applies parent changes in the validated final tree's topological order, moving
 ancestors before descendants. This computes an empty minimal detach set and
 avoids transient cycles without unsetting existing parents. If an SDK write
-fails, completed parent changes are compensated in reverse order, restoring
-original parents (including originally parentless items). Recovery continues
-when one restoration fails; the error includes failed restoration IDs and exact
-currently detached IDs from a fresh complete tracker read, and retains the
-original failure as its cause. Successful dependency additions remain additive.
+fails, completed parent changes remain durable and the original failure is
+propagated. No automatic restoration or compensation is dispatched. A fresh
+import re-reads the tracker and finishes only the missing endpoints. Successful
+dependency additions remain additive.
 Each SDK mutation still applies its own locking and hierarchy checks; the
 whole multi-item import is not a single transaction against concurrent writers.
 
@@ -134,14 +133,18 @@ imports, rebuilt the package successfully, and failed on behavioral assertions:
   the SDK rejected the cycle eventually, but one parent mutation had already
   entered the tracker history.
 
-The commands were `npm run build` followed by
-`node --test --test-name-pattern='duplicate mapping' test/ado.test.ts`,
-`node --test --test-name-pattern='export removes stale' test/ado.test.ts` and
-`node --test --test-name-pattern='batch hierarchy preflight' test/ado.test.ts`.
+To repeat the mapping and preflight checks with portable grouping, run
+`npm run build` followed by
+`node --test --test-concurrency=2 --test-name-pattern="duplicate mapping" test/ado.test.ts`,
+`node --test --test-concurrency=2 --test-name-pattern="export removes stale" test/ado.test.ts` and
+`node --test --test-concurrency=2 --test-name-pattern="batch hierarchy preflight" test/ado.test.ts`.
 After restoring the implementation, the combined pattern passed all three tests.
 
 
 ## PR #18 data-integrity review evidence
+
+The following records the historical PR #18 implementation and revert proofs.
+The current forward-only contract above supersedes its compensation behavior.
 
 Real disposable tracker tests inject a failure at each of five SDK updates,
 forwarding every other call to the real SDK. They assert that every original
@@ -160,9 +163,17 @@ Independent temporary reverts preserved exports and rebuilt successfully:
   `Custom.Precedes` incorrectly exported `Custom.After` rather than reporting
   ambiguity with provenance.
 
-After each revert, the fix was restored and the package rebuilt. The commands
-were `npm run build` and then either
-`node --test --test-name-pattern='parent update failure' test/ado.test.ts` or
-`node --test --test-name-pattern='ambiguous custom inverse' test/ado.test.ts`.
-The restored combined regression command is
-`node --test --test-name-pattern='parent update failure|failed parent compensation|ambiguous custom inverse' test/ado.test.ts`.
+After each historical revert, the fix was restored and the package rebuilt.
+Those tests selected the then-current parent-update and failed-compensation
+cases, which have since been replaced by forward-only failure coverage.
+
+The current combined regression command checks parent-update failure and
+inverse mapping independently against both source and built exports:
+
+```sh
+npm run build && npm run build:test && node --test --test-concurrency=2 --test-name-pattern="forward-only relation failure|ambiguous custom inverse" test/ado.test.ts
+```
+
+The forward-only test injects a failure on the second parent update, requires
+that the first parent stays durable with no restoration call, and verifies that
+a fresh import finishes only the remaining endpoint in a real non-git tracker.

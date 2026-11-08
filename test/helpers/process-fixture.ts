@@ -52,7 +52,9 @@ export function relocateNodePreloads(options: string, root: string): string {
     const separate = ["--import", "--require", "-r"].includes(token.value);
     const argument = separate ? tokens[++index] : token;
     const path = inline ? inline[2] : separate ? argument?.value : undefined;
-    if (!argument || path === undefined || !/^\.\.?[\\/]/u.test(path)) continue;
+    const commonjs = inline?.[1] !== "--import" && token.value !== "--import";
+    if (!argument || path === undefined ||
+      !(/^\.\.?[\\/]/u.test(path) || (commonjs && (path === "." || path === "..")))) continue;
     // NODE_OPTIONS escaping is not JSON escaping: literal newlines/tabs stay
     // literal, and only backslashes and double quotes need escaping.
     const absolute = resolve(root, path);

@@ -14,7 +14,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import test from "node:test";
@@ -842,6 +842,18 @@ test("statement instrumentation preserves existing Node options", async (t) => {
   writeSource(fixture.dir, "src");
   writeTest(fixture.dir, "src", "src");
   writePackageJson(fixture.dir, { sources: ["src.ts"], tests: [testPath("src")], thresholds: FULL_COVERAGE_THRESHOLDS });
+  writeFileSync(join(fixture.dir, testPath("src")), `
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { value } from "../src.ts";
+assert.equal(value, 42);
+assert.ok(process.env.NODE_OPTIONS?.split(" ").includes("--no-warnings"));
+// The independent descendant must retain the option as well as instrumentation.
+const child = spawnSync(process.execPath, ["-e",
+  'if (!process.env.NODE_OPTIONS?.split(" ").includes("--no-warnings")) process.exit(1)'], { encoding: "utf8" });
+assert.ifError(child.error);
+assert.equal(child.status, 0, child.stderr);
+`);
   const previous = process.env.NODE_OPTIONS;
   process.env.NODE_OPTIONS = "--no-warnings";
   try {
@@ -884,9 +896,17 @@ writeFileSync("child-pid.json", JSON.stringify(child.pid));
     if (savedPercentProbe === undefined) delete process.env["23-"];
     else process.env["23-"] = savedPercentProbe;
   });
+  // Exercise a real executable with spaces even on hosts whose Node path has none.
+  const bin = join(fixture.dir, "Program Files");
+  mkdirSync(bin);
+  const node = join(bin, process.platform === "win32" ? "node.exe" : "node");
+  // Windows file symlinks require privileges that the shell regression must not need.
+  if (process.platform === "win32") copyFileSync(process.execPath, node);
+  else symlinkSync(process.execPath, node);
+  const executable = process.platform === "win32" ? `"${node}"` : `'${node}'`;
   const result = await captureOutput(() => Promise.resolve(runCoverageGate(fixture.dir, "ignore", {
     compiler: { executable: process.execPath, args: [join(NODE_MODULES_BIN, "../typescript/bin/tsc")] },
-    statementRunner: { executable: process.execPath, args: [], shell: true },
+    statementRunner: { executable, args: [], shell: true },
   })));
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /thresholds met/u);

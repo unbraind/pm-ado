@@ -55,6 +55,30 @@ test("preload relocation preserves quoted option data and escaped paths using th
   }
 });
 
+test("CommonJS directory preloads preserve dot and parent resolution at every flag spelling", async (t) => {
+  const { root, cleanup } = fixtureDirectory("ado-directory-preload-");
+  t.after(cleanup);
+  const origin = join(root, "origin"), other = join(root, "elsewhere"), target = join(other, "target");
+  mkdirSync(origin); mkdirSync(target, { recursive: true });
+  for (const [directory, marker] of [[root, "parent"], [origin, "dot"], [other, "wrong-parent"], [target, "wrong-target"]]) {
+    writeFileSync(join(directory, "package.json"), JSON.stringify({ main: "entry.cjs" }));
+    writeFileSync(join(directory, "entry.cjs"), `globalThis.directoryProbe = ${JSON.stringify(marker)};`);
+  }
+  for (const path of [".", "..", "./", "../"]) for (const flag of ["--require=", "--require ", "-r "]) {
+    const options = `--no-warnings ${flag}${quote(path)}`;
+    const transformed = relocateNodePreloads(options, origin);
+    assert.equal(relocateNodePreloads(transformed, origin), transformed);
+    const source = "console.log(globalThis.directoryProbe)";
+    const before = await runCommand(process.execPath, ["-e", source], { cwd: origin, env: { NODE_OPTIONS: options } });
+    const after = await runCommand(process.execPath, ["-e", source], { cwd: target, env: { NODE_OPTIONS: transformed } });
+    assert.equal(after.stdout, before.stdout, `${flag}${path}`);
+    assert.equal(after.stdout.trim(), path.startsWith("..") ? "parent" : "dot");
+  }
+  // ESM directory imports are unsupported: preserve their native rejection.
+  for (const options of ["--import=.", "--import .."])
+    assert.equal(relocateNodePreloads(options, origin), options);
+});
+
 test("fixture preloads use explicit filesystem specifiers inside and outside the repository", async (t) => {
   const inside = mkdtempSync(join(packageRoot, "test/preload-inside-"));
   const outside = fixtureDirectory("ado-preload-outside-");
@@ -251,18 +275,60 @@ test("recorded TypeScript recovery retry declares a compatible runtime", () => {
   assert.match(item, /node --test --test-concurrency=2 --test-name-pattern=\\"resolution recovery serializes two writers\\" test\/sync\.test\.ts/u);
 });
 
+/** Extract portable grouping and reject shell syntax in unquoted option values. */
+function testNamePatterns(command: string): string[] {
+  const patterns: string[] = [];
+  for (const match of command.matchAll(/--test-name-pattern(?:=|\s+)("(?:[^"\\]|\\.)*"|[^\s]+)/gu)) {
+    const raw = match[1];
+    if (raw.startsWith('"')) {
+      const tail = command.slice(match.index + match[0].length);
+      assert.ok(tail === "" || /^[\s`]/u.test(tail), "quoted test patterns must group the whole shell argument");
+      patterns.push(JSON.parse(raw) as string);
+    }
+    else {
+      assert.match(raw, /^[\p{L}\p{N}_./^:+,=\\-]+$/u, "unquoted test patterns must contain no shell metacharacters");
+      patterns.push(raw);
+    }
+  }
+  assert.ok(patterns.length > 0, "the option must have a complete pattern argument");
+  return patterns;
+}
+
 /** Current executable links use grouping understood by both POSIX shells and cmd.exe. */
 test("all linked test-name patterns use portable grouping", async () => {
   const pm = new PmClient({ cwd: packageRoot, pmRoot: join(packageRoot, ".agents/pm"), noExtensions: true });
-  const invalid = /--test-name-pattern(?:=|\s+)'/u;
-  for (const command of ["node --test --test-name-pattern='two words'", "node --test --test-name-pattern 'a|b'"])
-    assert.match(command, invalid, "the audit must reject either single-quoted spelling");
+  for (const separator of ["=", " "]) {
+    for (const value of ["'two words'", "'a|b'", "a|b", "a;b", "a&b", "a>b", "a<b", "a(b)", "$probe", "%probe%", '"a"|b', '"a"b', "a*b", "a?b", "a[b]"])
+      assert.throws(() => testNamePatterns(`node --test --test-name-pattern${separator}${value}`), value);
+    for (const value of ["round-8", "^round-9", '"two words"', '"a|b"'])
+      assert.equal(testNamePatterns(`node --test --test-name-pattern${separator}${value}`).length, 1);
+  }
   const { items } = await pm.listAllComplete();
   let checked = 0;
   for (const item of items) for (const link of item.tests ?? []) {
     if (!link.command?.includes("--test-name-pattern")) continue;
-    assert.doesNotMatch(link.command, invalid, item.id);
+    assert.doesNotThrow(() => testNamePatterns(link.command!), item.id);
     checked++;
   }
+  // Public documentation is also an executable source of test commands.
+  for (const file of ["README.md", ...readdirSync(join(packageRoot, "docs")).filter((file) => file.endsWith(".md")).map((file) => `docs/${file}`)])
+    for (const line of readFileSync(join(packageRoot, file), "utf8").split("\n"))
+      if (line.includes("--test-name-pattern")) assert.doesNotThrow(() => testNamePatterns(line), file);
   assert.ok(checked >= 6, "the audit must read all current linked commands");
+});
+
+/** Every selector alternative must still name a test, rather than hiding behind another match. */
+test("linked relation regression selects current failure and inverse behaviors independently", async () => {
+  const pm = new PmClient({ cwd: packageRoot, pmRoot: join(packageRoot, ".agents/pm"), noExtensions: true });
+  const { item } = await pm.get("pm-ado-1zuu", { full: true });
+  const commands = (item.tests ?? []).flatMap((link) => link.command?.includes("--test-name-pattern") ? [link.command] : []);
+  assert.ok(commands.length > 0);
+  const source = readFileSync(join(packageRoot, "test/ado.test.ts"), "utf8");
+  const titles = [...source.matchAll(/test\(\s*(?:"([^"]+)"|`([^`]+)`)/gu)].map((match) => match[1] ?? match[2]);
+  for (const command of commands) for (const pattern of testNamePatterns(command)) {
+    for (const alternative of pattern.split("|"))
+      assert.ok(titles.some((title) => new RegExp(alternative, "u").test(title)), `stale selector: ${alternative}`);
+    for (const behavior of ["forward-only relation failure keeps completed parents and never dispatches restoration", "ambiguous custom inverse pairs retain provenance without guessing"])
+      assert.ok(new RegExp(pattern, "u").test(`source: ${behavior}`) && new RegExp(pattern, "u").test(`built: ${behavior}`), behavior);
+  }
 });

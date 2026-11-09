@@ -283,7 +283,10 @@ function testNamePatterns(command: string): string[] {
     if (raw.startsWith('"')) {
       const tail = command.slice(match.index + match[0].length);
       assert.ok(tail === "" || /^[\s`]/u.test(tail), "quoted test patterns must group the whole shell argument");
-      patterns.push(JSON.parse(raw) as string);
+      // Shell double quotes preserve a backslash that escapes neither a quote nor
+      // another backslash, so quoted regex escapes survive as written; JSON
+      // semantics would wrongly reject an escape such as \d.
+      patterns.push(raw.slice(1, -1).replace(/\\(.)/gsu, (escape, escaped: string) => escaped === '"' || escaped === "\\" ? escaped : escape));
     }
     else {
       assert.match(raw, /^[\p{L}\p{N}_./^:+,=\\-]+$/u, "unquoted test patterns must contain no shell metacharacters");
@@ -300,8 +303,9 @@ test("all linked test-name patterns use portable grouping", async () => {
   for (const separator of ["=", " "]) {
     for (const value of ["'two words'", "'a|b'", "a|b", "a;b", "a&b", "a>b", "a<b", "a(b)", "$probe", "%probe%", '"a"|b', '"a"b', "a*b", "a?b", "a[b]"])
       assert.throws(() => testNamePatterns(`node --test --test-name-pattern${separator}${value}`), value);
-    for (const value of ["round-8", "^round-9", '"two words"', '"a|b"'])
+    for (const value of ["round-8", "^round-9", '"two words"', '"a|b"', '"a\\d"'])
       assert.equal(testNamePatterns(`node --test --test-name-pattern${separator}${value}`).length, 1);
+    assert.deepEqual(testNamePatterns('node --test --test-name-pattern="a\\d and \\"b\\" [c]"'), ["a\\d and \"b\" [c]"]);
   }
   const { items } = await pm.listAllComplete();
   let checked = 0;

@@ -84,9 +84,14 @@ applies parent changes in the validated final tree's topological order, moving
 ancestors before descendants. This computes an empty minimal detach set and
 avoids transient cycles without unsetting existing parents. If an SDK write
 fails, completed parent changes remain durable and the original failure is
-propagated. No automatic restoration or compensation is dispatched. A fresh
-import re-reads the tracker and finishes only the missing endpoints. Successful
-dependency additions remain additive.
+propagated; when a peer changed the item during that failed write, the native
+write fence can instead raise its `NativeHistoryConflict`, so callers must not
+rely on the original error identity in that case. No automatic restoration or
+compensation is dispatched. Completed endpoints remain tracked and a fresh
+import re-reads the tracker and finishes only the missing endpoints, but
+callers must fetch a fresh expanded remote snapshot before retrying: the
+remote parent or the planned endpoints may have changed since the earlier
+attempt. Successful dependency additions remain additive.
 Each SDK mutation still applies its own locking and hierarchy checks; the
 whole multi-item import is not a single transaction against concurrent writers.
 

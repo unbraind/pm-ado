@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
-import { devNull } from "node:os";
+import { devNull, tmpdir } from "node:os";
 import test from "node:test";
 import { PmClient } from "@unbrained/pm-cli/sdk";
 import { fixtureDirectory, packageRoot } from "./helpers/package-runtime.ts";
@@ -600,8 +600,17 @@ test("relative preloads survive every installed host fixture cwd change", async 
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const probe = join(root, "probe.cjs");
   const receipts = join(root, "receipts.jsonl");
-  writeFileSync(probe, `const { appendFileSync } = require("node:fs");
-appendFileSync(${JSON.stringify(receipts)}, JSON.stringify({ cwd: process.cwd(), argv: process.argv }) + "\\n");`);
+  // Receipt paths are recorded realpath-resolved at load time, so temporary-directory
+  // aliases (/var versus /private/var, or a symlinked TMPDIR) never hide a consumer
+  // receipt, and every later comparison stays a pure string check on canonical paths.
+  writeFileSync(probe, `const { appendFileSync, realpathSync } = require("node:fs");
+const { isAbsolute } = require("node:path");
+const resolved = (value) => { if (!isAbsolute(value)) return value; try { return realpathSync(value); } catch { return value; } };
+appendFileSync(${JSON.stringify(receipts)}, JSON.stringify({ cwd: resolved(process.cwd()), argv: process.argv.map(resolved) }) + "\\n");`);
+  // Regression: run the consumer fixture under a symlinked temporary-directory alias
+  // so the recorded consumer paths actually cross an alias on every POSIX host.
+  const aliasedTmp = process.platform === "win32" ? undefined : join(root, "tmpdir-alias");
+  if (aliasedTmp) symlinkSync(tmpdir(), aliasedTmp, "junction");
   const childEnv = { ...process.env };
   for (const key of Object.keys(childEnv)) {
     if (/token|secret|password|credential|api.?key|authorization|^NODE_TEST_/iu.test(key)) delete childEnv[key];
@@ -618,7 +627,9 @@ appendFileSync(${JSON.stringify(receipts)}, JSON.stringify({ cwd: process.cwd(),
   ]) {
     writeFileSync(receipts, "");
     const result = await runCommand(process.execPath, ["--test", "--test-concurrency=1", `--test-name-pattern=${pattern}`, file], {
-      cwd: packageRoot, env: childEnv, timeout: fixtureProcessTimeoutMs,
+      cwd: packageRoot,
+      env: file === "test/public-api.test.ts" && aliasedTmp ? { ...childEnv, TMPDIR: aliasedTmp } : childEnv,
+      timeout: fixtureProcessTimeoutMs,
     });
     assert.match(result.stdout, /(?:# tests|ℹ tests) [1-9]/u, `${file} must execute its selected acceptance test`);
     assert.match(result.stdout, /(?:# pass|ℹ pass) [1-9]/u, `${file} must pass a selected acceptance test`);

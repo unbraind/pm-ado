@@ -281,6 +281,9 @@ function testNamePatterns(command: string): string[] {
   for (const match of command.matchAll(/--test-name-pattern(?:=|\s+)("(?:[^"\\]|\\.)*"|[^\s]+)/gu)) {
     const raw = match[1];
     if (raw.startsWith('"')) {
+      // A closed double-quoted word without expansion: POSIX shells still substitute $ and `
+      // inside double quotes, and cmd.exe substitutes %VAR%, so those are refused outright.
+      assert.match(raw, /^"(?:[^"\\$`%]|\\[^$`%])*"$/u, "quoted test patterns must be closed and contain no shell expansion");
       const tail = command.slice(match.index + match[0].length);
       assert.ok(tail === "" || /^[\s`]/u.test(tail), "quoted test patterns must group the whole shell argument");
       // Shell double quotes preserve a backslash that escapes neither a quote nor
@@ -302,6 +305,8 @@ test("all linked test-name patterns use portable grouping", async () => {
   const pm = new PmClient({ cwd: packageRoot, pmRoot: join(packageRoot, ".agents/pm"), noExtensions: true });
   for (const separator of ["=", " "]) {
     for (const value of ["'two words'", "'a|b'", "a|b", "a;b", "a&b", "a>b", "a<b", "a(b)", "$probe", "%probe%", '"a"|b', '"a"b', "a*b", "a?b", "a[b]"])
+      assert.throws(() => testNamePatterns(`node --test --test-name-pattern${separator}${value}`), value);
+    for (const value of ['"a|b', '"$probe"', '"${probe}"', '"`probe`"', '"%probe%"', '"a\\$b"'])
       assert.throws(() => testNamePatterns(`node --test --test-name-pattern${separator}${value}`), value);
     for (const value of ["round-8", "^round-9", '"two words"', '"a|b"', '"a\\d"'])
       assert.equal(testNamePatterns(`node --test --test-name-pattern${separator}${value}`).length, 1);

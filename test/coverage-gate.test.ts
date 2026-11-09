@@ -897,13 +897,14 @@ writeFileSync("child-pid.json", JSON.stringify(child.pid));
     else process.env["23-"] = savedPercentProbe;
   });
   // Exercise a real executable with spaces even on hosts whose Node path has none.
-  const bin = join(fixture.dir, "Program Files");
+  // The apostrophe proves POSIX single-quote escaping, not just spaces.
+  const bin = join(fixture.dir, "Program Files's");
   mkdirSync(bin);
   const node = join(bin, process.platform === "win32" ? "node.exe" : "node");
   // Windows file symlinks require privileges that the shell regression must not need.
   if (process.platform === "win32") copyFileSync(process.execPath, node);
   else symlinkSync(process.execPath, node);
-  const executable = process.platform === "win32" ? `"${node}"` : `'${node}'`;
+  const executable = process.platform === "win32" ? `"${node}"` : `'${node.replaceAll("'", "'\\''")}'`;
   const result = await captureOutput(() => Promise.resolve(runCoverageGate(fixture.dir, "ignore", {
     compiler: { executable: process.execPath, args: [join(NODE_MODULES_BIN, "../typescript/bin/tsc")] },
     statementRunner: { executable, args: [], shell: true },

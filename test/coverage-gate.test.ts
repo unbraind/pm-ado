@@ -14,7 +14,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import test from "node:test";
@@ -701,8 +701,6 @@ test("coverage gate normalises absolute SF: paths in the lcov report", async (t)
   // exits 0. The gate must normalise the absolute path to a repo-relative
   // one so the presence check matches the walked source set.
   const fakeNode = writeNodeCommand(fixture.dir, "fake-node", [
-    'import { spawnSync } from "node:child_process";',
-    'if (process.argv.includes("--import")) process.exit(spawnSync(process.execPath, process.argv.slice(2), { stdio: "ignore" }).status ?? 1);',
     'import { writeFileSync } from "node:fs";',
     'import { join } from "node:path";',
     'const prefix = "--test-reporter-destination=";',
@@ -712,6 +710,7 @@ test("coverage gate normalises absolute SF: paths in the lcov report", async (t)
   ].join("\n"));
   const { code, stdout, stderr } = await captureOutput(() => Promise.resolve(runCoverageGate(fixture.dir, "ignore", {
     runner: { executable: process.execPath, args: [fakeNode] },
+    statementRunner: { executable: process.execPath, args: [] },
   })));
   assert.strictEqual(code, 0, `gate should pass with absolute SF: paths; stderr: ${stderr}`);
   assert.match(stdout, /thresholds met/);
@@ -843,6 +842,18 @@ test("statement instrumentation preserves existing Node options", async (t) => {
   writeSource(fixture.dir, "src");
   writeTest(fixture.dir, "src", "src");
   writePackageJson(fixture.dir, { sources: ["src.ts"], tests: [testPath("src")], thresholds: FULL_COVERAGE_THRESHOLDS });
+  writeFileSync(join(fixture.dir, testPath("src")), `
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { value } from "../src.ts";
+assert.equal(value, 42);
+assert.ok(process.env.NODE_OPTIONS?.split(" ").includes("--no-warnings"));
+// The independent descendant must retain the option as well as instrumentation.
+const child = spawnSync(process.execPath, ["-e",
+  'if (!process.env.NODE_OPTIONS?.split(" ").includes("--no-warnings")) process.exit(1)'], { encoding: "utf8" });
+assert.ifError(child.error);
+assert.equal(child.status, 0, child.stderr);
+`);
   const previous = process.env.NODE_OPTIONS;
   process.env.NODE_OPTIONS = "--no-warnings";
   try {
@@ -852,4 +863,60 @@ test("statement instrumentation preserves existing Node options", async (t) => {
     if (previous === undefined) delete process.env.NODE_OPTIONS;
     else process.env.NODE_OPTIONS = previous;
   }
+});
+
+
+test("statement preloads encode reserved filesystem characters for both runner and descendants", async (t) => {
+  const fixture = createFixture("cg-esm-#-%-$PM_ADO_SHELL_PROBE-");
+  t.after(fixture.cleanup);
+  writeRunnableFixture(fixture.dir);
+  writeStandardGate(fixture.dir);
+  // This module is executed only by an independent child with no --import argv.
+  // The runner's explicit preload cannot satisfy its coverage obligation.
+  writeSource(fixture.dir, "descendant", "export const childOnly = 73;\n");
+  writeFileSync(join(fixture.dir, "test/src.test.ts"), `
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { value } from "../src.ts";
+assert.equal(value, 42);
+const child = spawnSync(process.execPath, ["--input-type=module", "-e",
+  'import { childOnly } from "./descendant.ts"; if (childOnly !== 73) process.exit(1);'], { encoding: "utf8" });
+assert.ifError(child.error);
+assert.equal(child.status, 0, child.stderr);
+writeFileSync("child-pid.json", JSON.stringify(child.pid));
+`);
+  const savedProbe = process.env.PM_ADO_SHELL_PROBE;
+  const savedPercentProbe = process.env["23-"];
+  process.env.PM_ADO_SHELL_PROBE = "expanded";
+  process.env["23-"] = "expanded"; // cmd.exe expands %23-% inside the encoded URL.
+  t.after(() => {
+    if (savedProbe === undefined) delete process.env.PM_ADO_SHELL_PROBE;
+    else process.env.PM_ADO_SHELL_PROBE = savedProbe;
+    if (savedPercentProbe === undefined) delete process.env["23-"];
+    else process.env["23-"] = savedPercentProbe;
+  });
+  // Exercise a real executable with spaces even on hosts whose Node path has none.
+  // The apostrophe proves POSIX single-quote escaping, not just spaces.
+  const bin = join(fixture.dir, "Program Files's");
+  mkdirSync(bin);
+  const node = join(bin, process.platform === "win32" ? "node.exe" : "node");
+  // Windows file symlinks require privileges that the shell regression must not need.
+  if (process.platform === "win32") copyFileSync(process.execPath, node);
+  else symlinkSync(process.execPath, node);
+  const executable = process.platform === "win32" ? `"${node}"` : `'${node.replaceAll("'", "'\\''")}'`;
+  const result = await captureOutput(() => Promise.resolve(runCoverageGate(fixture.dir, "ignore", {
+    compiler: { executable: process.execPath, args: [join(NODE_MODULES_BIN, "../typescript/bin/tsc")] },
+    statementRunner: { executable, args: [], shell: true },
+  })));
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /thresholds met/u);
+  const childPid = JSON.parse(readFileSync(join(fixture.dir, "child-pid.json"), "utf8")) as number;
+  const reportDir = join(fixture.dir, "coverage/statements");
+  assert.ok(readdirSync(reportDir).includes(`${childPid}.json`), "the independent child must write its own report");
+  const report = JSON.parse(readFileSync(join(reportDir, `${childPid}.json`), "utf8")) as Record<string, { s: Record<string, number> }>;
+  const childCoverage = report[join(fixture.dir, "descendant.ts")];
+  assert.ok(childCoverage, "descendant-only source must be instrumented through NODE_OPTIONS");
+  assert.ok(Object.values(childCoverage.s).length > 0);
+  assert.ok(Object.values(childCoverage.s).every((count) => count > 0));
 });

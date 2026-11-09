@@ -1,3 +1,4 @@
+import { fixtureTestTimeoutMs, relocateNodePreloads } from "./helpers/process-fixture.ts";
 /** Published consumer and built declarations protect additive public API changes. */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -25,7 +26,7 @@ test("built exported API matches the deliberately maintained declaration snapsho
   for (const file of actual) assert.equal(readFileSync(join(repo, "dist", file), "utf8"), readFileSync(join(fixtures, "current", `${file}.txt`), "utf8"), `${file}: exported declaration drift; review compatibility before updating the snapshot`);
 });
 
-test("unchanged published consumer compiles and runs against built code under Node and Bun", { timeout: 180000 }, async (t) => {
+test("unchanged published consumer compiles and runs against built code under Node and Bun", { timeout: fixtureTestTimeoutMs }, async (t) => {
   const root = mkdtempSync(join(tmpdir(), "ado-api-consumer-"));
   t.after(() => { rmSync(root, { recursive: true, force: true }); assert.equal(existsSync(root), false); });
   const provenance = JSON.parse(readFileSync(join(fixtures, "published-provenance.json"), "utf8")) as { version: string; consumer_sha256: string; declarations: Record<string, string> };
@@ -45,7 +46,7 @@ test("unchanged published consumer compiles and runs against built code under No
   symlinkSync(process.execPath, join(safeBin, "node"));
   symlinkSync(bun, join(safeBin, "bun"));
   const consumerHome = join(root, "home"); mkdirSync(consumerHome);
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: consumerHome, PATH: safeBin, XDG_CONFIG_HOME: join(consumerHome, ".config"), BUN_INSTALL: join(root, "bun-home"), BUN_INSTALL_CACHE_DIR: join(root, "bun-cache"), PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1", GIT_CEILING_DIRECTORIES: tmpdir() };
+  const env: NodeJS.ProcessEnv = { ...process.env, NODE_OPTIONS: relocateNodePreloads(process.env.NODE_OPTIONS ?? "", repo), HOME: consumerHome, PATH: safeBin, XDG_CONFIG_HOME: join(consumerHome, ".config"), BUN_INSTALL: join(root, "bun-home"), BUN_INSTALL_CACHE_DIR: join(root, "bun-cache"), PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1", GIT_CEILING_DIRECTORIES: tmpdir() };
   for (const key of ["PM_PATH", "PM_ROOT", "PM_GLOBAL_PATH", "ADO_ORG_URL", "ADO_PROJECT", "ADO_TOKEN"]) delete env[key];
   for (const mode of ["built", "published"] as const) {
     if (mode === "published") for (const [name, digest] of Object.entries(provenance.declarations)) {

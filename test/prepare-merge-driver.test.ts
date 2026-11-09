@@ -1,3 +1,4 @@
+import { relocateNodePreloads } from "./helpers/process-fixture.ts";
 /**
  * Tests for the npm `prepare` hook `scripts/prepare-merge-driver.ts`.
  *
@@ -69,7 +70,7 @@ function stubPm(name: string, status: number, body = ""): string {
 
 /** Run npm's prepare entry point from `cwd`, with `path` as PATH and an explicit lifecycle command. */
 function prepare(cwd: string, path: string, command = "ci"): SpawnSyncReturns<string> {
-  return spawnSync(process.execPath, [launcher], { cwd, encoding: "utf8", env: { ...process.env, PATH: path, npm_command: command } });
+  return spawnSync(process.execPath, [launcher], { cwd, encoding: "utf8", env: { ...process.env, NODE_OPTIONS: relocateNodePreloads(process.env.NODE_OPTIONS ?? "", root), PATH: path, npm_command: command } });
 }
 
 /** The merge drivers registered in a checkout's LOCAL Git config, by name. */
@@ -131,7 +132,7 @@ test("an invalid global lookup path preserves the installer failure", () => {
   const result = spawnSync(process.execPath, [launcher], {
     cwd: directory,
     encoding: "utf8",
-    env: { ...process.env, PATH: hostPath, NODE_PATH: lookupFile },
+    env: { ...process.env, NODE_OPTIONS: relocateNodePreloads(process.env.NODE_OPTIONS ?? "", root), PATH: hostPath, NODE_PATH: lookupFile },
   });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /MODULE_NOT_FOUND/);

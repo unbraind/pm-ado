@@ -1,3 +1,4 @@
+import { relocateNodePreloads } from "./helpers/process-fixture.ts";
 /** Strict refresh compiler contracts and SDK read-only acceptance. */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -381,7 +382,7 @@ test("round-6 SDK and copied CLI JSON TOON read-back share exact base presence",
   process.chdir(f.root); try { await f.pm.update(f.id, { field: [`ado_org_url=${org}`] }); } finally { process.chdir(cwd); }
   const before = (await f.pm.listAllComplete()).items;
   const bin = join(f.root, "no-git-bin"); mkdirSync(bin); symlinkSync(process.execPath, join(bin, "node"));
-  const env = { ...process.env, PATH: bin, ADO_ORG_URL: org, ADO_PROJECT: "Example", ADO_TOKEN: "synthetic-token", PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1", GIT_CEILING_DIRECTORIES: tmpdir() };
+  const env = { ...process.env, NODE_OPTIONS: relocateNodePreloads(process.env.NODE_OPTIONS ?? "", resolve(import.meta.dirname, "..")), PATH: bin, ADO_ORG_URL: org, ADO_PROJECT: "Example", ADO_TOKEN: "synthetic-token", PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1", GIT_CEILING_DIRECTORIES: tmpdir() };
   const cli = resolve(import.meta.dirname, "../node_modules/@unbrained/pm-cli/dist/cli.js");
   const args = [cli, "--pm-path", f.pmRoot, "ado", "refresh-plan", "--fields", "title,status,relations"];
   const json = JSON.parse((await run(process.execPath, [...args, "--json"], { cwd: f.root, env })).stdout) as RefreshPlan;

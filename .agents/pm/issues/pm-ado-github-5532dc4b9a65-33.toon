@@ -7,11 +7,11 @@ status: in_progress
 priority: 2
 tags[2]: "gh:unbraind/pm-ado#33","github_author:unbraind"
 created_at: "2026-10-17T08:42:43Z"
-updated_at: "2026-11-09T02:01:06.766Z"
+updated_at: "2026-11-09T05:42:32.945Z"
 assignee: pi-glm
 claim_principal: pi-glm
 author: pm-github
-comments[59]{created_at,author,text}:
+comments[60]{created_at,author,text}:
   "2026-10-23T08:25:45.901Z",codex-agent,"Ownership check: this repository only configures the reusable pm-github closeout workflow and package version. Delivery candidate selection and chronology are implemented in pm-github closeout.ts (runCloseout), not in pm-ado configuration. Issue #33 belongs to pm-github selection/provenance logic; no existing history rewritten and no item closed here."
   "2026-11-06T15:12:39.809Z",codex-sol,"Read issue 33 and its full discussion. Main 0b3d5a3 already contains the record correction from merged PR 44 (9f7158b): PR 19 is the delivery, completed_at is its merge time, and history appends the correction without rewriting earlier records. PR 32 is closed. Reproduce the original static comparison and verify PR 19 checks before preparing an evidence-only closeout; no production code change is warranted. The original matcher lives outside this repository and will not be modified."
   "2026-11-06T15:14:07.398Z",codex-sol,"Static reproduction verified through PmClient in two real non-git temp trackers, loading immutable item/history bytes without SDK mocks: reported PR 32 head 1b1ab501 selects PR 16 and completed_at 2026-10-04T12:58:08.000Z; origin/main selects PR 19 and completed_at 2026-10-08T01:19:51.000Z. Current actual_result and close_reason include PR 19, its merge SHA f297a71431debfe2e00adb8dd1b02874e6dadfe2 and merge time; resolution explicitly rejects PR 16 as delivery. The close event cites PR 19, the following correction records its completion date, all four implementation comments remain, and pre-PR-44 history is a byte-identical prefix. No changes to the already-correct closed item are needed. GitHub verifies PR 19 head 119b225ec6f84bf8c53ee6c953dba0980ddc6f1a: Node 22, Node 26, codeql and CodeQL SUCCESS; skipped/neutral reviewer checks are not review approval. PR 44 merged at 2026-10-24T23:23:14Z. This acceptance concerns static provenance and offline enforcement, not live Azure."
@@ -71,6 +71,7 @@ comments[59]{created_at,author,text}:
   "2026-11-08T21:57:54.399Z",codex-agent,"Packed acceptance first attempt stopped before its behavioral matrix: the npm global installation of the public pinned host exceeded the existing 180-second per-command deadline and was killed with no stdout/stderr (whole attempt 283 seconds, 0/1 parent test). No assertion, threshold, timeout or source was changed. Treat this as incomplete installation evidence and retry the unchanged command; a registry metadata lookup is only a reachability check. Prior independent 70-test focused suite, linked six/four tests, and 11 revert proofs are green. npm remaining release checks and native preconditions pass; Bun native preconditions are still running."
   "2026-11-08T22:10:24.731Z",codex-agent,"Round 6 final thread mapping: PRRT_kwDOUMUq1861ENkV -> package-wide current-link and public-doc grouping audit, safe unquoted controls, lost/partial grouping adversaries; PRRT_kwDOUMUq1861ENkY -> current source/built forward-only parent-failure and inverse selectors, independent stale-selection oracle, corrected current relation docs; PRRT_kwDOUMUq1861ENkc -> actual statement runner and descendant assert inherited --no-warnings; PRRT_kwDOUMUq1861ENkf -> LF rules for immutable history and every other raw-pinned public API/declaration baseline, real autocrlf checkout regression; PRRT_kwDOUMUq1861ENkm -> real shell-enabled executable under Program Files with platform quoting and no Windows file-symlink privilege requirement; PRRT_kwDOUMUq1861ENkr -> exact CommonJS dot/parent relocation for all supported flag spellings, native parser/idempotence oracle, independently wrong relocated dot and parent controls. All six findings are valid and addressed. All 11 behavioral mutations fail and their restored controls pass. Final local evidence: 70/70 focused tests; pinned linked runs 6/6 and 4/4; final coverage-fixture repeat 2/2; packed npm/Bun/npx/bunx/local/copied/global runtime acceptance retry passes 15/15 in 668 seconds after the first installation-only timeout. No skipped/cancelled tests in these completed runs. Both npm and Bun pass typecheck, build, build:test, docstring (128 declarations/19 files), audit:prod (zero vulnerabilities), pack:dry-run (52 files), release publish attestation, release changelog date, and native preconditions (19/19 each), with isolated home/Git settings and credential-free public npm configuration. Rebuilt dist is unchanged; no lint/self-host script exists. Strict health still fails only for the existing extension-host version skew tracked by pm-ado-extension-host-skew; item/history integrity and append-only prefixes are clean. The existing recovery-race follow-up remains open, and no new upstream PM defect was established. Native Windows execution is unavailable here. Full unchanged-threshold npm/Bun coverage remains pending fresh CI at https://github.com/unbraind/pm-ado/pull/91/checks under the verified over-one-hour exception. Preserve valid prior work rather than applying the review body scope-removal suggestion, as the owner explicitly requested these class fixes. Release only this owned claim, leave the item in progress, regenerate/check the changelog after the last tracker write, verify final bot identity/privacy and append-only history, commit explicit paths and push the existing PR. Review threads remain untouched for the orchestrator."
   "2026-11-09T02:01:06.760Z",pi-glm,"Round 7 (final automatic round) continuation by pi-glm: remote head 8a15d24 equals the local branch, origin/main is already an ancestor, and the worktree is clean. Scope is exactly the four remaining CodeRabbit findings: the blocking consumer-path alias lookup in the release-workflow fixture, the linked-test five-fix ordering on pm-ado-sdk-adoption, the typed-relations conflict/retry documentation, and quoted regex-escape audit coverage. No new helpers or fixture layers; a regression test only for the blocking finding. Threads remain untouched."
+  "2026-11-09T05:42:14.539Z",pi-glm,"Round 7 fixes pushed as 27795c9 on the existing PR branch; no new PR, no duplicate items, no thread writes. Blocking finding (consumer lookup across temporary-directory aliases): the fixture probe now records realpath-resolved cwd/argv values, so /var versus /private/var or a symlinked TMPDIR can never hide a consumer receipt, and the public-api consumer fixture now runs under a symlinked temporary-directory alias on every POSIX host. Revert proof (disposable in-place mutation, restored via exact backup before any commit): restoring only the raw unreasolved probe makes 'relative preloads survive every installed host fixture cwd change' fail 0/1 on 'built: the Node consumer entry point must load the probe'; the restored fix passes 1/1 (twice, before and after the mutation). Non-blocking findings: the sdk-adoption linked-test list keeps the five-fix regression command last (native remove-index/add-json with timeout and context modes preserved; --only-last run passes 21/21 with zero failures or skips), typed-relations.md now documents the native fence conflict error and the fresh expanded-snapshot retry requirement, and the grouping audit parses quoted patterns with shell double-quote semantics so quoted regex escapes such as \\d are accepted, with new positive and escape-preservation assertions. Focused gates at 27795c9: typecheck, build:test, docstring (128 declarations in 19 files) pass; test/process-fixture.test.ts 10/10; test/closeout-provenance.test.ts + test/release-workflow.test.ts 23/23. Full unchanged-threshold npm/Bun release gates remain with fresh pushed-head CI as established for this repository."
 files[18]{path,scope}:
   .agents/pm/chores/pm-ado-sdk-adoption.toon,project
   .agents/pm/features/pm-ado-1zuu.toon,project
@@ -90,7 +91,7 @@ files[18]{path,scope}:
   test/refresh.test.ts,project
   test/release-workflow.test.ts,project
   test/sync.test.ts,project
-tests[7]:
+tests[8]:
   - command: node --test --test-concurrency=2 test/closeout-provenance.test.ts test/release-workflow.test.ts
     scope: project
     timeout_seconds: 1800
@@ -147,6 +148,14 @@ tests[7]:
     provenance:
       author: codex-agent
       created_at: "2026-11-08T21:45:12.977Z"
+      source_kind: local_mutation
+      source_ref: closeout-records-statement-enforcement-delivery
+  - command: "node --test --test-concurrency=1 --test-name-pattern=\"relative preloads survive every installed host fixture cwd change\" test/release-workflow.test.ts"
+    scope: project
+    timeout_seconds: 300
+    provenance:
+      author: pi-glm
+      created_at: "2026-11-09T05:42:32.892Z"
       source_kind: local_mutation
       source_ref: closeout-records-statement-enforcement-delivery
 docs[3]:

@@ -163,16 +163,21 @@ export function azureFields(values, keys, states, normalization) {
 function assignmentFields(value) {
     return value === "" ? { unset: ["assignee"] } : { assignee: value };
 }
-/** Convert canonical fields and provenance to one SDK mutation with a history record. */
-export function pmFields(values, remote, config, normalization) {
+/** Convert canonical fields and provenance to create-compatible SDK options. */
+export function pmCreateFields(values, remote, config, normalization) {
     values = normalizeFieldValues(values, normalization);
     return { title: String(values.title), description: String(values.description), status: String(values.status),
         priority: Number(values.priority), tags: JSON.stringify(values.tags),
-        ...assignmentFields(String(values.assignee)),
+        ...(String(values.assignee) === "" ? {} : { assignee: String(values.assignee) }),
         field: [`ado_id=${remote.id}`, `ado_project=${config.project}`, `ado_org_url=${config.orgUrl}`,
             `ado_url=${config.orgUrl}/_apis/wit/workItems/${remote.id}`, `ado_type=${String(remote.fields["System.WorkItemType"] ?? "Task")}`,
             `ado_area_path=${values.ado_area_path}`, `ado_iteration_path=${values.ado_iteration_path}`],
         message: `Azure DevOps revision ${remote.rev}` };
+}
+/** Convert existing-item imports while retaining explicit empty-assignment clearing. */
+export function pmFields(values, remote, config, normalization) {
+    const fields = pmCreateFields(values, remote, config, normalization);
+    return { ...fields, ...assignmentFields(String(normalizeFieldValues(values, normalization).assignee)) };
 }
 /** Canonical recognized relations; opaque or out-of-scope links stay with the adapter. */
 export function relationValues(relations, config, identities) {
@@ -747,10 +752,9 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
                 }
                 // Persist the base only after relation import succeeds below.
                 if (local === undefined) {
-                    const initial = pmFields(values, remote, config, normalization);
+                    const initial = pmCreateFields(values, remote, config, normalization);
                     await observer?.({ boundary: "local", phase: "before", operation: "create" });
-                    const { item } = await pm.create({ ...initial, type: "Task", unset: undefined,
-                        field: initial.field });
+                    const { item } = await pm.create({ ...initial, type: "Task" });
                     await observer?.({ boundary: "local", phase: "after", operation: "create", item: item.id });
                     entry.local = item;
                     localRemote.set(item.id, { id: remote.id, revision: remote.rev });

@@ -12,3 +12,18 @@ const validSuccess: SyncCommandResult = { ...common, ok: true };
 const validFailure: SyncCommandResult = { ...common, ok: false, code: "ADO_USAGE", exit_code: 2, error: "refused" };
 const validRevision: RefreshSaved["revisions"] = { title: 1 };
 void [successWithCode, failureWithoutExit, unknownRevision, validSuccess, validFailure, validRevision];
+
+/** New-item fields compose directly with the public SDK; update clears stay update-only. */
+import type { PmClient } from "@unbrained/pm-cli/sdk";
+import type { pmCreateFields, pmFields } from "../sync.ts";
+declare const createFields: ReturnType<typeof pmCreateFields>;
+declare const updateFields: ReturnType<typeof pmFields>;
+const createOptions: Parameters<PmClient["create"]>[0] = { ...createFields, type: "Task" };
+const updateOptions: Parameters<PmClient["update"]>[1] = { ...updateFields, closeReason: null, unset: ["assignee"] };
+// @ts-expect-error Update options may contain closeReason:null, which create refuses.
+const updateAsCreate: Parameters<PmClient["create"]>[0] = { ...updateFields, type: "Task" };
+// @ts-expect-error A new-item import cannot clear an assignment with null.
+const nullCreate: ReturnType<typeof pmCreateFields> = { ...createFields, assignee: null };
+// @ts-expect-error The new-item mapper never emits unset operations.
+const unsetCreate: ReturnType<typeof pmCreateFields> = { ...createFields, unset: ["assignee"] };
+void [createOptions, updateOptions, updateAsCreate, nullCreate, unsetCreate];

@@ -6,14 +6,15 @@ status: in_progress
 priority: 2
 tags[2]: "gh:unbraind/pm-ado#97","gh:unbraind/pm-ado#98"
 created_at: "2026-11-10T12:41:13.918Z"
-updated_at: "2026-11-10T13:01:09.175Z"
+updated_at: "2026-11-10T13:55:37.621Z"
 assignee: codex-toolchain-1110
 claim_principal: codex-toolchain-1110
 author: codex-toolchain-1110
-comments[3]{created_at,author,text}:
+comments[4]{created_at,author,text}:
   "2026-11-10T12:41:17.100Z",codex-toolchain-1110,"Installed CHANGELOG 2026.11.5 identifies GH-1655 (pm-gh1655): explicit typed null-clear semantics distinguish create from update, including update-only closeReason:null. Issue 98 correctly diagnoses pmFields returning the full update shape and spreading it into create; unset:undefined did not narrow closeReason. Added a create mapper whose actual field subset excludes null clears and unset, plus an update mapper retaining assignment clearing and close finalization. Compiler fixtures accept new-item fields directly in public PmClient.create and reject update-only clears at that boundary."
   "2026-11-10T12:45:35.560Z",codex-toolchain-1110,"npm run typecheck, bun run typecheck and npm run build:test pass, including the @ts-expect-error regression. SDK owns all null-clear semantics; adapter types describe only fields actually emitted. Existing create/import and explicit-clear behavior tests remain unchanged. changelog:check passes; the requested incremental changelog command refuses an intentionally empty unreleased section, so full generation will preserve historical sections. Auto-merge disabled before any push."
   "2026-11-10T13:01:09.168Z",codex-toolchain-1110,"Reviewed and regenerated the current sync declaration snapshot and the tracked built sync outputs. Only the intended create/update option signatures changed; the published declaration baseline and unchanged consumer fixture remain untouched. Docstring gate passes: 19 files, 131 documented declarations. The queued full suite includes the exact declaration comparison and unchanged npm/Bun consumer contract tests."
+  "2026-11-10T13:55:37.621Z",codex-toolchain-1110,"Live-pin clarification: before this work began, Dependabot had already advanced PR97 head 11bd9a8 to @unbrained/pm-cli 2026.11.7 (pm-changelog/pm-ops remain 2026.11.6). Preserve that current dependency commit. Rechecked npm run typecheck, bun run typecheck and npm run build:test against the real released 2026.11.6 SDK: all exit 0, including negative null-clear fixtures. Restored the unchanged installed/locked 2026.11.7 SDK afterward. The same three checks also pass on 2026.11.7; full npm tests and the release gate target that current PR pin. GH-1655 remains the underlying create/update type change."
 files[7]{path,scope}:
   dist/sync.d.ts,project
   dist/sync.d.ts.map,project

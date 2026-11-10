@@ -6,7 +6,7 @@ import { loadResolutionSdk, resolutionDigest } from "./resolution.ts";
 import { SyncOutbox, isProtocolTag, type SyncObserver } from "./sync-outbox.ts";
 import { NativeWriteFence, NativeHistoryConflict } from "./history-fence.ts";
 import type { CommandHandlerContext, FlagDefinition } from "@unbrained/pm-cli/sdk/authoring";
-import type { ItemMetadata, PmUpdateActionOptions, PmClient } from "@unbrained/pm-cli/sdk";
+import type { ItemMetadata, PmCreateActionOptions, PmUpdateActionOptions, PmClient } from "@unbrained/pm-cli/sdk";
 import {
   AdoClient, CommandError, EXIT_CODE, RevisionConflict, RELATION_MAP, STATE_MAP,
   exportRelations, importRelations, planRelationImport, missingEnv, preflightMessage, readConfig, relationTargetId,
@@ -253,20 +253,33 @@ export function azureFields(values: Values, keys: readonly string[], states: Rec
 }
 
 /** Map an empty remote assignment to the SDK's explicit unset operation. */
-function assignmentFields(value: string): Pick<PmUpdateActionOptions, "assignee" | "unset"> {
+function assignmentFields(value: string): { assignee: string; unset?: never } | { assignee?: never; unset: string[] } {
   return value === "" ? { unset: ["assignee"] } : { assignee: value };
 }
 
-/** Convert canonical fields and provenance to one SDK mutation with a history record. */
-export function pmFields(values: Values, remote: AdoWorkItem, config: AdoConfig, normalization?: ValueNormalization): PmUpdateActionOptions & { field: string[] } {
+/** SDK field subset actually emitted when importing a new item; no update-only clears. */
+export type PmImportCreateOptions = {
+  [Key in "title" | "description" | "status" | "priority" | "tags" | "field" | "message"]-?: NonNullable<PmCreateActionOptions[Key]>;
+} & { assignee?: string; field: string[] };
+/** Existing-item imports additionally support assignment clears and close finalization. */
+export type PmImportUpdateOptions = Omit<PmImportCreateOptions, "status"> & Pick<PmUpdateActionOptions, "status" | "unset" | "closeReason">;
+
+/** Convert canonical fields and provenance to create-compatible SDK options. */
+export function pmCreateFields(values: Values, remote: AdoWorkItem, config: AdoConfig, normalization?: ValueNormalization): PmImportCreateOptions {
   values = normalizeFieldValues(values, normalization);
   return { title: String(values.title), description: String(values.description), status: String(values.status),
     priority: Number(values.priority), tags: JSON.stringify(values.tags),
-    ...assignmentFields(String(values.assignee)),
+    ...(String(values.assignee) === "" ? {} : { assignee: String(values.assignee) }),
     field: [`ado_id=${remote.id}`, `ado_project=${config.project}`, `ado_org_url=${config.orgUrl}`,
       `ado_url=${config.orgUrl}/_apis/wit/workItems/${remote.id}`, `ado_type=${String(remote.fields["System.WorkItemType"] ?? "Task")}`,
       `ado_area_path=${values.ado_area_path}`, `ado_iteration_path=${values.ado_iteration_path}`],
     message: `Azure DevOps revision ${remote.rev}` };
+}
+
+/** Convert existing-item imports while retaining explicit empty-assignment clearing. */
+export function pmFields(values: Values, remote: AdoWorkItem, config: AdoConfig, normalization?: ValueNormalization): PmImportUpdateOptions {
+  const fields = pmCreateFields(values, remote, config, normalization);
+  return { ...fields, ...assignmentFields(String(normalizeFieldValues(values, normalization).assignee)) };
 }
 
 /** Canonical recognized relations; opaque or out-of-scope links stay with the adapter. */
@@ -764,10 +777,9 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
         }
         // Persist the base only after relation import succeeds below.
         if (local === undefined) {
-          const initial = pmFields(values, remote, config, normalization);
+          const initial = pmCreateFields(values, remote, config, normalization);
           await observer?.({ boundary: "local", phase: "before", operation: "create" });
-          const { item } = await pm.create({ ...initial, type: "Task", unset: undefined,
-            field: initial.field });
+          const { item } = await pm.create({ ...initial, type: "Task" });
           await observer?.({ boundary: "local", phase: "after", operation: "create", item: item.id });
           entry.local = item;
           localRemote.set(item.id, { id: remote.id, revision: remote.rev });

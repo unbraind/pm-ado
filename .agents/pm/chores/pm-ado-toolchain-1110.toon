@@ -1,0 +1,21 @@
+id: pm-ado-toolchain-1110
+title: Separate create and update import contracts for SDK 2026.11.6
+description: "Adapt https://github.com/unbraind/pm-ado/pull/97 and issue 98 without weakening null-clear or import behavior."
+type: Chore
+status: in_progress
+priority: 2
+tags[2]: "gh:unbraind/pm-ado#97","gh:unbraind/pm-ado#98"
+created_at: "2026-11-10T12:41:13.918Z"
+updated_at: "2026-11-10T12:45:35.561Z"
+assignee: codex-toolchain-1110
+claim_principal: codex-toolchain-1110
+author: codex-toolchain-1110
+comments[2]{created_at,author,text}:
+  "2026-11-10T12:41:17.100Z",codex-toolchain-1110,"Installed CHANGELOG 2026.11.5 identifies GH-1655 (pm-gh1655): explicit typed null-clear semantics distinguish create from update, including update-only closeReason:null. Issue 98 correctly diagnoses pmFields returning the full update shape and spreading it into create; unset:undefined did not narrow closeReason. Added a create mapper whose actual field subset excludes null clears and unset, plus an update mapper retaining assignment clearing and close finalization. Compiler fixtures accept new-item fields directly in public PmClient.create and reject update-only clears at that boundary."
+  "2026-11-10T12:45:35.560Z",codex-toolchain-1110,"npm run typecheck, bun run typecheck and npm run build:test pass, including the @ts-expect-error regression. SDK owns all null-clear semantics; adapter types describe only fields actually emitted. Existing create/import and explicit-clear behavior tests remain unchanged. changelog:check passes; the requested incremental changelog command refuses an intentionally empty unreleased section, so full generation will preserve historical sections. Auto-merge disabled before any push."
+files[2]{path,scope}:
+  sync.ts,project
+  test/api-types.ts,project
+tests[1]{command,scope,provenance{author,created_at,source_kind}}:
+  "npm run build:test",project,codex-toolchain-1110,"2026-11-10T12:43:00.521Z",local_mutation
+body: ""

@@ -1,0 +1,46 @@
+id: pm-ado-toolchain-1110
+title: Separate create and update import contracts for SDK 2026.11.6
+description: "Adapt https://github.com/unbraind/pm-ado/pull/97 and issue 98 without weakening null-clear or import behavior."
+type: Chore
+status: in_progress
+priority: 2
+tags[2]: "gh:unbraind/pm-ado#97","gh:unbraind/pm-ado#98"
+created_at: "2026-11-10T12:41:13.918Z"
+updated_at: "2026-11-10T17:38:39.022Z"
+author: codex-toolchain-1110
+comments[5]{created_at,author,text}:
+  "2026-11-10T12:41:17.100Z",codex-toolchain-1110,"Installed CHANGELOG 2026.11.5 identifies GH-1655 (pm-gh1655): explicit typed null-clear semantics distinguish create from update, including update-only closeReason:null. Issue 98 correctly diagnoses pmFields returning the full update shape and spreading it into create; unset:undefined did not narrow closeReason. Added a create mapper whose actual field subset excludes null clears and unset, plus an update mapper retaining assignment clearing and close finalization. Compiler fixtures accept new-item fields directly in public PmClient.create and reject update-only clears at that boundary."
+  "2026-11-10T12:45:35.560Z",codex-toolchain-1110,"npm run typecheck, bun run typecheck and npm run build:test pass, including the @ts-expect-error regression. SDK owns all null-clear semantics; adapter types describe only fields actually emitted. Existing create/import and explicit-clear behavior tests remain unchanged. changelog:check passes; the requested incremental changelog command refuses an intentionally empty unreleased section, so full generation will preserve historical sections. Auto-merge disabled before any push."
+  "2026-11-10T13:01:09.168Z",codex-toolchain-1110,"Reviewed and regenerated the current sync declaration snapshot and the tracked built sync outputs. Only the intended create/update option signatures changed; the published declaration baseline and unchanged consumer fixture remain untouched. Docstring gate passes: 19 files, 131 documented declarations. The queued full suite includes the exact declaration comparison and unchanged npm/Bun consumer contract tests."
+  "2026-11-10T13:55:37.621Z",codex-toolchain-1110,"Live-pin clarification: before this work began, Dependabot had already advanced PR97 head 11bd9a8 to @unbrained/pm-cli 2026.11.7 (pm-changelog/pm-ops remain 2026.11.6). Preserve that current dependency commit. Rechecked npm run typecheck, bun run typecheck and npm run build:test against the real released 2026.11.6 SDK: all exit 0, including negative null-clear fixtures. Restored the unchanged installed/locked 2026.11.7 SDK afterward. The same three checks also pass on 2026.11.7; full npm tests and the release gate target that current PR pin. GH-1655 remains the underlying create/update type change."
+  "2026-11-10T17:38:37.630Z",codex-toolchain-1110,"Final bounded evidence on current PR SDK 2026.11.7: targeted first-import/idempotence, exact current declarations and unchanged published consumer checks pass 3/3 with zero failures/skips/cancellations. npm run typecheck, bun run typecheck, npm run build:test and changelog:check pass; the negative null-clear compile fixtures are checked by build:test. SDK 2026.11.6 npm/Bun typechecks and compile fixtures also passed earlier. All five direct sync-module consumer files plus public-API and root integration files were selected in a separate 900-second run: exit 124 with 510 passing and zero failing completed TAP records, not a complete suite. CI must finish that consumer run and the full gate. GH-1655 (CHANGELOG 2026.11.5) distinguishes create from update null clears; issue 98 is fixed by truthful create fields and separate update options, with no casts or assertion relaxation. Built sync outputs and the reviewed current declaration snapshot are committed; published declarations and consumer remain unchanged. Auto-merge disabled before push."
+files[7]{path,scope}:
+  dist/sync.d.ts,project
+  dist/sync.d.ts.map,project
+  dist/sync.js,project
+  dist/sync.js.map,project
+  sync.ts,project
+  test/api-types.ts,project
+  test/fixtures/public-api/current/sync.d.ts.txt,project
+tests[3]:
+  - command: "npm run build:test"
+    scope: project
+    provenance:
+      author: codex-toolchain-1110
+      created_at: "2026-11-10T12:43:00.521Z"
+      source_kind: local_mutation
+  - command: "timeout --kill-after=5s 600 node --test --test-concurrency=2 --test-reporter=tap '--test-name-pattern=first import, idempotent|built exported API|unchanged published consumer' test/sync.test.ts test/public-api.test.ts"
+    scope: project
+    timeout_seconds: 1200
+    provenance:
+      author: codex-toolchain-1110
+      created_at: "2026-11-10T17:31:37.183Z"
+      source_kind: local_mutation
+  - command: timeout --kill-after=5s 900 node --test --test-concurrency=2 --test-reporter=tap test/agreement.test.ts test/contracts.test.ts test/normalization.test.ts test/refresh.test.ts test/sync.test.ts test/public-api.test.ts test/ado.test.ts
+    scope: project
+    timeout_seconds: 1200
+    provenance:
+      author: codex-toolchain-1110
+      created_at: "2026-11-10T17:31:38.575Z"
+      source_kind: local_mutation
+body: ""

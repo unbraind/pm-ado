@@ -1,0 +1,13 @@
+id: pm-ado-backend-conformance
+title: Certify revision reconciliation on filesystem and native database backends
+description: "Reuse the resolution, relation and recovery corpus against filesystem and a native database without a local tracker. Synthetic REST only; independent backend authority and migration fidelity evidence."
+type: Feature
+status: open
+priority: 2
+tags[4]: backend,conformance,"upstream:pm-cli#1588","upstream:pm-cli#1589"
+created_at: "2026-11-06T17:35:46.664Z"
+updated_at: "2026-11-06T17:35:46.664Z"
+author: codex-astra
+acceptance_criteria: "Run two competing OS-process local writers, stale Azure revision, remote-success/local-failure replay, history-based settlement and unsupported capability refusal on both backends.; Verify authorization boundaries and lossless typed relation round trips, preserving provider-native reference names and explicit unknown capabilities.; Preserve existing fixture failure sensitivity with behavioral reverts and migration compatibility controls; certify no-git operation and do not infer native backend support from a CRUD projection."
+parent: pm-ado-github-5532dc4b9a65-47
+body: ""

@@ -1,7 +1,7 @@
 import { authoritativeDigest as snapshot, isRuntimeCacheEntry } from "./helpers/authoritative-digest.ts";
 import { listenOnLoopback } from "./helpers/http-fixture.ts";
 import { isolatedPackage, installFixtureExtension, fixtureItemPath, fixtureDirectory, packageRoot as repo } from "./helpers/package-runtime.ts";
-import { runCommand as run } from "./helpers/process-fixture.ts";
+import { relocateNodePreloads, runCommand as run } from "./helpers/process-fixture.ts";
 /** REST metadata contracts, real host rendering and non-git SDK tracker checks. */
 import assert from "node:assert/strict";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
@@ -173,7 +173,7 @@ async function hostFixture(t: test.TestContext) {
   const item = await pm.create({ title: "Synthetic task", type: "Task" });
   installFixtureExtension(pmRoot);
   const noGit = join(root, "bin"); mkdirSync(noGit); symlinkSync(process.execPath, join(noGit, "node"));
-  const env = { ...process.env, ADO_ORG_URL: `http://127.0.0.1:${address.port}/example`, ADO_TOKEN: config.token, ADO_PROJECT: "Ignored implicit project", ADO_EXPORT_STATE_MAP: "{}", ADO_STATUS_MAP: "{}", PM_NO_UPDATE_CHECK: "1", PM_AUTHOR: "fixture-agent", GIT_CEILING_DIRECTORIES: tmpdir(), PATH: noGit };
+  const env = { ...process.env, NODE_OPTIONS: relocateNodePreloads(process.env.NODE_OPTIONS ?? "", repo), ADO_ORG_URL: `http://127.0.0.1:${address.port}/example`, ADO_TOKEN: config.token, ADO_PROJECT: "Ignored implicit project", ADO_EXPORT_STATE_MAP: "{}", ADO_STATUS_MAP: "{}", PM_NO_UPDATE_CHECK: "1", PM_AUTHOR: "fixture-agent", GIT_CEILING_DIRECTORIES: tmpdir(), PATH: noGit };
   const harness = await createExtensionTestHarness(extension, { name: "pm-ado", capabilities: ["commands", "schema", "preflight"] });
   assert.deepEqual(harness.activation.failed, []);
   /** Run the registered handler with the real host SDK, preserving process globals. */
@@ -422,7 +422,7 @@ test("review-46 required titles share export normalization through an SDK-free d
 /** Legacy stored assignments must be evaluated as the real export value without an extension SDK link. */
 test("review-46 legacy assignees share export normalization through an SDK-free discovery context", async (t) => {
   const copied = isolatedPackage(t, join(repo, "dist"))("./index.js") as typeof built;
-  // Reads trim stored identities, so the reachable raw/writer divergence is the legacy clear token.
+  // Typed sentinel identities remain literal; discovery must diagnose disallowed identities.
   for (const assignee of ["Allowed assignee", "none", "null"]) await t.test(JSON.stringify(assignee), async (sub) => {
     const f = await hostFixture(sub);
     f.typeFields.find((field) => field.referenceName === "System.AssignedTo")!.allowedValues = ["Allowed assignee", ""];
@@ -433,7 +433,7 @@ test("review-46 legacy assignees share export normalization through an SDK-free 
     assert.equal(legacy.assignee, assignee, "the legacy read must retain the actual stored spelling");
     const context = { sdk: runtimeSdk, schema: settings.schema, idPrefix: settings.id_prefix };
     const sent = azureFields(localValues(legacy, context), ["assignee"], STATE_MAP, context)["System.AssignedTo"];
-    // The writer either clears the assignment explicitly or sends the allowed identity;
+    // The writer sends the literal identity after trimming;
     // discovery must agree instead of judging the unreadable raw spelling.
     const compatible = sent === "" || sent === "Allowed assignee";
     const before = snapshot(f.pmRoot);

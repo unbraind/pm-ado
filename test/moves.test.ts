@@ -1,6 +1,6 @@
 import { installFixtureExtension, fixtureItemPath, fixtureDirectory, packageRoot as repo } from "./helpers/package-runtime.ts";
 import { authoritativeDigest as snapshot } from "./helpers/authoritative-digest.ts";
-import { runCommand as run } from "./helpers/process-fixture.ts";
+import { relocateNodePreloads, runCommand as run } from "./helpers/process-fixture.ts";
 /** Real SDK trackers, deterministic Azure rule validation, bounded reads and installed no-git CLI. */
 import assert from "node:assert/strict";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
@@ -177,7 +177,7 @@ async function host(t: test.TestContext) {
   installFixtureExtension(f.pmRoot);
   await f.pm.update(f.options.ids[0]!, { field: ["ado_id=1", `ado_org_url=${f.config.orgUrl}`, "ado_project=Example"] });
   const bin = join(f.root, "bin"); mkdirSync(bin); symlinkSync(process.execPath, join(bin, "node"));
-  const env = { ...process.env, ADO_ORG_URL: f.config.orgUrl, ADO_TOKEN: f.config.token, PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1", GIT_CEILING_DIRECTORIES: tmpdir(), PATH: bin };
+  const env = { ...process.env, NODE_OPTIONS: relocateNodePreloads(process.env.NODE_OPTIONS ?? "", repo), ADO_ORG_URL: f.config.orgUrl, ADO_TOKEN: f.config.token, PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1", GIT_CEILING_DIRECTORIES: tmpdir(), PATH: bin };
   const harness = await createExtensionTestHarness(extension, { name: "pm-ado", capabilities: ["commands", "schema", "preflight"] });
   /** Invoke the actual registered handler with real SDK binding and restored process globals. */
   const command = async (options: Record<string, unknown>, sdk = true, changes: Record<string, string | undefined> = {}) => {

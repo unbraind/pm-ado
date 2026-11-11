@@ -50,11 +50,9 @@ export function normalizeTitleValue(value: string, context?: ValueNormalization 
   if (context !== undefined && "sdk" in context) return context.sdk.toNonEmptyImportString(value) ?? "";
   return context?.resolveTitle?.(value) ?? (typeof value === "string" ? value.trim() : "");
 }
-/** Legacy scalar clear tokens have the same meaning as the SDK's explicit unset path. */
-function clearToken(value: string): boolean { return ["none", "null"].includes(value.trim().toLowerCase()); }
-/** Assignment names preserve case while sharing SDK trimming and legacy scalar-clear semantics. */
+/** Assignment names preserve case and typed sentinel literals while sharing SDK trimming. */
 export function normalizeAssigneeValue(value: string, context?: ValueNormalization): string {
-  return clearToken(value) ? "" : native(context).toNonEmptyImportString(value) ?? "";
+  return native(context).toNonEmptyImportString(value) ?? "";
 }
 /** SDK tag normalization precedes the existing locale-independent set comparison order. */
 export function normalizeTagValues(value: readonly string[], context?: ValueNormalization): string[] { return native(context).toImportTags([...value]).sort(); }
@@ -105,9 +103,9 @@ export function normalizeDiscoveryFieldValues(values: Readonly<Values>, context?
   const result = { ...values };
   if (typeof result.status === "string") result.status = normalizeStatusValue(result.status, context);
   if (typeof result.title === "string") result.title = normalizeTitleValue(result.title, context);
-  // The SDK-free projections mirror the writer's trimming, clear tokens and sorted labels so
+  // The SDK-free projections mirror the writer's trimming, literal identities and sorted labels so
   // required/allowed discovery cannot diverge from the actual export write.
-  if (typeof result.assignee === "string") result.assignee = clearToken(result.assignee) ? "" : result.assignee.trim();
+  if (typeof result.assignee === "string") result.assignee = result.assignee.trim();
   if (Array.isArray(result.tags)) result.tags = [...new Set(result.tags.map((tag) => tag.trim().toLowerCase()).filter(Boolean))].sort();
   if (typeof result.priority === "string" || typeof result.priority === "number") {
     const number = Number(result.priority);

@@ -1,7 +1,7 @@
 import { type ValueNormalization, type StatusReferenceNormalization } from "./normalization.ts";
 import { type SyncObserver } from "./sync-outbox.ts";
 import type { CommandHandlerContext, FlagDefinition } from "@unbrained/pm-cli/sdk/authoring";
-import type { ItemMetadata, PmUpdateActionOptions, PmClient } from "@unbrained/pm-cli/sdk";
+import type { ItemMetadata, PmCreateActionOptions, PmUpdateActionOptions, PmClient } from "@unbrained/pm-cli/sdk";
 import { type AdoConfig, type AdoRelation, type AdoWorkItem } from "./index.ts";
 /** Default Azure state names mapped to local lifecycle states. */
 export declare const IMPORT_STATE_MAP: Readonly<Record<string, string>>;
@@ -111,10 +111,19 @@ export declare function readBase(item: ItemMetadata, sample: Values, normalizati
 export declare const ADO_FIELD_MAP: Readonly<Record<string, string>>;
 /** Convert agreed canonical values to Azure reference names for changed fields only. */
 export declare function azureFields(values: Values, keys: readonly string[], states: Record<string, string>, normalization?: ValueNormalization | false): Record<string, unknown>;
-/** Convert canonical fields and provenance to one SDK mutation with a history record. */
-export declare function pmFields(values: Values, remote: AdoWorkItem, config: AdoConfig, normalization?: ValueNormalization): PmUpdateActionOptions & {
+/** SDK field subset actually emitted when importing a new item; no update-only clears. */
+export type PmImportCreateOptions = {
+    [Key in "title" | "description" | "status" | "priority" | "tags" | "field" | "message"]-?: NonNullable<PmCreateActionOptions[Key]>;
+} & {
+    assignee?: string;
     field: string[];
 };
+/** Existing-item imports additionally support assignment clears and close finalization. */
+export type PmImportUpdateOptions = Omit<PmImportCreateOptions, "status"> & Pick<PmUpdateActionOptions, "status" | "unset" | "closeReason">;
+/** Convert canonical fields and provenance to create-compatible SDK options. */
+export declare function pmCreateFields(values: Values, remote: AdoWorkItem, config: AdoConfig, normalization?: ValueNormalization): PmImportCreateOptions;
+/** Convert existing-item imports while retaining explicit empty-assignment clearing. */
+export declare function pmFields(values: Values, remote: AdoWorkItem, config: AdoConfig, normalization?: ValueNormalization): PmImportUpdateOptions;
 /** Canonical recognized relations; opaque or out-of-scope links stay with the adapter. */
 export declare function relationValues(relations: readonly AdoRelation[], config: AdoConfig, identities: ReadonlyMap<number, string>): string[];
 /** Read actual local graph edges independently of a remote snapshot or proposed patch. */

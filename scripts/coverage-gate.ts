@@ -41,7 +41,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { stripTypeScriptTypes } from "node:module";
 import istanbulInstrument from "istanbul-lib-instrument";
 import istanbulCoverage, { type CoverageMapData } from "istanbul-lib-coverage";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 /** Minimum acceptable percentage for each independently measured dimension. */
 interface CoverageThresholds {
@@ -278,11 +278,14 @@ process.on("exit", () => {
   writeFileSync(join(reportDir, process.pid + ".json"), JSON.stringify(globalThis.__coverage__ ?? {}));
 });
 `);
-  const result = spawnSync(runner.executable, [...runner.args, "--import", preload, "--test", "--test-concurrency=2", ...tests], {
+  const preloadUrl = pathToFileURL(preload).href;
+  // Pass the URL only through NODE_OPTIONS: shells can expand percent escapes
+  // even inside double quotes, and descendants need this same preload anyway.
+  const result = spawnSync(runner.executable, [...runner.args, "--test", "--test-concurrency=2", ...tests], {
     cwd: rootDir,
     stdio,
     shell: runner.shell ?? false,
-    env: { ...env, NODE_OPTIONS: `${env.NODE_OPTIONS ?? ""} --import=${JSON.stringify(preload)}`, PM_ADO_STATEMENT_SOURCES: sourcesPath, PM_ADO_STATEMENT_REPORT_DIR: reportDir },
+    env: { ...env, NODE_OPTIONS: `${env.NODE_OPTIONS ?? ""} --import=${JSON.stringify(preloadUrl)}`, PM_ADO_STATEMENT_SOURCES: sourcesPath, PM_ADO_STATEMENT_REPORT_DIR: reportDir },
   });
   if (result.error) {
     console.error(`coverage-gate: failed to start the statement runner: ${result.error.message}`);

@@ -1,4 +1,4 @@
-/** Protect disposable differential inputs and keep the documented SDK pin accurate. */
+/** Protect disposable differential inputs and keep the documented minimum SDK accurate. */
 import assert from "node:assert/strict";
 import { readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -25,11 +25,13 @@ test("differential refuses outward history symlinks before writing source target
   } finally { assert.deepEqual(await readFile(target), bytes); }
 });
 
-test("SDK adoption docs identify the package's pinned SDK version", async () => {
-  const pkg = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8")) as { devDependencies: Record<string, string> };
-  const pinned = pkg.devDependencies["@unbrained/pm-cli"];
+test("SDK adoption docs identify the declared minimum SDK version", async () => {
+  const pkg = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8")) as { peerDependencies: Record<string, string> };
+  const minimum = pkg.peerDependencies["@unbrained/pm-cli"].replace(/^>=/u, "");
+  const manifest = JSON.parse(await readFile(join(packageRoot, "manifest.json"), "utf8"));
+  assert.equal(manifest.pm_min_version, minimum, "peer and manifest minimums must agree");
   for (const name of ["conflict-resolution", "sdk-adoption"]) {
     const doc = await readFile(join(packageRoot, `docs/${name}.md`), "utf8");
-    assert.ok(doc.includes(`pinned SDK (${pinned})`), `${name} must identify the current SDK pin`);
+    assert.ok(doc.includes(`minimum SDK (${minimum})`), `${name} must identify the declared minimum SDK`);
   }
 });

@@ -33,7 +33,7 @@ export interface TitleReferenceNormalization {
 export type DiscoveryNormalization = StatusReferenceNormalization & Partial<TitleReferenceNormalization>;
 /** Required text shares SDK trimming; the fallback stays SDK-free for metadata-only discovery. */
 export declare function normalizeTitleValue(value: string, context?: ValueNormalization | Partial<TitleReferenceNormalization>): string;
-/** Assignment names preserve case while sharing SDK trimming and legacy scalar-clear semantics. */
+/** Assignment names preserve case and typed sentinel literals while sharing SDK trimming. */
 export declare function normalizeAssigneeValue(value: string, context?: ValueNormalization): string;
 /** SDK tag normalization precedes the existing locale-independent set comparison order. */
 export declare function normalizeTagValues(value: readonly string[], context?: ValueNormalization): string[];

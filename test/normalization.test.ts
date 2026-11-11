@@ -63,7 +63,7 @@ test("round-5 field normalizers match native writes without erasing literal Unic
   assert.equal(normalizeScopeValue(" P "), "P"); assert.equal(normalizeScopeValue(" https://fixture.invalid/org/// ", true), "https://fixture.invalid/org");
   const original = { status: " CLOSED ", title: " Title ", description: "none", assignee: " null ", tags: ["X", "x"], priority: "2", ado_area_path: " P\\A ", ado_iteration_path: " P\\I ", ado_base_partial: 1, ado_agreed_revisions: "{}", unknown: 7 };
   const normalized = normalizeFieldValues(original, f.context);
-  assert.deepEqual(normalized, { ...original, status: "closed", title: "Title", description: "none", assignee: "", tags: ["x"], priority: 2 });
+  assert.deepEqual(normalized, { ...original, status: "closed", title: "Title", description: "none", assignee: "null", tags: ["x"], priority: 2 });
   assert.deepEqual(normalizeFieldValues({ status: 7, title: 7, description: 7, assignee: 7, tags: "old", priority: ["old"], ado_area_path: 7 }), { status: 7, title: 7, description: 7, assignee: 7, tags: "old", priority: ["old"], ado_area_path: 7 });
   const maps = normalizeStateMaps({ imports: JSON.parse('{"constructor":"CLOSED","__proto__":"OPEN"}'), exports: JSON.parse('{"CLOSED":"Done","constructor":"Constructor"}') }, f.context);
   assert.equal(maps.imports.constructor, "closed"); assert.equal(maps.imports.__proto__, "open"); assert.equal(maps.exports.closed, "Done");
@@ -128,4 +128,19 @@ test("explicit canonical status overrides replace defaults while collisions with
   assert.deepEqual(stateMap(undefined, { " CLOSED ": "Closed" }, normalization), { closed: "Closed" });
   assert.throws(() => stateMap('{"closed":"Done"," CLOSED ":"Closed"}', { open: "New" }, normalization), /Ambiguous status export mapping/u);
   assert.throws(() => stateMap(undefined, { closed: "Done", " CLOSED ": "Closed" }, normalization), /Ambiguous status export mapping/u);
+});
+
+/** GH-1614: typed assignments are identities; only an explicit unset clears them. */
+test("typed sentinel assignees remain literal across SDK writes and discovery", async (t) => {
+  const f = await fixture(t);
+  for (const value of ["none", "null", " NULL "]) {
+    await f.pm.update(f.item.id, { assignee: value });
+    const item = (await f.pm.get(f.item.id)).item;
+    assert.equal(item.assignee, value.trim());
+    assert.equal(normalizeAssigneeValue(value, f.context), item.assignee);
+    assert.deepEqual(normalizeDiscoveryFieldValues({ assignee: value }), { assignee: item.assignee });
+    assert.equal(azureFields({ assignee: value }, ["assignee"], {}, f.context)["System.AssignedTo"], item.assignee);
+  }
+  await f.pm.update(f.item.id, { unset: ["assignee"] });
+  assert.equal((await f.pm.get(f.item.id)).item.assignee, undefined);
 });

@@ -253,6 +253,28 @@ test("handler validates configuration, maps and schema pins with typed shell exi
   assert.ok(invalidStatus.issues.some((issue) => issue.code === "import_state"));
 });
 
+/** Bypass host coercion to certify the exported handler's raw-value boundary. */
+test("direct contract handler refuses non-string project, type and fingerprint with typed shell exits", async (t) => {
+  const f = await hostFixture(t), before = snapshot(f.pmRoot);
+  const previous = process.env, exit = process.exitCode;
+  process.env = f.env;
+  try {
+    for (const name of ["project", "type", "expectFingerprint", "expect-fingerprint"]) {
+      for (const value of [1, true]) {
+        const result = await runContractCommand({ command: "ado contract", args: [],
+          options: { project: config.project, [name]: value }, global: {}, pm_root: f.pmRoot,
+          sdk: createExtensionCommandSdk(f.pmRoot, f.pm) });
+        assert.equal("code" in result && result.code, "configuration", `${name}: ${value}`);
+        assert.equal("exit_code" in result && result.exit_code, 2);
+        assert.equal(process.exitCode, 2);
+        assert.ok("remedy" in result && result.remedy.length > 10);
+      }
+    }
+  } finally { process.env = previous; process.exitCode = exit; }
+  assert.equal(f.calls.length, 0);
+  assert.deepEqual(snapshot(f.pmRoot), before);
+});
+
 test("discovery refuses redirects while shared sync client transport preserves redirect following", async (t) => {
   const f = await hostFixture(t);
   let followed = 0;

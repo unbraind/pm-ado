@@ -8,10 +8,11 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { PmClient, type ItemMetadata } from "@unbrained/pm-cli/sdk";
+import { PmClient, createExtensionCommandSdk, type ItemMetadata } from "@unbrained/pm-cli/sdk";
 import { createExtensionTestHarness } from "@unbrained/pm-cli/sdk/testing";
 import extension, { ContractRefusal, MOVE_LIMITS, MoveRefusal, simulateMove, type AdoWorkItem, type MoveOptions, type MovePreview } from "../index.ts";
 import * as built from "../dist/index.js";
+import { runMoveCommand } from "../moves.ts";
 import { moveItem, moveService } from "./fixtures/move-service.ts";
 
 /** Build a real disposable non-git tracker and link its genuine SDK-created items in memory. */
@@ -200,6 +201,28 @@ test("installed no-git CLI and SDK command render compact JSON/TOON and preserve
   assert.deepEqual(snapshot(f.pmRoot), before);
   assert.ok(f.calls.every((call) => call.method !== "PATCH" || call.url.includes("validateOnly=true")));
   await assert.rejects(f.cli([...args, "--apply"]), /Unknown option/u);
+});
+
+/** Bypass host coercion to certify every raw string option at the exported boundary. */
+test("direct move handler refuses non-string selections and guards with typed shell exits", async (t) => {
+  const f = await host(t), before = snapshot(f.pmRoot);
+  const previous = process.env, exit = process.exitCode;
+  process.env = f.env;
+  try {
+    for (const name of ["project", "items", "areaPath", "iterationPath", "type", "expectFingerprint", "expect-fingerprint"]) {
+      for (const value of [1, true]) {
+        const result = await runMoveCommand({ command: "ado move-preview", args: [],
+          options: { project: "Example", items: f.options.ids.join(","), areaPath: "Example\\New", [name]: value },
+          global: {}, pm_root: f.pmRoot, sdk: createExtensionCommandSdk(f.pmRoot, f.pm) });
+        assert.equal("code" in result && result.code, "configuration", `${name}: ${value}`);
+        assert.equal("exit_code" in result && result.exit_code, 2);
+        assert.equal(process.exitCode, 2);
+        assert.ok("remedy" in result && result.remedy.length > 10);
+      }
+    }
+  } finally { process.env = previous; process.exitCode = exit; }
+  assert.equal(f.calls.length, 0);
+  assert.deepEqual(snapshot(f.pmRoot), before);
 });
 
 test("host refuses malformed options, missing binding/credentials, schema drift and failed SDK reads", async (t) => {

@@ -1,8 +1,10 @@
 # Changelog
 
-## 2026.11.8 - 2026-11-08
+## Unreleased
 
-No changes.
+### Fixed
+
+- Closeout records gap-reporting PR \#16 as statement-enforcement delivery instead of \#19 ([pm-ado-github-5532dc4b9a65-33](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-github-5532dc4b9a65-33.toon))
 
 ## 2026.11.5 - 2026-11-05
 
@@ -20,6 +22,12 @@ No changes.
 
 - The daily release generated its changelog with a drifted copy of the generator flags and its own check refused it ([pm-ado-r5ps](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-r5ps.toon))
 - Restore the prepared 2026.10.29 release notes ([pm-ado-release-notes-1029](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-release-notes-1029.toon))
+
+### Closed
+
+- Closed: PR46 history-fence revision fails terminal reconciliation and seeded assignee-preservation gates ([pm-ado-github-5532dc4b9a65-60](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-github-5532dc4b9a65-60.toon))
+- Closed: PR46 passes712 tests but fails unchanged branch-coverage gate at99.36% ([pm-ado-github-5532dc4b9a65-59](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-github-5532dc4b9a65-59.toon))
+- Closed: PR46 native-claim fixture fails build:test: GetItemProjection passed to ItemMetadata helper ([pm-ado-github-5532dc4b9a65-67](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-github-5532dc4b9a65-67.toon))
 
 ## 2026.10.29 - 2026-10-29
 

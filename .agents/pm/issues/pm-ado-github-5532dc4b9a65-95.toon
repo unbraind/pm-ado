@@ -1,0 +1,21 @@
+id: pm-ado-github-5532dc4b9a65-95
+title: "Replace the piecemeal linked-test pattern audit with a strict shell-word tokenizer, and close the remaining recovery-doc and CRLF findings"
+description: "GH issue #95: https://github.com/unbraind/pm-ado/issues/95 · author @unbraind · created 2026-11-09T07:42:50Z · updated 2026-11-09T07:42:50Z"
+type: Issue
+status: open
+priority: 2
+tags[2]: "gh:unbraind/pm-ado#95","github_author:unbraind"
+created_at: "2026-11-09T07:42:50Z"
+updated_at: "2026-11-14T07:37:51.001Z"
+author: pm-github
+github_close_reason: ""
+github_closed_at: ""
+github_created_at: "2026-11-09T07:42:50Z"
+github_link_only: false
+github_number: 95
+github_release: ""
+github_state: open
+github_state_reason: unspecified
+github_updated_at: "2026-11-09T07:42:50Z"
+github_url: "https://github.com/unbraind/pm-ado/issues/95"
+body: "## Why\n\nThe statement-enforcement verification pull request (pull request 91, for issue 33) went through eight review rounds. In each one, CodeRabbit found another shell construct that the `testNamePatterns` audit in `test/process-fixture.test.ts` reads differently from a real shell. Patching one construct per round does not converge. The audit needs one strict grammar.\n\n## Class\n\n`testNamePatterns` extracts `--test-name-pattern` values from linked test commands with regular expressions. A shell splits words, expands, substitutes and quotes the command in ways those regular expressions do not model. So the audit can certify a command that selects other tests or no tests.\n\n## Open findings to close as one change\n\n1. An unquoted spaced alternation (`--test-name-pattern=release gate import allows|…`) is read as `release`; the rest of the phrase and the pipe are missed.\n2. A substitution directly after a closed quoted pattern (`\"a\"$(…)` or `\"a\"` followed by a backtick) is not rejected.\n3. Unquoted escaped whitespace (`a\\ b`) in a selector is not rejected.\n4. The regression command linked in `.agents/pm/history/pm-ado-sdk-adoption.jsonl` is not portable between POSIX shells and cmd.exe.\n5. `test/closeout-provenance.test.ts`: the provenance test does not handle a checkout that already has CRLF line endings.\n6. `docs/typed-relations.md`: after a failed import, require reconciliation before exporting, and test recovery when the remote parent changed.\n\n## Proposed fix\n\n- Tokenize each linked command with one strict shell-word grammar. A word is either a safe unquoted word or a closed double-quoted word without expansion. Every other construct (single quotes, `$`, backticks, `%VAR%`, escaped whitespace, redirection, pipes or separators adjacent to a pattern) is refused.\n- Take the pattern from the token that follows `--test-name-pattern`.\n- Back the grammar with must-refuse and must-allow corpora, and give it a revert proof.\n- Fix items 5 and 6 separately; each needs its own regression test.\n\n## Acceptance\n\n- All six findings above are covered by the corpora or by their own tests.\n- Every current linked test command in `.agents/pm` still passes the audit.\n- Reverting the tokenizer fails the corpus test."

@@ -1,12 +1,12 @@
 id: pm-ado-toolchain-1110
-title: Separate create and update import contracts for SDK 2026.11.6
-description: "Adapt https://github.com/unbraind/pm-ado/pull/97 and issue 98 without weakening null-clear or import behavior."
-type: Chore
-status: in_progress
+title: "PR97 SDK update fails typecheck: update-shaped pmFields result passed to create"
+description: "GH issue #98: https://github.com/unbraind/pm-ado/issues/98 · author @unbraind · created 2026-11-09T11:55:33Z · updated 2026-11-09T11:55:33Z"
+type: Issue
+status: open
 priority: 2
-tags[2]: "gh:unbraind/pm-ado#97","gh:unbraind/pm-ado#98"
-created_at: "2026-11-10T12:41:13.918Z"
-updated_at: "2026-11-10T17:38:39.022Z"
+tags[2]: "gh:unbraind/pm-ado#98","github_author:unbraind"
+created_at: "2026-11-09T11:55:33Z"
+updated_at: "2026-11-14T07:37:50.985Z"
 author: codex-toolchain-1110
 comments[5]{created_at,author,text}:
   "2026-11-10T12:41:17.100Z",codex-toolchain-1110,"Installed CHANGELOG 2026.11.5 identifies GH-1655 (pm-gh1655): explicit typed null-clear semantics distinguish create from update, including update-only closeReason:null. Issue 98 correctly diagnoses pmFields returning the full update shape and spreading it into create; unset:undefined did not narrow closeReason. Added a create mapper whose actual field subset excludes null clears and unset, plus an update mapper retaining assignment clearing and close finalization. Compiler fixtures accept new-item fields directly in public PmClient.create and reject update-only clears at that boundary."
@@ -43,4 +43,14 @@ tests[3]:
       author: codex-toolchain-1110
       created_at: "2026-11-10T17:31:38.575Z"
       source_kind: local_mutation
-body: ""
+github_close_reason: ""
+github_closed_at: ""
+github_created_at: "2026-11-09T11:55:33Z"
+github_link_only: false
+github_number: 98
+github_release: ""
+github_state: open
+github_state_reason: unspecified
+github_updated_at: "2026-11-09T11:55:33Z"
+github_url: "https://github.com/unbraind/pm-ado/issues/98"
+body: "## Hosted compile failure on the toolchain update\n\n[PR #97](https://github.com/unbraind/pm-ado/pull/97) updates the development SDK from 2026.11.4 to 2026.11.6. At head `bd0bb15f3eccd554b92f2c241de27eab5e080cc6`, both the [Node 22 job](https://github.com/unbraind/pm-ado/actions/runs/42601265379/job/129106055783) and [Bun release gate](https://github.com/unbraind/pm-ado/actions/runs/42601265379/job/129106055387) stop at TypeScript compilation:\n\n```text\nsync.ts(769,44): error TS2345:\n... is not assignable to\nWithNullClears<DeclaredProperties<CreateCommandOptions>, CreateNullClearableOptionKey>\nTypes of property 'closeReason' are incompatible.\nType 'string | null | undefined' is not assignable to type 'string | undefined'.\n```\n\nThe hosted jobs tested synthetic merge `d8a066245784123c806c758d4460a33ce37553b8`, combining that candidate with base `983f6ae1622a1babed91a9280cd32f6456fc4acd`. This is hosted test evidence, not an independent local reproduction.\n\n## Static explanation\n\n[pmFields](https://github.com/unbraind/pm-ado/blob/bd0bb15f3eccd554b92f2c241de27eab5e080cc6/sync.ts) advertises `PmUpdateActionOptions & { field: string[] }`. The [new-item import path](https://github.com/unbraind/pm-ado/blob/bd0bb15f3eccd554b92f2c241de27eab5e080cc6/sync.ts#L766-L770) spreads that update-shaped result into `pm.create`. Setting `unset: undefined` does not narrow every update-only or nullable property admitted by the return type.\n\nThe actual mapper does not emit closeReason in the inspected implementation. This report therefore does not claim a runtime null is sent, or that the newer SDK's create/update distinction is itself a defect. The adapter needs a truthful create-compatible type/conversion without losing the update path's semantics.\n\n## Expected behavior and impact\n\nThe typed Azure import adapter should compile against its selected development SDK and preserve correct new-item creation and existing-item updates. Actual: `npm run typecheck` / `bun run typecheck` exits 1, preventing this dependency update from reaching the behavioral and release gates.\n\nRelevant accepted validation is recorded in [pm-ado-toolchain-1104](https://github.com/unbraind/pm-ado/blob/bd0bb15f3eccd554b92f2c241de27eab5e080cc6/.agents/pm/chores/pm-ado-toolchain-1104.toon): meaningful contract assertions, current generated output, typecheck, package tests and unchanged coverage/rollback checks. The shared SDK remains the semantic owner; do not recreate SDK null-clear rules in the adapter.\n\nScope is the unmerged #97 build. No released-package regression, live Azure failure or data loss is established.\n\n## Acceptance / regression criteria\n\n- Express the mapper's actual emitted field subset or separate supported create/update input construction; avoid `any`, blanket casts or weakening compiler checks.\n- Preserve existing-item explicit-clear behavior, new-item creation, provenance fields and native revision/history guards.\n- Run `npm ci` with the committed lock, `npm run typecheck`, build/source-and-built sync tests, and the unchanged Node 22/26 plus npm/Bun release gates on the corrected immutable head.\n- Add a compile-time regression for passing mapped new-item fields to the public SDK create method, and a behavioral new-Azure-item import check with no live provider.\n- Record candidate/merge/runtime revisions and distinguish passing compilation from full gate success.\n\nDeduplication checked all-status repository issues and PRs, #97 conversation, and all 54 canonical tracker item documents at this head. Closed #67 concerns a different GetItemProjection fixture mismatch and is not this failure. No matching current owner for this create/update input mismatch was found."

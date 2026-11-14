@@ -233,9 +233,15 @@ test("complete real SDK items report unknown types, status mappings and required
 
 test("handler validates configuration, maps and schema pins with typed shell exits", async (t) => {
   const f = await hostFixture(t);
-  for (const options of [{}, { project: 1 }, { project: " " }, { project: "Example", type: 1 }, { project: "Example", expectFingerprint: 7 }, { project: "Example", "expect-fingerprint": "bad" }]) {
+  const before = snapshot(f.pmRoot);
+  // GH-1665 applies CLI coercion to direct calls; invalid string selections still reach the handler.
+  for (const options of [{}, { project: "" }, { project: " " }, { project: "Example", type: "." }, { project: "Example", expectFingerprint: "7" }, { project: "Example", "expect-fingerprint": "bad" }]) {
     const result = await f.command(options) as { code: string; exit_code: number }; assert.equal(result.code, "configuration"); assert.equal(result.exit_code, 2);
   }
+  const invalid = await f.cli(["--project", "Example", "--type", ".", "--json"]);
+  assert.equal(invalid.code, 2, invalid.stderr);
+  assert.equal(JSON.parse(invalid.stdout).code, "configuration");
+  assert.deepEqual(snapshot(f.pmRoot), before);
   for (const changes of [{ ADO_ORG_URL: undefined }, { ADO_TOKEN: " " }, { ADO_STATUS_MAP: "invalid" }]) assert.equal((await f.command({ project: "Example" }, true, changes) as { code: string }).code, "configuration");
   assert.equal((await f.command({ project: "Example", checkTracker: true }, false) as { code: string }).code, "configuration");
   const good = await f.command({ project: "Example" }, false) as ProjectContract;

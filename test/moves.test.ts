@@ -204,7 +204,16 @@ test("installed no-git CLI and SDK command render compact JSON/TOON and preserve
 
 test("host refuses malformed options, missing binding/credentials, schema drift and failed SDK reads", async (t) => {
   const f = await host(t), options = { project: "Example", items: f.options.ids.join(","), "iteration-path": "Example\\Release" };
-  for (const changes of [{ project: undefined }, { items: undefined }, { items: 1 }, { type: " " }, { "expect-fingerprint": true }]) assert.equal((await f.command({ ...options, ...changes })).code, "configuration");
+  const before = snapshot(f.pmRoot);
+  for (const changes of [{ project: undefined }, { items: undefined }, { project: " " }, { type: " " }]) {
+    const refusal = await f.command({ ...options, ...changes });
+    assert.equal(refusal.code, "configuration"); assert.equal(refusal.exit_code, 2);
+  }
+  const selection = await f.command({ ...options, items: "" });
+  assert.equal(selection.code, "selection"); assert.equal(selection.exit_code, 2);
+  const fingerprint = await f.command({ ...options, "expect-fingerprint": "bad" });
+  assert.equal(fingerprint.code, "schema_changed"); assert.equal(fingerprint.exit_code, 4);
+  assert.deepEqual(snapshot(f.pmRoot), before);
   assert.equal((await f.command(options, false)).code, "configuration");
   for (const changes of [{ ADO_ORG_URL: undefined }, { ADO_TOKEN: " " }]) assert.equal((await f.command(options, true, changes)).code, "configuration");
   assert.equal((await f.command({ ...options, "expect-fingerprint": "0".repeat(64) })).exit_code, 4);

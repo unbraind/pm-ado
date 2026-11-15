@@ -325,7 +325,7 @@ test("round-6 random persisted field sets and revisions hydrate exactly the miss
     assert.deepEqual(refreshSaved([{ ...item, ado_rev: revision, ado_sync_base: JSON.stringify(reversed) }], config), saved);
     cases++;
   }
-  assert.equal(cases, testDepth(2048)); t.diagnostic("seed 0x6a27cafe: 2048 presence/request/revision cases, including legacy unknown sets and stale per-key witnesses");
+  assert.equal(cases, testDepth(2048)); t.diagnostic(`seed 0x6a27cafe: ${cases} presence/request/revision cases, including legacy unknown sets and stale per-key witnesses`);
   for (const raw of ["{", "null", "[]", '{"title":0}']) {
     const saved = refreshSaved([{ ...item, ado_sync_base: JSON.stringify({ ...values, ado_base_fields: ["title"], ado_agreed_revisions: raw }) }], config);
     assert.equal(compileRefreshPlan({ saved, needs: ["title"], observed: [{ id: 1, revision: 3 }] }).accounting[0]!.read, 1);

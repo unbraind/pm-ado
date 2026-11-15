@@ -54,6 +54,10 @@ jobs:
             exit 1
           fi
           echo "Committed dist/ matches a fresh build."
-      - name: Full release gate
-        run: env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 ${{ matrix.package-manager }} run release:check
+      - name: Full npm release gate
+        if: matrix.package-manager == 'npm'
+        run: env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 npm run release:check
+      - name: Full Bun release gate
+        if: matrix.package-manager == 'bun'
+        run: env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 bun run release:check
       - run: bun install --no-save

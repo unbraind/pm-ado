@@ -2,25 +2,29 @@ id: pm-ado-packed-timeout
 title: Packed install matrix exceeds its parent timeout under shared-host load
 description: "The unchanged packed-install integration test exceeds its existing 900000 ms parent deadline during full release checks under shared-host load. Node 24 disk-backed attempt reached 903139 ms; Node 26 memory-backed attempt reached 901979 ms. All six project launcher cases and the first global-runtime cases passed before later cases were canceled. Investigate setup cost and bounded test structure without reducing launcher coverage, lowering coverage thresholds, or increasing worker count. This is separate from the revisionConflict normalization fix."
 type: Issue
+pm_format_version: 2
 status: in_progress
 priority: 2
-tags[4]: ci,performance,release-gate,testing
+tags[5]: ci,"gh:unbraind/pm-ado#113",performance,release-gate,testing
 created_at: "2026-11-02T05:52:15.908Z"
-updated_at: "2026-11-15T20:21:37.393Z"
-assignee: codex-sol
-claim_principal: codex-sol
+updated_at: "2026-11-15T20:42:55.529Z"
 author: codex-sol
 parent: pm-ado-sdk-adoption
 repro_steps: "Run NPM_CONFIG_USERCONFIG=/dev/null npm run release:check with at most two workers on a busy host."
 expected_result: All packed launcher and global-runtime scenarios complete within the existing bounded test policy.
 actual_result: The parent times out and cancels remaining global-runtime cases despite prior assertions passing.
-comments[6]{created_at,author,text}:
+comments[11]{created_at,author,text}:
   "2026-11-02T06:45:06.674Z",codex-sol,"Completed Node 26 npm release attempt: 1079 total, 1075 pass, 2 fail, 2 canceled, no skips. Parent timed out at 901979 ms against its existing 900000 ms limit; global-runtime npx was canceled, and bunx/local-bin did not start. All six project launchers and global npm/Bun cases passed. V8 coverage reports 100 percent lines/branches/functions across all 13 sources. No code, timeout or threshold change made for this follow-up."
   "2026-11-02T06:57:35.808Z",codex-sol,"Later Bun V8 control passes all eleven packed launcher/global-runtime cases at 579923 ms with the same Node 26 runtime, TMPDIR class, source, 900000 ms parent limit and two-worker policy. The earlier timeout remains reproducible evidence of load-sensitive bounded-fixture setup/runtime, not an assertion regression in normalization."
   "2026-11-02T09:01:03.264Z",codex-sol,"The full Bun gate passes both 1079-test suites. Its packed matrix passes again in the independent statement run at 753244 ms, below the unchanged 900000 ms limit. Earlier npm timeout remains an environment-sensitive follow-up; no timeout or workload reduction is part of the normalization patch."
   "2026-11-02T10:44:25.755Z",codex-sol,The later complete npm retry also passes both 1079-test suites and all four 100 percent coverage gates. Packed matrix passes at 562638 ms V8 and 410955 ms statements without timeout/workload/worker changes. Retain this open follow-up for the earlier observed shared-host timing failures; normalization code and regressions are verified separately.
   "2026-11-15T20:19:17.886Z",codex-sol,"Fleet CI v2; companion pm-cli-website-dyhg. Reuse packed-timeout tracking. Preserve required test (22)/(26), move exhaustive npm/Bun matrix to deep, retain build drift and documentation/identity contracts. Supersedes PR #109 without closing it."
   "2026-11-15T20:21:37.392Z",codex-sol,"Typecheck and strict YAML parsing passed; no lint script or actionlint installed. Main CI run 43637171724 required-check wall times: Node 26 2h06m20s; Node 22 2h59m42s. Combined run log returned empty; individual job log requested for test duration evidence. Quick touched-file validation is bounded; no full-depth local run."
+  "2026-11-15T20:23:57.966Z",codex-sol,"PR #113 opened. Full baseline model timings from individual Node 26 job: 512 sequences 2052–2352 s; 500 sync sequences 572–655 s; packed acceptance 150–179 s. Cheap path additionally retains tracker-derived date verification and pack dry run after auditing inputs. First linked run hit the pm default 120 s wrapper timeout; corrected linked metadata to 1200 s and restarted. No coverage thresholds changed."
+  "2026-11-15T20:24:41.241Z",codex-sol,Cheap-path suites passed 20/20 in 26.96 s. Local strict health fails only the pre-existing managed extension host version skew (tracked in pm-ado-extension-host-skew); stale work warnings are advisory. Initial timed-out pm test left its child tree alive; explicitly terminated that abandoned test tree before continuing the corrected bounded run.
+  "2026-11-15T20:39:14.958Z",codex-sol,"Initial PR run 43757691680 failed after 12m54s (Node 26) and 13m26s (Node 22), queue-inclusive jobs timestamps. Node 26 failure: publish verifier cannot prove a dynamic matrix package-manager executable. Replaced it with explicit conditional npm and Bun steps, still one gate per matrix job; verifier source remains unchanged. Final-head CI timing pending."
+  "2026-11-15T20:41:07.049Z",codex-sol,"Initial quick Node 26 test timings: 50-case sync 19.00 s, 52-case two-sided 47.11 s, packed acceptance 119.12 s; all passed. Different-run full baselines are 571.86–655.41 s, 2052.45–2352.34 s and 150.44–178.52 s. Explicit-command publish verifier and eight verifier tests pass locally. Follow-up pm-ado-ci-wrapper-child-timeout records the abandoned descendant observation. Final CI and quick coverage remain uncertified; full depth deferred to deep."
+  "2026-11-15T20:42:54.851Z",codex-sol,"Local touched-file quick run reached the 1200 s cap before sync.test.ts finished; explicitly stopped remaining descendants. Typecheck/build:test passed, earlier docs suites passed 20/20, and publish verifier tests passed 8/8. Hosted logs show the changed quick model cases and packed acceptance passing; both required checks failed only the now-corrected dynamic-executable verifier. No full or separate coverage run was attempted locally. Linked timeout now includes startup headroom. Final CI pending; no CI wait."
 files[9]{path,scope}:
   .github/workflows/ci-deep.yml,project
   .github/workflows/ci.yml,project
@@ -31,8 +35,25 @@ files[9]{path,scope}:
   test/support/depth.ts,project
   test/support/time.ts,project
   test/sync.test.ts,project
-tests[1]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
-  "npm run typecheck && npm run build:test && PM_TEST_DEPTH=quick timeout 1200 node --test --test-concurrency=2 test/ado.test.ts test/refresh.test.ts test/sync.test.ts test/packed-install-shapes.test.ts",project,codex-sol,"2026-11-15T20:20:43.901Z",local_mutation,ci/quick-pr-tier-deep-local-tier
+tests[2]:
+  - command: "npm run typecheck && npm run build:test && PM_TEST_DEPTH=quick timeout 1200 node --test --test-concurrency=2 test/ado.test.ts test/refresh.test.ts test/sync.test.ts test/packed-install-shapes.test.ts"
+    scope: project
+    timeout_seconds: 1260
+    provenance:
+      author: codex-sol
+      created_at: "2026-11-15T20:20:43.901Z"
+      source_kind: local_mutation
+      source_ref: ci/quick-pr-tier-deep-local-tier
+    updated_by: codex-sol
+    updated_at: "2026-11-15T20:41:32.345Z"
+  - command: node --test test/identity-audit.test.ts test/sdk-adoption.test.ts test/process-fixture.test.ts test/release-approval.test.ts
+    scope: project
+    timeout_seconds: 120
+    provenance:
+      author: codex-sol
+      created_at: "2026-11-15T20:27:47.264Z"
+      source_kind: local_mutation
+      source_ref: ci/quick-pr-tier-deep-local-tier
 docs[1]{path,scope}:
   docs/ci-tiers.md,project
 body: ""

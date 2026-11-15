@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 
-# Same PR grouping as the local-runner pilot (#254); manual runs stay independent.
+# Cancel older runs for the same PR; manual runs stay independent.
 concurrency:
   group: ci-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -16,8 +16,7 @@ jobs:
   test:
     # Required checks stay on fast GitHub-hosted hardware.
     runs-on: ubuntu-latest
-    # Quick tier executes in about 6-7 min. A hung step must not hold a hosted slot for the default 6 h:
-    # on 2026-11-15 three fleet release-gate jobs hung for 90+ min until another session cancelled them.
+    # Bound hosted slot occupancy; fleet jobs previously hung for over 90 minutes.
     timeout-minutes: 30
     env:
       PM_TEST_DEPTH: quick
@@ -98,7 +97,9 @@ jobs:
         if: steps.changes.outputs.code != 'true'
         run: |
           npm run changelog:check
-          node --test test/identity-audit.test.ts test/sdk-adoption.test.ts test/process-fixture.test.ts test/public-api.test.ts test/release-approval.test.ts
+          npm run verify:release-changelog-date
+          npm run pack:dry-run
+          node --test test/identity-audit.test.ts test/sdk-adoption.test.ts test/process-fixture.test.ts test/release-approval.test.ts
 
       - name: Build and verify committed output is current
         if: steps.changes.outputs.code == 'true'
@@ -128,8 +129,7 @@ jobs:
         if: steps.changes.outputs.code == 'true' && matrix.node-version == 26
         run: env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 npm run release:check
 
-      # accept:packed in the gate already exercises Bun project/global installs
-      # and bunx ephemeral CLI + tarball extension installs (with real CSV IO).
+      # Packed-install tests already exercise Bun global and bunx launch paths.
       - name: Verify Bun can install the package graph
         if: steps.changes.outputs.code == 'true' && matrix.node-version == 26
         run: bun install --no-save

@@ -1,0 +1,11 @@
+id: pm-ado-ci-wrapper-child-timeout
+title: Investigate linked-test wrapper retaining children after timeout
+description: "During Fleet CI v2 validation, a linked command failed at the default 120-second pm watchdog while its timeout/Node descendant processes remained alive beyond that deadline. The abandoned process tree was explicitly terminated. Reproduce with synthetic fixtures, deduplicate upstream reports, and verify descendant cleanup without changing package behavior."
+type: Task
+status: open
+priority: 2
+tags[2]: ci,testing
+created_at: "2026-11-15T20:39:41.927Z"
+updated_at: "2026-11-15T20:39:41.927Z"
+author: codex-sol
+body: ""

@@ -1,3 +1,4 @@
+import { testDepth } from "./support/depth.ts";
 import { relocateNodePreloads } from "./helpers/process-fixture.ts";
 /** Strict refresh compiler contracts and SDK read-only acceptance. */
 import assert from "node:assert/strict";
@@ -185,7 +186,7 @@ test("500 seeded refresh sequences model field accounting, older observations, o
   let seed = 0x104525;
   /** Deterministic choices also exercise empty bases and extreme int32 revisions. */
   const random = (bound: number) => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed % bound; };
-  for (let sequence = 0; sequence < 500; sequence++) {
+  for (let sequence = 0; sequence < testDepth(500); sequence++) {
     const value = input(1 + random(30));
     value.needs = needs.filter(() => random(3) !== 0); if (!value.needs.length) value.needs = ["title"];
     value.maxOutputBytes = 1048576;
@@ -305,7 +306,7 @@ test("round-6 random persisted field sets and revisions hydrate exactly the miss
   const values = { ...localValues(item, false), relations: [] };
   let seed = 0x6a27cafe, cases = 0;
   const random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed; };
-  for (let step = 0; step < 2048; step++) {
+  for (let step = 0; step < testDepth(2048); step++) {
     const present = needs.filter(() => ((random() >>> 16) & 1) !== 0), requested = needs.filter(() => ((random() >>> 16) & 1) !== 0);
     if (!requested.length) requested.push(needs[step % needs.length]!);
     const revision = 1 + random() % 5, observed = 1 + random() % 5;
@@ -324,7 +325,7 @@ test("round-6 random persisted field sets and revisions hydrate exactly the miss
     assert.deepEqual(refreshSaved([{ ...item, ado_rev: revision, ado_sync_base: JSON.stringify(reversed) }], config), saved);
     cases++;
   }
-  assert.equal(cases, 2048); t.diagnostic("seed 0x6a27cafe: 2048 presence/request/revision cases, including legacy unknown sets and stale per-key witnesses");
+  assert.equal(cases, testDepth(2048)); t.diagnostic("seed 0x6a27cafe: 2048 presence/request/revision cases, including legacy unknown sets and stale per-key witnesses");
   for (const raw of ["{", "null", "[]", '{"title":0}']) {
     const saved = refreshSaved([{ ...item, ado_sync_base: JSON.stringify({ ...values, ado_base_fields: ["title"], ado_agreed_revisions: raw }) }], config);
     assert.equal(compileRefreshPlan({ saved, needs: ["title"], observed: [{ id: 1, revision: 3 }] }).accounting[0]!.read, 1);

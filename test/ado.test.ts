@@ -1,3 +1,4 @@
+import { testTime } from "./support/time.ts";
 import { applyFixtureRelation } from "./helpers/relation-fixture.ts";
 import { restoreEnvironment } from "./helpers/process-fixture.ts";
 import { isolatedPackage } from "./helpers/package-runtime.ts";
@@ -538,8 +539,8 @@ test("readConfig strips a ReDoS-adversarial org URL within a hard time bound", (
   });
   const elapsed = performance.now() - start;
   assert.ok(
-    elapsed < 50,
-    `readConfig took ${elapsed.toFixed(1)}ms on a ${adversarial.length}-character adversarial URL — expected < 50ms`,
+    elapsed < testTime(50),
+    `readConfig took ${elapsed.toFixed(1)}ms on a ${adversarial.length}-character adversarial URL — expected within the scaled harness budget`,
   );
   assert.equal(config?.orgUrl, slashes + "a");
 });

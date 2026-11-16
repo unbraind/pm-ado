@@ -1,5 +1,6 @@
 /** Adversarial child-process contracts use Node itself as the option parser oracle. */
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, mkdtempSync } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -232,9 +233,16 @@ test("every selected-test process keeps the consumer budget plus startup allowan
 
   let checked = 0;
   let packedTargets = 0;
-  for (const directory of ["test", "scripts"]) for (const entry of readdirSync(join(packageRoot, directory), { recursive: true, withFileTypes: true })) {
-    if (!entry.isFile() || !entry.name.endsWith(".ts")) continue;
-    const source = sourceFile(join(entry.parentPath, entry.name));
+  // A concurrent preload regression owns a symlink into temporary storage.
+  // Inventory repository sources through Git so live fixtures never expand the
+  // audit outside its source set or disappear underneath a recursive scan.
+  const sourcePaths = execFileSync("git", ["ls-files", "-z", "--", "test", "scripts"], {
+    cwd: packageRoot, encoding: "utf8",
+  }).split("\0").filter((path) => path.endsWith(".ts"));
+  assert.ok(sourcePaths.includes("test/changelog-content.test.ts"), "the moved preload regression must remain audited");
+  assert.ok(!sourcePaths.includes(`test/${fixture.split(/[\\/]/u).at(-1)}/targets.ts`), "live fixture sources must stay outside the repository audit");
+  for (const path of sourcePaths) {
+    const source = sourceFile(join(packageRoot, path));
     const selected: { file: string; pattern: RegExp }[] = [];
     const wrappers: ts.Expression[] = [];
     /** Enumerate actual nested Node test invocations and selected fixture files. */

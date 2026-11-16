@@ -1,0 +1,63 @@
+name: CI Deep
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 2 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-deep-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  deep:
+    name: deep (${{ matrix.node-version }}, ${{ matrix.package-manager }})
+    runs-on: ${{ vars.PM_LOCAL_DEEP != 'off' && fromJSON('["self-hosted","pm-local"]') || 'ubuntu-latest' }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 26]
+        package-manager: [npm, bun]
+    env:
+      PM_TEST_DEPTH: full
+      PM_TEST_TIME_SCALE: 3
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: ${{ runner.environment == 'github-hosted' && 'npm' || '' }}
+      - uses: oven-sh/setup-bun@v2.2.0
+        if: runner.environment == 'github-hosted'
+      - run: bun --version
+      - run: npm ci
+      - run: ./node_modules/.bin/pm health --strict-exit --require-merge-drivers
+      - name: Build and verify committed output is current
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git ls-files --error-unmatch 'dist/' > /dev/null 2>&1; then
+            echo "::error::dist/ is not tracked. This package is installed by copying the repository, so the build output has to be in git."
+            exit 1
+          fi
+          rm -rf dist
+          npm run build
+          drift=$(git status --porcelain=v1 --untracked-files=all --ignored=matching -- 'dist/')
+          if [ -n "$drift" ]; then
+            echo "::error::Committed dist/ does not match a fresh build. Run 'npm run build' and commit the result."
+            printf '%s\n' "$drift"
+            exit 1
+          fi
+          echo "Committed dist/ matches a fresh build."
+      - name: Full npm release gate
+        if: matrix.package-manager == 'npm'
+        run: env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 npm run release:check
+      - name: Full Bun release gate
+        if: matrix.package-manager == 'bun'
+        run: env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 bun run release:check
+      - run: bun install --no-save

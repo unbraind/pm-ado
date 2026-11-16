@@ -2,7 +2,15 @@
 
 ## 2026.11.8 - 2026-11-08
 
-No changes.
+### Fixed
+
+- Adopt decision-bound native revision guards for Azure lifecycle writes ([pm-ado-sdk-history-fence](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-sdk-history-fence.toon))
+
+### Other
+
+- Migrate pm-toolchain PR 87 to the November 4 SDK contract ([pm-ado-toolchain-1104](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-toolchain-1104.toon))
+- Finish the pm-github 2026.11.15 caller pin gates ([pm-ado-pmgh-pin-1115](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/tasks/pm-ado-pmgh-pin-1115.toon))
+- Adopt pm-cli option contract and current pm-toolchain ([pm-ado-option-contract-1114](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/chores/pm-ado-option-contract-1114.toon))
 
 ## 2026.11.5 - 2026-11-05
 

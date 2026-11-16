@@ -1,4 +1,5 @@
 /** Keep the owner approval and tokenless provenance contract in every release. */
+import { workflowGlobalNpmInstalls } from './global-npm-guard.ts';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { test } from 'node:test';
@@ -33,11 +34,10 @@ test('no workflow replaces the shared global npm installation', () => {
   // job's global install corrupts a sibling's npm mid-install. Every pinned
   // npm install must target a job-local prefix instead.
   const workflowRoot = new URL('../.github/workflows/', import.meta.url);
-  const replacers = /npm\s+(?=[^\n]*\b(?:install|i)\b)(?=[^\n]*(?:\s-g\b|--global\b))[^\n]*\bnpm@/u;
   for (const entry of readdirSync(workflowRoot).sort()) {
     if (!/\.ya?ml$/u.test(entry)) continue;
     const source = readFileSync(new URL(entry, workflowRoot), 'utf8');
-    assert.doesNotMatch(source, replacers, `${entry} must install the pinned npm into a job-local prefix`);
+    assert.deepEqual(workflowGlobalNpmInstalls(source), [], `${entry} must install the pinned npm into a job-local prefix`);
   }
 });
 

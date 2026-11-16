@@ -6,10 +6,10 @@ status: in_progress
 priority: 2
 tags[1]: "gh:unbraind/pm-ops#284"
 created_at: "2026-11-16T14:41:52.475Z"
-updated_at: "2026-11-16T16:48:01.805Z"
+updated_at: "2026-11-16T19:29:00.069Z"
 author: pi-glm
 acceptance_criteria: The release workflow installs the pinned npm with --prefix into a job-local directory and prepends that prefix bin to the job path; The workflow keeps the exact-version assertion on the effective npm; A workflow-contract test fails if any workflow replaces the global npm
-comments[8]{created_at,author,text}:
+comments[10]{created_at,author,text}:
   "2026-11-16T15:17:20.034Z",codex-sol,"Continuation: verified the existing worktree and remote branch state, preserved the earlier changes, and reused this item. Rerunning required gates to completion under the continuation author before committing results."
   "2026-11-16T15:27:41.370Z",codex-sol,"Root cause confirmed in the workflow source: global installation of the pinned npm replaces the same Node installation used by parallel jobs on a shared toolcache. Replaced each bootstrap with a job-local prefix, published only its bin directory to the job PATH, and retained exact-pin checks including a separate subsequent-step assertion. Workflow contracts reject global npm replacement across all workflow files. No runner settings or shared tool installations were modified."
   "2026-11-16T15:32:08.555Z",codex-sol,"Validation note: this package defines no lint script. Its existing docstring static gate is being run with typecheck, the quick npm test tier, the release workflow contracts and changelog:check; no new lint policy or dependency is introduced for this CI fix."
@@ -18,14 +18,19 @@ comments[8]{created_at,author,text}:
   "2026-11-16T16:07:40.748Z",codex-sol,"Typecheck and the existing docstring static gate passed; this package has no lint script. Focused workflow tests passed 19 of 20, with the unrelated nested preload acceptance timing out under disk contention. The separate provenance recheck passed all 8 tests. Broad quick gates are active; the preload case will be rechecked from an isolated temporary checkout."
   "2026-11-16T16:20:00.016Z",codex-sol,"Implementation commit 3906f079bba749ff3c71774c24d83514a349f8da is verified by all 20 workflow-contract tests, including the nested preload acceptance, run to completion from an isolated temporary checkout of that exact commit. The separate changelog:check passed; typecheck and the existing docstring gate passed. This package has no lint script. The initial focused preload timeout is superseded by the completed contract rerun. Broad quick tests remain active, and remote CI is pending the shared runner hold. Releasing the claim for orchestrator verification."
   "2026-11-16T16:47:56.999Z",codex-sol,"The broad local retry reached its 60-minute command limit: 604 tests reported 601 passed, 2 failed and 1 cancelled. Remaining failures concern packed consumer acceptance and the nested preload run; that complete 20-test workflow suite separately passed from the isolated committed checkout, and changelog:check passed. The broad suite is not certified green. Tracking PR: https://github.com/unbraind/pm-ado/pull/116. The PR remains open for orchestrator verification; exact-head CI is queued or running."
-files[5]{path,scope}:
+  "2026-11-16T19:23:52.314Z",codex-sol,"Review round P: replace the workflow-wide regex with a dependency-free shell command parser and regression fixtures. Parse run scripts with existing yaml where available; preserve allowed prefix-local installs. Verify typecheck, lint or docstring, focused guard/workflow contracts and changelog checks before pushing. No review-thread actions."
+  "2026-11-16T19:28:59.317Z",codex-sol,"Review round P addresses PRRT_kwDOUMUq1864FZHh: replace the regex with the same dependency-free command parser as pm-ops, using the permitted raw-text workflow scan because no yaml parser is declared here. The scan joins shell continuations and unwraps simple quoted run scalars. Added 38 fixtures covering aliases, flags, locations, package specs, quotes/paths, separators and allowed installs. npm run typecheck, npm run build:test, npm run docstring and npm run changelog:check PASS. Linked guard/workflow contracts passed through pm test --run --only-last --progress: 58 pass, 0 fail/cancel/skip/todo. Full-suite certification remains with CI; the review thread remains untouched."
+files[7]{path,scope}:
   .github/workflows/release.yml,project
+  test/global-npm-guard.test.ts,project
+  test/global-npm-guard.ts,project
   test/release-approval.test.ts,project
   test/release-workflow.test.ts,project
   test/verify-release-changelog-date.test.ts,project
   test/verify-release-publish-attestation.test.ts,project
-tests[3]{command,scope,timeout_seconds,provenance{author,created_at,source_kind,source_ref}}:
+tests[4]{command,scope,timeout_seconds,provenance{author,created_at,source_kind,source_ref}}:
   "npm run typecheck && npm run docstring && npm test && node --test --test-concurrency=2 test/release-approval.test.ts test/release-workflow.test.ts && npm run changelog:check",project,1200,codex-sol,"2026-11-16T15:20:04.254Z",local_mutation,fix/job-local-npm
   "npm run typecheck && npm run docstring && npm test && node --test --test-concurrency=2 test/release-approval.test.ts test/release-workflow.test.ts && npm run changelog:check && git diff --check",project,3600,codex-sol,"2026-11-16T15:42:20.703Z",local_mutation,fix/job-local-npm
   "node --test --test-concurrency=2 test/release-approval.test.ts test/release-workflow.test.ts && npm run changelog:check",project,900,codex-sol,"2026-11-16T15:53:18.306Z",local_mutation,fix/job-local-npm
+  node --test test/global-npm-guard.test.ts test/release-approval.test.ts test/release-workflow.test.ts,project,1200,codex-sol,"2026-11-16T19:25:57.571Z",local_mutation,fix/job-local-npm
 body: ""

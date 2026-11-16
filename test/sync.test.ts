@@ -1,3 +1,4 @@
+import { testDepth } from "./support/depth.ts";
 import { relocateNodePreloads } from "./helpers/process-fixture.ts";
 import { applyFixtureRelation } from "./helpers/relation-fixture.ts";
 import { listenOnLoopback } from "./helpers/http-fixture.ts";
@@ -2536,7 +2537,7 @@ test("500 seeded import/export/sync sequences preserve every owned field, relati
   let mirrorMetadata: unknown;
   const archive: AdoWorkItem[] = [];
   const modeCounts: Record<string, number> = { import: 0, export: 0, sync: 0 };
-  for (let sequence = 0; sequence < 500; sequence++) {
+  for (let sequence = 0; sequence < testDepth(500); sequence++) {
     const remote = f.items.get(1)!;
     const mode = ["import", "export", "sync"][random(3)]!;
     modeCounts[mode]++;
@@ -2610,7 +2611,7 @@ test("500 seeded import/export/sync sequences preserve every owned field, relati
       f.items.set(1, latest);
     }
   }
-  t.diagnostic(JSON.stringify({ sequences: 500, mode_counts: modeCounts, exact_replays: 500, older_replays: 50 }));
+  t.diagnostic(JSON.stringify({ sequences: testDepth(500), mode_counts: modeCounts, exact_replays: testDepth(500), older_replays: Math.ceil(testDepth(500) / 10) }));
 });
 
 test("refresh-plan host JSON and TOON work without git and leave item/history bytes unchanged", async (t) => {
@@ -2750,7 +2751,7 @@ test("round-3 model: 512 two-sided sequences preserve edits and witness every ba
   assert.equal(recovered.ok, true, JSON.stringify(recovered));
   assert.equal((remote().relations as string[]).length, 1, "recovery must import, never erase, the remote edit");
   assert.deepEqual(await local(), remote());
-  for (let sequence = 0; sequence < 512; sequence++) {
+  for (let sequence = 0; sequence < testDepth(512); sequence++) {
     await resolve();
     const mode = (["import", "export", "sync"] as const)[sequence % 3]!;
     pending = new Map<string, Map<string, State[string]>>();
@@ -2828,10 +2829,10 @@ test("round-3 model: 512 two-sided sequences preserve edits and witness every ba
     assert.equal(f.items.size, 3, "model must never create a duplicate object");
     if ((sequence + 1) % 64 === 0) t.diagnostic(`two-sided model completed ${sequence + 1}/512 sequences`);
   }
-  assert.ok(interrupted >= 200);
+  assert.ok(interrupted >= Math.ceil(testDepth(512) * 200 / 512));
   assert.ok(successes > 0 && conflicts > 0);
   for (const side of ["local", "remote"]) for (const key of operations) assert.ok(counts[`${side}:${key}`], `${side} ${key} missing`);
-  t.diagnostic(JSON.stringify({ sequences: 512, seed: "0x37a9c521", interrupted, successes, conflicts, boundaries: [...boundaries].sort(), actor_operations: counts }));
+  t.diagnostic(JSON.stringify({ sequences: testDepth(512), seed: "0x37a9c521", interrupted, successes, conflicts, boundaries: [...boundaries].sort(), actor_operations: counts }));
 });
 
 test("explicit status aliases override defaults but ambiguous user maps refuse before remote effects", async (t) => {

@@ -7,13 +7,13 @@ status: in_progress
 priority: 2
 tags[5]: ci,"gh:unbraind/pm-ado#113",performance,release-gate,testing
 created_at: "2026-11-02T05:52:15.908Z"
-updated_at: "2026-11-15T20:42:55.529Z"
+updated_at: "2026-11-16T12:55:04.486Z"
 author: codex-sol
 parent: pm-ado-sdk-adoption
 repro_steps: "Run NPM_CONFIG_USERCONFIG=/dev/null npm run release:check with at most two workers on a busy host."
 expected_result: All packed launcher and global-runtime scenarios complete within the existing bounded test policy.
 actual_result: The parent times out and cancels remaining global-runtime cases despite prior assertions passing.
-comments[11]{created_at,author,text}:
+comments[12]{created_at,author,text}:
   "2026-11-02T06:45:06.674Z",codex-sol,"Completed Node 26 npm release attempt: 1079 total, 1075 pass, 2 fail, 2 canceled, no skips. Parent timed out at 901979 ms against its existing 900000 ms limit; global-runtime npx was canceled, and bunx/local-bin did not start. All six project launchers and global npm/Bun cases passed. V8 coverage reports 100 percent lines/branches/functions across all 13 sources. No code, timeout or threshold change made for this follow-up."
   "2026-11-02T06:57:35.808Z",codex-sol,"Later Bun V8 control passes all eleven packed launcher/global-runtime cases at 579923 ms with the same Node 26 runtime, TMPDIR class, source, 900000 ms parent limit and two-worker policy. The earlier timeout remains reproducible evidence of load-sensitive bounded-fixture setup/runtime, not an assertion regression in normalization."
   "2026-11-02T09:01:03.264Z",codex-sol,"The full Bun gate passes both 1079-test suites. Its packed matrix passes again in the independent statement run at 753244 ms, below the unchanged 900000 ms limit. Earlier npm timeout remains an environment-sensitive follow-up; no timeout or workload reduction is part of the normalization patch."
@@ -25,6 +25,7 @@ comments[11]{created_at,author,text}:
   "2026-11-15T20:39:14.958Z",codex-sol,"Initial PR run 43757691680 failed after 12m54s (Node 26) and 13m26s (Node 22), queue-inclusive jobs timestamps. Node 26 failure: publish verifier cannot prove a dynamic matrix package-manager executable. Replaced it with explicit conditional npm and Bun steps, still one gate per matrix job; verifier source remains unchanged. Final-head CI timing pending."
   "2026-11-15T20:41:07.049Z",codex-sol,"Initial quick Node 26 test timings: 50-case sync 19.00 s, 52-case two-sided 47.11 s, packed acceptance 119.12 s; all passed. Different-run full baselines are 571.86–655.41 s, 2052.45–2352.34 s and 150.44–178.52 s. Explicit-command publish verifier and eight verifier tests pass locally. Follow-up pm-ado-ci-wrapper-child-timeout records the abandoned descendant observation. Final CI and quick coverage remain uncertified; full depth deferred to deep."
   "2026-11-15T20:42:54.851Z",codex-sol,"Local touched-file quick run reached the 1200 s cap before sync.test.ts finished; explicitly stopped remaining descendants. Typecheck/build:test passed, earlier docs suites passed 20/20, and publish verifier tests passed 8/8. Hosted logs show the changed quick model cases and packed acceptance passing; both required checks failed only the now-corrected dynamic-executable verifier. No full or separate coverage run was attempted locally. Linked timeout now includes startup headroom. Final CI pending; no CI wait."
+  "2026-11-16T12:55:04.240Z",codex-sol,Continuation of pin PR #111 observed the unchanged packed launcher test fail after 209881 ms during PM_TEST_DEPTH=quick npm test. Its direct children retain testTime(180000) and the parent testTime(900000); final parent error detail is pending. Preserve launcher coverage and all rollback/refusal assertions. This is tracked separately from the caller pin and the original Bun same-decision recovery race.
 files[9]{path,scope}:
   .github/workflows/ci-deep.yml,project
   .github/workflows/ci.yml,project

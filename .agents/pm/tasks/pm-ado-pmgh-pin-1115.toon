@@ -6,16 +6,18 @@ status: in_progress
 priority: 2
 tags[1]: "gh:unbraind/pm-ado#111"
 created_at: "2026-11-16T12:09:50.785Z"
-updated_at: "2026-11-16T12:13:04.316Z"
-assignee: codex-sol
-claim_principal: codex-sol
+updated_at: "2026-11-16T12:59:01.502Z"
 author: codex-sol
-comments[1]{created_at,author,text}:
+comments[3]{created_at,author,text}:
   "2026-11-16T12:10:09.204Z",codex-sol,"Merged current main while preserving the existing PR caller pins. Failed Bun release gate job 132763811635 at test/sync.test.ts:1509 asserts only ado_partial_apply or apply_failed for a rejected concurrent recovery writer. Log line 1779 shows that assertion failed; this is not a registry or network timeout and no pin-driven runtime change explains it. Existing issue pm-ado-resolution-recovery-race records the same assertion under Bun coverage since November 8. Preserve writer safety assertions and use that issue for the separate race; no core recovery change in this workflow pin PR. No review threads were returned."
+  "2026-11-16T12:28:55.955Z",codex-sol,"Prepared caller verification and root-cause evidence commit 02dbfc9. Exact caller test, typecheck, tracker validation and changelog:check pass on the merged branch. This repository has no lint script. Quick npm suite remains running; the original Bun recovery race remains owned by pm-ado-resolution-recovery-race and has not been hidden by broadening accepted refusal codes."
+  "2026-11-16T12:58:56.621Z",codex-sol,"Original Bun failure is the unchanged concurrent recovery oracle assertion, not a registry timeout; existing pm-ado-resolution-recovery-race retains it. Caller contract, typecheck, changelog:check and tracker validation pass; no lint script exists. Full quick npm run is still active and has observed a separate packed launcher failure after 209881 ms, owned by pm-ado-packed-timeout. Neither full-suite success nor a fix to those runtime issues is claimed. Release the pin claim for orchestrator review."
 files[3]{path,scope}:
   .github/workflows/pm-github-closeout.yml,project
   .github/workflows/pm-github-sync.yml,project
   test/pm-github-callers.test.ts,project
 tests[1]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
   node --test test/pm-github-callers.test.ts,project,codex-sol,"2026-11-16T12:11:23.988Z",local_mutation,ci/pm-github-2026.11.15-bounded-ci-dispatch
+docs[1]{path,scope}:
+  docs/ci-tiers.md,project
 body: ""

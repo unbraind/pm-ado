@@ -1,0 +1,25 @@
+id: pm-ado-node26-timeout
+title: Node 26 hosted quick gate repeats exhaustive coverage suites past the job deadline
+description: Hosted Node 26 jobs on main and pull requests reach the unchanged 30 minute limit while running repeated coverage passes; investigate exact per-test timings and preserve separate exhaustive certification.
+type: Issue
+status: in_progress
+priority: 2
+tags: []
+created_at: "2026-11-16T19:28:25.310Z"
+updated_at: "2026-11-16T19:41:48.612Z"
+author: codex-sol
+acceptance_criteria: Compare Node 22 and Node 26 job logs; reproduce expensive tests under Node 26; fix the verified cause without raising the job timeout; add regression coverage; pass targeted package and workflow gates.
+comments[3]{created_at,author,text}:
+  "2026-11-16T19:29:43.821Z",codex-sol,"Initial log evidence: Node 26 executes V8 coverage then the Istanbul statement pass, with completed tests throughout both cancelled jobs. Job 133454486570 finishes its first suite in 1064.210 s, then starts the same tests again; Node 22 uses npm test once. Investigation now compares per-test TAP/spec durations and checks unbounded model loops that ignore PM_TEST_DEPTH=quick."
+  "2026-11-16T19:37:49.679Z",codex-sol,"Root cause confirmed in both hosted job pairs: Node 22 runs one plain npm test pass; Node 26 quick validation invokes release:check and therefore the complete V8 suite followed by another Istanbul suite. Completed tests continue until the 30 minute cancellation. First-pass suite durations: PR110 Node22 1005.273 s vs Node26 1170.851 s; PR116 Node22 1308.834 s vs Node26 1064.210 s. This does not prove a Node26 hang or consistently slower runtime. Route hosted Node26 to ci:quick with one ordinary suite and retain all full coverage requirements in CI Deep and publication; timeout remains 30 minutes. Detailed per-test comparisons are in docs/node26-ci-timeout.md."
+  "2026-11-16T19:41:46.468Z",codex-sol,"Local Node 26.13.0 reproduction completed successfully: PM_TEST_DEPTH=quick node --test --test-reporter=spec --test-name-pattern=\"round-3 model: 512|boundary matrix sync-mixed|forward-only boundary matrix sync\" test/sync.test.ts. All selected matrices finished and the process exited in 659.869 s. Workflow contracts pass 26/26 directly and through pm test --run --progress; the new quick contract fails against original main scripts and passes after restoration. Typecheck, build, build:test, docstrings, changelog:check and git diff --check pass. No lint script or configuration is present, so lint is unavailable rather than claimed passing. Full-suite coverage and final hosted duration remain pending CI."
+files[4]{path,scope}:
+  .github/workflows/ci.yml,project
+  docs/node26-ci-timeout.md,project
+  package.json,project
+  test/ci-quick-contract.test.ts,project
+tests[1]{command,scope,timeout_seconds,pm_context_mode,workspace_context_mode,provenance{author,created_at,source_kind,source_ref}}:
+  node --test --test-reporter=spec test/ci-quick-contract.test.ts test/release-workflow.test.ts test/verify-release-publish-attestation.test.ts test/pm-github-callers.test.ts,project,300,none,snapshot,codex-sol,"2026-11-16T19:34:17.481Z",local_mutation,fix/node26-test-timeout
+docs[1]{path,scope}:
+  docs/node26-ci-timeout.md,project
+body: ""

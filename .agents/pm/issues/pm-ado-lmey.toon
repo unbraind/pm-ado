@@ -6,18 +6,17 @@ status: in_progress
 priority: 2
 tags[1]: "gh:unbraind/pm-ops#284"
 created_at: "2026-11-16T14:41:52.475Z"
-updated_at: "2026-11-16T16:07:40.751Z"
-assignee: codex-sol
-claim_principal: codex-sol
+updated_at: "2026-11-16T16:20:22.022Z"
 author: pi-glm
 acceptance_criteria: The release workflow installs the pinned npm with --prefix into a job-local directory and prepends that prefix bin to the job path; The workflow keeps the exact-version assertion on the effective npm; A workflow-contract test fails if any workflow replaces the global npm
-comments[6]{created_at,author,text}:
+comments[7]{created_at,author,text}:
   "2026-11-16T15:17:20.034Z",codex-sol,"Continuation: verified the existing worktree and remote branch state, preserved the earlier changes, and reused this item. Rerunning required gates to completion under the continuation author before committing results."
   "2026-11-16T15:27:41.370Z",codex-sol,"Root cause confirmed in the workflow source: global installation of the pinned npm replaces the same Node installation used by parallel jobs on a shared toolcache. Replaced each bootstrap with a job-local prefix, published only its bin directory to the job PATH, and retained exact-pin checks including a separate subsequent-step assertion. Workflow contracts reject global npm replacement across all workflow files. No runner settings or shared tool installations were modified."
   "2026-11-16T15:32:08.555Z",codex-sol,"Validation note: this package defines no lint script. Its existing docstring static gate is being run with typecheck, the quick npm test tier, the release workflow contracts and changelog:check; no new lint policy or dependency is introduced for this CI fix."
   "2026-11-16T15:42:12.914Z",codex-sol,The first combined gate command hit its 20-minute timeout during shared-host disk contention and is not pass evidence. Retrying all gates to completion using memory-backed temporary fixtures and the existing harness deadline scale. Assertions and test selection are unchanged.
   "2026-11-16T15:50:16.961Z",codex-sol,"The provenance failures observed during the disk-contention attempt were rechecked separately without source changes: node --test test/closeout-provenance.test.ts completed with all 8 tests passed, no skips or cancellations, using memory-backed temporary fixtures. The complete package gate rerun remains separate evidence."
   "2026-11-16T16:07:40.748Z",codex-sol,"Typecheck and the existing docstring static gate passed; this package has no lint script. Focused workflow tests passed 19 of 20, with the unrelated nested preload acceptance timing out under disk contention. The separate provenance recheck passed all 8 tests. Broad quick gates are active; the preload case will be rechecked from an isolated temporary checkout."
+  "2026-11-16T16:20:00.016Z",codex-sol,"Implementation commit 3906f079bba749ff3c71774c24d83514a349f8da is verified by all 20 workflow-contract tests, including the nested preload acceptance, run to completion from an isolated temporary checkout of that exact commit. The separate changelog:check passed; typecheck and the existing docstring gate passed. This package has no lint script. The initial focused preload timeout is superseded by the completed contract rerun. Broad quick tests remain active, and remote CI is pending the shared runner hold. Releasing the claim for orchestrator verification."
 files[5]{path,scope}:
   .github/workflows/release.yml,project
   test/release-approval.test.ts,project

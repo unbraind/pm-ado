@@ -1,3 +1,4 @@
+import { testTime } from "./support/time.ts";
 import { assertTargetPreloaded, withFixturePreload } from "./helpers/process-fixture.ts";
 /** Packed non-git consumers exercise real package-manager launchers without changing global state. */
 import assert from "node:assert/strict";
@@ -17,7 +18,7 @@ const repo = resolve(import.meta.dirname, "..");
 
 /** Run an actual binary and retain useful output on a failing acceptance command. */
 async function command(binary: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) {
-  try { return (await execute(binary, args, { cwd, env, timeout: 180000, maxBuffer: 4 * 1024 * 1024 })).stdout; }
+  try { return (await execute(binary, args, { cwd, env, timeout: testTime(180000), maxBuffer: 4 * 1024 * 1024 })).stdout; }
   catch (error) {
     const result = error as Error & { stdout?: string; stderr?: string };
     throw new Error(`${binary.split("/").at(-1)} ${args[0]} failed: ${result.stdout}\n${result.stderr}`, { cause: result });
@@ -25,7 +26,7 @@ async function command(binary: string, args: string[], cwd: string, env: NodeJS.
 }
 
 /** Exercise packed code through every requested installer and executable shape, using only private temp prefixes. */
-test("packed npm-global, bun-global, npx, bunx, local-bin and copied-extension commands work without git", { timeout: 900000 }, async (t) => {
+test("packed npm-global, bun-global, npx, bunx, local-bin and copied-extension commands work without git", { timeout: testTime(900000) }, async (t) => {
   const root = mkdtempSync(join(tmpdir(), "ado-packed-shapes-"));
   t.after(() => { rmSync(root, { recursive: true, force: true }); assert.equal(existsSync(root), false); });
   const home = join(root, "home"), artifacts = join(root, "artifacts"), safeBin = join(root, "no-git-bin");

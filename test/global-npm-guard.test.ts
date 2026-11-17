@@ -26,6 +26,11 @@ const rejected = [
   'npm install -g npm',
   'npm install -g npm@latest',
   'npm install -g npm@^11',
+  'npm install -gpld npm@11.19.0',
+  'npm install -dg npm@11.19.0',
+  'npm install --prefix "$RUNNER_TEMP/npm-11.19.0" npm@11.19.0 && npm install -g npm@11.19.0',
+  'npm install --prefix "$RUNNER_TEMP/npm-local" npm@11.19.0; npm install -g npm@11.19.0',
+  'npm install -g npm --prefix "$RUNNER_TEMP/npm-11.21.0" "unclosed',
   'npm install --global \\\n  npm@11.21.0',
   'npm install --global \\\r\n  npm@11.21.0',
   '"$npm_bin/npm" install --global "npm@latest"',
@@ -43,6 +48,9 @@ const accepted = [
   'npm --prefix install run ci',
   'npm install --global=false npm',
   'npm install --global -- npm-helper',
+  'npm install -D pnpm',
+  'npm install -gpld pnpm',
+  'npm install -g npm --prefix "$RUNNER_TEMP/npm-11.21.0" && npm ci',
 ];
 for (const command of rejected) test(`rejects ${JSON.stringify(command)}`, () => {
   assert.equal(globalNpmInstalls(command).length, 1);
@@ -107,4 +115,28 @@ test('indentationless step sequences still inspect only step run values', () => 
   const prefix = 'jobs:\n  audit:\n    steps:\n    - env: {run: "npm install -g npm"}\n      run: ';
   assert.deepEqual(workflowGlobalNpmInstalls(prefix + 'echo safe\n'), []);
   assert.deepEqual(workflowGlobalNpmInstalls(prefix + 'npm install -g npm\n'), globalNpmInstalls('npm install -g npm'));
+});
+
+test('workflow, job and step env compose and can force installs global', () => {
+  // npm reads npm_config_* case-insensitively; the step scope wins over the job.
+  const envRuns = (env: string, run: string) => workflowGlobalNpmInstalls(`${env}${workflow(`run: ${run}`)}`);
+  assert.equal(envRuns('env:\n  NPM_CONFIG_GLOBAL: "true"\n', 'npm install npm@11.19.0').length, 1);
+  assert.equal(envRuns('env:\n  npm_config_global: ${{ matrix.global }}\n', 'npm install npm@11.19.0').length, 1);
+  assert.equal(envRuns('env:\n  NPM_CONFIG_LOCATION: global\n', 'npm install npm@11.19.0').length, 1);
+  assert.equal(workflowGlobalNpmInstalls(workflow('env: {NPM_CONFIG_GLOBAL: "true"}\n        run: npm install npm@11.19.0')).length, 1);
+  assert.equal(workflowGlobalNpmInstalls(workflow('env: {NPM_CONFIG_LOCATION: global, NPM_CONFIG_GLOBAL: "false"}\n        run: npm install npm@11.19.0')).length, 1);
+  assert.equal(workflowGlobalNpmInstalls(`jobs:\n  audit:\n    env: {NPM_CONFIG_GLOBAL: "true"}\n    steps:\n      - run: npm install npm@11.19.0\n`).length, 1);
+  assert.equal(workflowGlobalNpmInstalls(`jobs:\n  audit:\n    env:\n      NPM_CONFIG_GLOBAL: "true"\n    steps:\n      - run: npm install npm@11.19.0\n`).length, 1);
+  // A safe step scope overrides an unsafe job scope.
+  assert.equal(workflowGlobalNpmInstalls(`jobs:\n  audit:\n    env: {NPM_CONFIG_GLOBAL: "true"}\n    steps:\n      - env: {NPM_CONFIG_GLOBAL: "false"}\n        run: npm install npm@11.19.0\n`).length, 0);
+  // Only a job-local prefix inside the same segment covers a forced install.
+  assert.deepEqual(workflowGlobalNpmInstalls(workflow('env: {NPM_CONFIG_GLOBAL: "true"}\n        run: npm install --prefix "$RUNNER_TEMP/npm-local" npm@11.19.0')), []);
+  assert.equal(workflowGlobalNpmInstalls(workflow('env: {NPM_CONFIG_GLOBAL: "true"}\n        run: npm install --prefix "$RUNNER_TEMP/npm-local" npm@11.19.0 && npm install npm@11.19.0')).length, 1);
+  // Explicitly safe values stay accepted at every level.
+  assert.deepEqual(envRuns('env:\n  NPM_CONFIG_GLOBAL: "false"\n', 'npm install npm@11.19.0'), []);
+  assert.deepEqual(envRuns('env:\n  NPM_CONFIG_GLOBAL: "0"\n', 'npm install npm@11.19.0'), []);
+  assert.deepEqual(envRuns('env:\n  NPM_CONFIG_GLOBAL: ""\n', 'npm install npm@11.19.0'), []);
+  assert.deepEqual(envRuns('env:\n  OTHER_KEY: "true"\n', 'npm install npm@11.19.0'), []);
+  // Unreadable env scopes fail closed when a run installs npm.
+  assert.equal(workflowGlobalNpmInstalls(workflow('env: ${{ matrix.env }}\n        run: npm install npm@11.19.0')).length, 1);
 });

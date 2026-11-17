@@ -1,17 +1,128 @@
 /** Install aliases supported by npm; this guard never executes shell input. */
 const installAliases = new Set(['install', 'i', 'in', 'ins', 'inst', 'insta', 'instal', 'isnt', 'isnta', 'isntal', 'isntall', 'add']);
 
+/** npm reads npm_config_* environment keys case-insensitively; only these two force installs global. */
+function relevantEnvKey(key: string): boolean {
+  return key.toLowerCase() === 'npm_config_global' || key.toLowerCase() === 'npm_config_location';
+}
+
+/** A computed workflow env forces global installs when it cannot be ruled out. */
+function envForcesGlobal(env: Record<string, string>): boolean {
+  for (const [key, value] of Object.entries(env)) {
+    if (key.toLowerCase() === 'npm_config_global' && !['false', '0', ''].includes(value.trim().toLowerCase())) return true;
+    if (key.toLowerCase() === 'npm_config_location' && value.trim().toLowerCase() === 'global') return true;
+  }
+  return false;
+}
+
+/** An env scope the parser refuses to interpret forces every install to be checked as global. */
+const unreadableEnvScope = (): Record<string, string> => ({ npm_config_global: '${{ unreadable env scope }}' });
+
 /**
- * Conservatively inspect logical lines, not shell command positions. Quoted,
- * echoed and commented matches intentionally count: the inventory is our own
- * workflows, so false positives are preferable to a missed shared npm write.
+ * Split a run script into shell command segments at unquoted `;`, `&`, `|`
+ * and newlines. Quoted, escaped, commented and heredoc text stays inside its
+ * segment — matches inside it still count — but never delimits commands. Quote
+ * state spans lines and across `$( … )` substitutions, which nest a fresh
+ * quoting context even inside double quotes; an unbalanced quote or
+ * substitution means the script cannot be delimited with confidence.
  */
-export function globalNpmInstalls(script: string): string[][] {
-  return script.replace(/\\\r?\n/gu, '').split(/\r?\n/u).map(line =>
-    line.replace(/["']/gu, '').split(/[\s;&|(){}]+/u).filter(Boolean)
-  ).filter(words => {
-    const global = words.some((word, index) =>
+function commandSegments(script: string): string[] | undefined {
+  const segments: string[] = [];
+  // Each entry restores the quote state that was open when it was entered.
+  const contexts: string[] = [];
+  let start = 0;
+  let quote = '';
+  for (let index = 0; index < script.length; index++) {
+    const char = script[index];
+    if (quote === "'") { if (char === "'") quote = ''; continue; }
+    if (quote === '"') {
+      if (char === '\\') { index++; continue; }
+      if (char === '$' && script[index + 1] === '(') {
+        contexts.push(quote);
+        quote = '';
+        index++;
+        if (script[index + 1] === '(') { contexts.push(''); index++; }
+        continue;
+      }
+      if (char === '"') quote = '';
+      continue;
+    }
+    if (char === '"' || char === "'") { quote = char; continue; }
+    if (char === '\\') { index++; continue; }
+    if (char === '$' && script[index + 1] === '(') {
+      contexts.push(quote);
+      index++;
+      if (script[index + 1] === '(') { contexts.push(''); index++; }
+      continue;
+    }
+    if (char === '(' && contexts.length) { contexts.push(''); continue; }
+    if (char === ')' && contexts.length) { quote = contexts.pop()!; continue; }
+    if (char === '<' && script[index + 1] === '<') {
+      if (script[index + 2] === '<') { index += 2; continue; }
+      // A here-document body ends at its delimiter line and delimits nothing.
+      let cursor = index + 2;
+      let stripTabs = false;
+      if (script[cursor] === '-') { stripTabs = true; cursor++; }
+      let delimiter = '';
+      if (script[cursor] === "'" || script[cursor] === '"') {
+        const close = script.indexOf(script[cursor], cursor + 1);
+        if (close === -1) return undefined;
+        delimiter = script.slice(cursor + 1, close);
+        cursor = close + 1;
+      } else {
+        const word = /^[\w.-]+/u.exec(script.slice(cursor));
+        if (!word) return undefined;
+        delimiter = word[0];
+        cursor += delimiter.length;
+      }
+      if (!delimiter) return undefined;
+      let position = script.indexOf('\n', cursor);
+      if (position === -1) return undefined;
+      for (;;) {
+        position += 1;
+        const lineEnd = script.indexOf('\n', position);
+        if (lineEnd === -1) return undefined;
+        const line = script.slice(position, lineEnd);
+        if ((stripTabs ? line.replace(/^\t+/u, '') : line) === delimiter) {
+          index = lineEnd - 1;
+          break;
+        }
+        position = lineEnd;
+      }
+      continue;
+    }
+    if (char === '#' && (index === 0 || /[\s;&|(){}]/u.test(script[index - 1]))) {
+      // A comment runs to end of line: its text never delimits or quotes.
+      const newline = script.indexOf('\n', index);
+      index = (newline === -1 ? script.length : newline) - 1;
+      continue;
+    }
+    if (char === '\n' || char === ';' || char === '&' || char === '|') {
+      segments.push(script.slice(start, index));
+      start = index + 1;
+    }
+  }
+  if (quote || contexts.length) return undefined;
+  segments.push(script.slice(start));
+  return segments.filter(segment => segment.trim());
+}
+
+/**
+ * Conservatively inspect command segments of a whole run script, not shell
+ * command positions. Quoted, echoed, commented and heredoc matches
+ * intentionally count: the inventory is our own workflows, so false positives
+ * are preferable to a missed shared npm write. A prefix exception only covers
+ * the segment that carries it, never a sibling command.
+ */
+export function globalNpmInstalls(script: string, env?: Record<string, string>): string[][] {
+  const forced = env !== undefined && envForcesGlobal(env);
+  const segments = commandSegments(script.replace(/\\\r?\n/gu, ''));
+  if (segments === undefined) return [['undelimitable command line']];
+  return segments.flatMap(segment => {
+    const words = segment.replace(/["']/gu, '').split(/[\s;&|(){}]+/u).filter(Boolean);
+    const global = forced || words.some((word, index) =>
       ['-g', '--global', '--global=true', '--location=global'].includes(word) ||
+      /^-[a-z]*g[a-z]*$/iu.test(word) ||
       (word === '--location' && words[index + 1] === 'global') ||
       /^npm_config_global=/iu.test(word) || /^npm_config_location=global$/iu.test(word)
     );
@@ -23,7 +134,7 @@ export function globalNpmInstalls(script: string): string[][] {
       (word === '--prefix' || /^(?:--prefix=|npm_config_prefix=)/iu.test(word))
     );
     return global && !local && words.some((word, index) => installAliases.has(word) &&
-      words.slice(index + 1).some(packageWord => packageWord === 'npm' || packageWord.startsWith('npm@')));
+      words.slice(index + 1).some(packageWord => packageWord === 'npm' || packageWord.startsWith('npm@'))) ? [words] : [];
   });
 }
 
@@ -68,6 +179,60 @@ function blockScalar(lines: string[], indent: number, folded: boolean, chomp: st
   return value.replace(/\n*$/u, '\n');
 }
 
+/** One composed npm-readable env scope; unreadable scopes fail closed. */
+interface EnvScope { entries: Record<string, string>; unknown: boolean }
+const emptyEnvScope = (): EnvScope => ({ entries: {}, unknown: false });
+
+/** Decode one env entry scalar; undefined means the value is not a confident string. */
+function envScalar(value: string): string | undefined {
+  if (/^["']/u.test(value)) return quotedScalar(value);
+  if (/^[#|>&*![{]/u.test(value)) return undefined;
+  return value.replace(/\s+#.*$/u, '');
+}
+
+/** Decode a single-line YAML flow mapping of env entries; undefined means the mapping is unsupported. */
+function flowEnvEntries(value: string): Record<string, string> | undefined {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('{')) return undefined;
+  const entries: Record<string, string> = {};
+  let index = 1;
+  for (;;) {
+    while (index < trimmed.length && /[\s,]/u.test(trimmed[index])) index++;
+    if (index >= trimmed.length) return undefined;
+    if (trimmed[index] === '}') { index++; break; }
+    const keyStart = index;
+    if (/["']/u.test(trimmed[index])) {
+      const keyQuoted = trimmed[index] === '"' ? /^"(?:[^"\\]|\\.)*"/u.exec(trimmed.slice(index)) : /^'(?:[^']|'')*'/u.exec(trimmed.slice(index));
+      if (!keyQuoted) return undefined;
+      index += keyQuoted[0].length;
+    } else {
+      while (index < trimmed.length && /[\w-]/u.test(trimmed[index])) index++;
+    }
+    const rawKey = trimmed.slice(keyStart, index);
+    while (index < trimmed.length && /\s/u.test(trimmed[index])) index++;
+    if (!rawKey || index >= trimmed.length || trimmed[index] !== ':') return undefined;
+    index++;
+    while (index < trimmed.length && /\s/u.test(trimmed[index])) index++;
+    let rawValue = '';
+    if (index < trimmed.length && /["']/u.test(trimmed[index])) {
+      const valueQuoted = trimmed[index] === '"' ? /^"(?:[^"\\]|\\.)*"/u.exec(trimmed.slice(index)) : /^'(?:[^']|'')*'/u.exec(trimmed.slice(index));
+      if (!valueQuoted) return undefined;
+      rawValue = valueQuoted[0];
+      index += rawValue.length;
+    } else {
+      rawValue = /^[^,}]*/u.exec(trimmed.slice(index))![0].trim();
+      index += /^[^,}]*/u.exec(trimmed.slice(index))![0].length;
+    }
+    const key = /^["']/u.test(rawKey) ? quotedScalar(rawKey) : rawKey;
+    const decoded = /^["']/u.test(rawValue) ? quotedScalar(rawValue) :
+      rawValue && !/^[#|>&*![{]/u.test(rawValue) ? rawValue.replace(/\s+#.*$/u, '') : rawValue ? undefined : '';
+    if (key === undefined) return undefined;
+    if (decoded !== undefined) entries[key] = decoded;
+    else if (relevantEnvKey(key)) entries[key] = '${{ unreadable env entry }}';
+  }
+  return /^[\s]*(?:#.*)?$/u.test(trimmed.slice(index)) ? entries : undefined;
+}
+
 /**
  * No direct YAML dependency: extract the block mapping/sequence layout used by
  * this repository. Unsupported executable layouts or run scalars fail closed.
@@ -77,6 +242,13 @@ export function workflowGlobalNpmInstalls(source: string): string[][] {
   const lines = source.replace(/\r\n/gu, '\n').split('\n');
   const parents: { indent: number; path: string[] }[] = [];
   const findings: string[][] = [];
+  const workflowEnv = emptyEnvScope();
+  const jobEnvs: Record<string, EnvScope> = {};
+  const stepEnvs: Record<string, EnvScope> = {};
+  // Runs are buffered until every env scope is known: env may follow run in the step.
+  const runs: { job: string; step: number; script: string }[] = [];
+  let jobKey = '';
+  let stepIndex = -1;
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
     if (!line.trim() || /^\s*#/u.test(line)) continue;
@@ -95,6 +267,7 @@ export function workflowGlobalNpmInstalls(source: string): string[][] {
       if (parent.length === 3 && parent[0] === 'jobs' && parent[2] === 'steps') {
         parent = [...parent, '*'];
         parents.push({ indent, path: parent });
+        stepIndex += 1;
       }
       text = text.slice(2);
       keyIndent += 2;
@@ -107,11 +280,42 @@ export function workflowGlobalNpmInstalls(source: string): string[][] {
     }
     const key = entry[1] ?? entry[2] ?? entry[3];
     const path = [...parent, key];
+    if (path.length === 2 && path[0] === 'jobs') { jobKey = key; stepIndex = -1; }
     const value = entry[4].trim();
     parents.push({ indent: keyIndent, path });
     const run = path.length === 5 && path[0] === 'jobs' && path[2] === 'steps' && path[3] === '*' && key === 'run';
     const container = path[0] === 'jobs' && (path.length <= 2 || (path.length === 3 && key === 'steps'));
     if (container && value && !value.startsWith('#')) return unreadableRun();
+    // Compose workflow, job and step env scopes; the step scope wins. npm reads
+    // the keys case-insensitively, and an unreadable scope fails closed.
+    const envContainer = (path.length === 1 && path[0] === 'env') ||
+      (path.length === 3 && path[0] === 'jobs' && path[2] === 'env') ||
+      (path.length === 5 && path[0] === 'jobs' && path[2] === 'steps' && path[3] === '*' && path[4] === 'env');
+    const envEntry = (path.length === 2 && path[0] === 'env') ||
+      (path.length === 4 && path[0] === 'jobs' && path[2] === 'env') ||
+      (path.length === 6 && path[0] === 'jobs' && path[2] === 'steps' && path[3] === '*' && path[4] === 'env');
+    if (envContainer || envEntry) {
+      const scope = path.length <= 2 ? workflowEnv : path.length <= 4 ?
+        (jobEnvs[path[1]] ??= emptyEnvScope()) : (stepEnvs[`${path[1]}\u0000${stepIndex}`] ??= emptyEnvScope());
+      if (envContainer) {
+        if (!value || value.startsWith('#') || /^(?:null|~)$/u.test(value)) {
+          // Block-style env mapping: the entries follow as separate lines.
+        } else if (value.startsWith('{')) {
+          const flow = flowEnvEntries(value);
+          if (flow === undefined) scope.unknown = true; else Object.assign(scope.entries, flow);
+        } else scope.unknown = true;
+      } else if (!value || value.startsWith('#')) {
+        // An empty entry value is null or a nested mapping; only the latter is unreadable.
+        const nested = lines.slice(index + 1).find(part => part.trim() && !/^\s*#/u.test(part));
+        if (nested && /^ */u.exec(nested)![0].length > keyIndent) {
+          if (relevantEnvKey(key)) scope.unknown = true;
+        } else scope.entries[key] = '';
+      } else {
+        const decoded = envScalar(value);
+        if (decoded === undefined) { if (relevantEnvKey(key)) scope.unknown = true; }
+        else scope.entries[key] = decoded;
+      }
+    }
     // Consume all block scalars, including names/metadata, before structural scanning.
     const block = /^([|>])([-+]?)(?:\s+#.*)?$/u.exec(value);
     if (block) {
@@ -122,7 +326,7 @@ export function workflowGlobalNpmInstalls(source: string): string[][] {
         if (!first) return unreadableRun();
         const contentIndent = /^ */u.exec(first)![0].length;
         if (body.some(part => part.trim() && /^ */u.exec(part)![0].length < contentIndent)) return unreadableRun();
-        findings.push(...globalNpmInstalls(blockScalar(body, contentIndent, block[1] === '>', block[2])));
+        runs.push({ job: jobKey, step: stepIndex, script: blockScalar(body, contentIndent, block[1] === '>', block[2]) });
       }
       continue;
     }
@@ -132,7 +336,14 @@ export function workflowGlobalNpmInstalls(source: string): string[][] {
     const scalar = /^["']/u.test(value) ? quotedScalar(value) :
       !value || /^[#|>&*![{]/u.test(value) || /^(?:null|true|false|~|\d+)$/u.test(value) ? undefined : value.replace(/\s+#.*$/u, '');
     if (scalar === undefined) return unreadableRun();
-    findings.push(...globalNpmInstalls(scalar));
+    runs.push({ job: jobKey, step: stepIndex, script: scalar });
+  }
+  for (const run of runs) {
+    const jobScope = jobEnvs[run.job] ?? emptyEnvScope();
+    const stepScope = stepEnvs[`${run.job}\u0000${run.step}`] ?? emptyEnvScope();
+    const effective = workflowEnv.unknown || jobScope.unknown || stepScope.unknown ? unreadableEnvScope() :
+      { ...workflowEnv.entries, ...jobScope.entries, ...stepScope.entries };
+    findings.push(...globalNpmInstalls(run.script, effective));
   }
   return findings;
 }

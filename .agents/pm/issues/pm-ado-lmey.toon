@@ -6,10 +6,10 @@ status: in_progress
 priority: 2
 tags[2]: "gh:unbraind/pm-ado#116","gh:unbraind/pm-ops#284"
 created_at: "2026-11-16T14:41:52.475Z"
-updated_at: "2026-11-17T12:01:17.915Z"
+updated_at: "2026-11-17T13:58:27.799Z"
 author: pi-glm
 acceptance_criteria: The release workflow installs the pinned npm with --prefix into a job-local directory and prepends that prefix bin to the job path; The workflow keeps the exact-version assertion on the effective npm; A workflow-contract test fails if any workflow replaces the global npm
-comments[30]{created_at,author,text}:
+comments[32]{created_at,author,text}:
   "2026-11-16T15:17:20.034Z",codex-sol,"Continuation: verified the existing worktree and remote branch state, preserved the earlier changes, and reused this item. Rerunning required gates to completion under the continuation author before committing results."
   "2026-11-16T15:27:41.370Z",codex-sol,"Root cause confirmed in the workflow source: global installation of the pinned npm replaces the same Node installation used by parallel jobs on a shared toolcache. Replaced each bootstrap with a job-local prefix, published only its bin directory to the job PATH, and retained exact-pin checks including a separate subsequent-step assertion. Workflow contracts reject global npm replacement across all workflow files. No runner settings or shared tool installations were modified."
   "2026-11-16T15:32:08.555Z",codex-sol,"Validation note: this package defines no lint script. Its existing docstring static gate is being run with typecheck, the quick npm test tier, the release workflow contracts and changelog:check; no new lint policy or dependency is introduced for this CI fix."
@@ -40,6 +40,8 @@ comments[30]{created_at,author,text}:
   "2026-11-17T11:09:12.611Z",codex-sol,"Changelog preservation check found four published main bullets absent from the existing branch. Separate merge 76b7393 restores main before the AS code commit, without folding new guard edits or their tracker records into that merge. Restored the updated lock with npm ci --ignore-scripts --no-audit --no-fund. The expanded referencing-file run includes the main CI/caller changes and every test mentioning the merged package metadata; it is currently exercising synchronization boundary matrices. Final results and tracker release precede another full changelog generation/check."
   "2026-11-17T11:59:27.011Z",codex-sol,"Scope correction: the 17-file expanded run included package metadata imported unchanged from main, although package.json and package-lock.json are absent from the AS diff against updated main. That optional stress run passed every initial boundary matrix and all 500 seeded sequences with 500 exact and 50 older replay checks, but was intentionally stopped during the separate 512-sequence concurrency model; no aggregate success is claimed. The original guard gates had passed. Re-running the required guard/workflow files plus their direct references and the imported CI/caller contracts on the final source before commit. The optional interrupted command is retained as evidence, not as a passing AS gate."
   "2026-11-17T12:01:16.144Z",codex-sol,"Final AS gate on the updated-main source passed 260/260 with zero skips or failures: the requested guard/release-workflow/release-approval files, coverage-gate direct references, CI quick contract and pm-github callers. Build and typecheck passed after installing the merged lock. PRRT_kwDOTOTl1M64YXiD and PRRT_kwDOTOTl1M64YXiL are fixed here as in all five guards; every copy has md5 a515dca0fd6175db9bcb1dc5c780989c. No reported finding was refused. The separate optional full synchronization stress run is incomplete as documented; its 500-sequence model passed and its later 512-sequence model was stopped without a pass claim. All published main changelog bullets were restored by separate merge 76b7393. Final tracker release precedes full changelog regeneration/check and the AS code commit. CI remains unverified."
+  "2026-11-17T13:53:44.369Z",codex-sol,"Round AV: reproduced command-prefix/camelCase, Cmd continuation and indentationless job-list defects with failing regressions. Checked npm 11.21.0 packaged command/alias definitions; retain conservative prefix scanning, physical/joined union and operand allowlist. Audit found no optional npm setup followed by unconditional verification in this repository."
+  "2026-11-17T13:58:24.120Z",codex-sol,"Round AV verified results: node --test --test-concurrency=2 test/ci-quick-contract.test.ts test/global-npm-guard.test.ts test/release-approval.test.ts test/release-workflow.test.ts test/verify-release-changelog-date.test.ts test/verify-release-publish-attestation.test.ts PASS (263/263/0/0/0 tests/pass/fail/cancelled/skipped); npm run typecheck PASS; Initial workflow scan flagged three prose comments because a is now a valid family prefix. Reworded those comments without weakening comment scanning; expanded reference-based suite and every real workflow now pass.. Changelog regeneration/check follows these final tracker writes. Item remains in progress for orchestrator review."
 files[7]{path,scope}:
   .github/workflows/release.yml,project
   test/global-npm-guard.test.ts,project
@@ -48,7 +50,7 @@ files[7]{path,scope}:
   test/release-workflow.test.ts,project
   test/verify-release-changelog-date.test.ts,project
   test/verify-release-publish-attestation.test.ts,project
-tests[16]:
+tests[18]:
   - command: "npm run typecheck && npm run docstring && npm test && node --test --test-concurrency=2 test/release-approval.test.ts test/release-workflow.test.ts && npm run changelog:check"
     scope: project
     timeout_seconds: 1200
@@ -169,6 +171,20 @@ tests[16]:
     provenance:
       author: codex-sol
       created_at: "2026-11-17T11:59:23.352Z"
+      source_kind: local_mutation
+      source_ref: fix/job-local-npm
+  - command: node --test --test-concurrency=2 test/global-npm-guard.test.ts test/release-approval.test.ts test/release-workflow.test.ts
+    scope: project
+    provenance:
+      author: codex-sol
+      created_at: "2026-11-17T13:54:13.257Z"
+      source_kind: local_mutation
+      source_ref: fix/job-local-npm
+  - command: node --test --test-concurrency=2 test/ci-quick-contract.test.ts test/global-npm-guard.test.ts test/release-approval.test.ts test/release-workflow.test.ts test/verify-release-changelog-date.test.ts test/verify-release-publish-attestation.test.ts
+    scope: project
+    provenance:
+      author: codex-sol
+      created_at: "2026-11-17T13:56:06.735Z"
       source_kind: local_mutation
       source_ref: fix/job-local-npm
 docs[2]{path,scope}:

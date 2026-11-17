@@ -56,7 +56,7 @@ jobs:
           set -euo pipefail
           # Install into a job-local prefix instead of replacing the runner's npm:
           # parallel jobs on one runner host share the Node installation in the
-          # toolcache, so installing globally mutates a sibling job's npm mid-install.
+          # toolcache, so installing globally mutates another sibling job's npm mid-install.
           npm install --prefix "$RUNNER_TEMP/npm-11.19.0" npm@11.19.0 --ignore-scripts --no-audit --no-fund
           echo "$RUNNER_TEMP/npm-11.19.0/node_modules/.bin" >> "$GITHUB_PATH"
           export PATH="$RUNNER_TEMP/npm-11.19.0/node_modules/.bin:$PATH"
@@ -593,14 +593,14 @@ jobs:
           # legacy auth - which blocks the OIDC exchange outright and fails with
           # the same registry 404 this migration exists to remove. Remove any
           # such line before publishing so the only credential path left is OIDC.
-          # Both files npm reads for a registry credential. `--global` and
+          # Both files npm reads for registry credentials. `--global` and
           # `--location=global` write to the GLOBAL config, which the userconfig
           # scrub never touches, so scrubbing only one leaves the other live.
           globalconfig="$(npm config get globalconfig 2>/dev/null || true)"
           for userconfig in "${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}" "${globalconfig}"; do
           if [ -n "$userconfig" ] && [ -f "$userconfig" ]; then
             # Both the registry-scoped forms (//registry/:_auth=...) and the
-            # GLOBAL forms (_auth=... at the start of a line). npm honours an
+            # GLOBAL forms (_auth=... at the start of each line). npm honours an
             # unscoped credential too, so removing only the scoped ones leaves
             # legacy authentication configured while every guard still passes.
             sed -i'' -e '/_authToken/d' \

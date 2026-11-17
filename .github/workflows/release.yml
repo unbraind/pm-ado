@@ -56,7 +56,7 @@ jobs:
           set -euo pipefail
           # Install into a job-local prefix instead of replacing the runner's npm:
           # parallel jobs on one runner host share the Node installation in the
-          # toolcache, so a global install mutates a sibling job's npm mid-install.
+          # toolcache, so installing globally mutates a sibling job's npm mid-install.
           npm install --prefix "$RUNNER_TEMP/npm-11.19.0" npm@11.19.0 --ignore-scripts --no-audit --no-fund
           echo "$RUNNER_TEMP/npm-11.19.0/node_modules/.bin" >> "$GITHUB_PATH"
           export PATH="$RUNNER_TEMP/npm-11.19.0/node_modules/.bin:$PATH"

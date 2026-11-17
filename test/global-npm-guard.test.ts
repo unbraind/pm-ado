@@ -65,28 +65,61 @@ const rejected = [
   '"$npm_bin/npm" install --global "npm@latest"',
   '"/synthetic tool/bin/npm" install -g npm',
   "npm 'add' '--location=global' 'npm@^11'",
-];
-const accepted = [
-  'npm install -g npm "--prefix" "$RUNNER_TEMP/npm-local"',
-  'npm install -g npm --prefix="$RUNNER_TEMP/npm-local" # approved bootstrap',
-  'env NPM_CONFIG_PREFIX="$RUNNER_TEMP/npm-local" NPM_CONFIG_GLOBAL=true npm install npm',
+  // Round AJ: update aliases, config-set run-wide signals, option abbreviations,
+  // shell forms the line-based rule scans like any other text, and computed
+  // or partial-flag operands. The marker rule cannot read option values, so
+  // --global=false is rejected fail-closed, and pnpm/npm-helper name npm as a
+  // substring - accepted false positives by design.
+  'npm update -g npm@latest',
+  'npm up -g npm',
+  'npm upgrade -g npm',
+  'npm udpate -g npm',
+  'npm config set global=true\nnpm install npm@11.21.0',
+  'npm config set global=true; npm install npm@11.21.0',
+  'npm set location global; npm install npm@11.21.0',
+  'npm c set global=true; npm install npm@11.21.0',
+  'npm install -g https://registry.npmjs.org/npm/-/npm-11.21.0.tgz',
+  'npm install --locatio=global npm@11.21.0',
+  'npm install --glob npm',
+  'npm install --gl npm',
+  'npm install --loc npm',
+  'npm install -L user npm',
+  'if true; then npm install -g npm@11.19.0; fi',
+  'command npm install -g npm@11.19.0',
+  'npx -y npm@latest install -g npm@latest',
+  'npm install -g "$pkg"',
+  'npm install -g pnpm',
+  'npm install -gpld pnpm',
+  'npm install --global -- npm-helper',
+  'npm install --global=false npm',
+  // An npm_config_global assignment contains the marker substring regardless
+  // of its value; only a false/0/empty env scope (not a script line) stays safe.
   'export NPM_CONFIG_GLOBAL=false; npm install npm',
   'NPM_CONFIG_GLOBAL=0; npm install npm',
   'NPM_CONFIG_GLOBAL=""; npm install npm',
+  'echo "NPM_CONFIG_GLOBAL=true" >> "$GITHUB_ENV"',
+  'echo "global=true" >> ~/.npmrc',
+  'printf "location=global\\n" | tee -a .npmrc >/dev/null',
+];
+const accepted = [
+  'npm install -g npm "--prefix" "$RUNNER_TEMP/npm-local"',
+  'npm install -g npm --prefix "$RUNNER_TEMP/npm-local" # approved bootstrap',
+  'env NPM_CONFIG_PREFIX="$RUNNER_TEMP/npm-local" NPM_CONFIG_GLOBAL=true npm install npm',
   'NPM_CONFIG_LOCATION=project; npm install npm',
   'npm install --prefix "$RUNNER_TEMP/npm-11.21.0" npm@11.21.0 --ignore-scripts --no-audit --no-fund',
   'npm --prefix "$RUNNER_TEMP/npm-11.21.0" install npm@11.21.0',
   'npm ci',
   'npm install -g some-other-package',
   'npm install -g npm --prefix "$RUNNER_TEMP/npm-11.21.0"',
-  'npm_config_prefix="$RUNNER_TEMP/npm-11.21.0" npm_config_global=true npm install npm',
-  'npm install -g pnpm',
+  'npm_config_prefix="$RUNNER_TEMP/npm-local" npm_config_global=true npm install npm',
   'npm --prefix install run ci',
-  'npm install --global=false npm',
-  'npm install --global -- npm-helper',
-  'npm install -D pnpm',
-  'npm install -gpld pnpm',
   'npm install -g npm --prefix "$RUNNER_TEMP/npm-11.21.0" && npm ci',
+  // Round AJ: comments and here-document text are scanned like any other
+  // text, so the surviving safe lines never mention npm at all.
+  'cat << EOF\nhello\nEOF',
+  'n=$(( ${#arr[@]} - 1 ))',
+  'echo $(( 1 << 2 ))',
+  'npm install -D pnpm',
 ];
 for (const command of rejected) test(`rejects ${JSON.stringify(command)}`, () => {
   assert.equal(globalNpmInstalls(command).length, 1);
@@ -103,6 +136,12 @@ test('shell punctuation and quoted text cannot hide a replacement', () => {
     assert.equal(globalNpmInstalls(`echo safe ${separator} npm install -g npm`).length, 1);
     if (separator !== '\n') assert.equal(globalNpmInstalls(`echo 'safe ${separator} npm install -g npm'`).length, 1);
   }
+});
+
+test('writing npm configuration to GITHUB_ENV rejects the writing step, not the reading one', () => {
+  const workflow = `jobs:\n  audit:\n    steps:\n      - run: |\n          echo "NPM_CONFIG_GLOBAL=true" >> "$GITHUB_ENV"\n      - run: npm install npm@11.21.0\n`;
+  assert.equal(workflowGlobalNpmInstalls(workflow).length, 1);
+  assert.deepEqual(globalNpmInstalls('npm install npm@11.21.0'), []);
 });
 
 /** Build a minimal workflow with real step-level fields. */
@@ -147,6 +186,14 @@ test('unsupported executable workflow layouts fail closed', () => {
   }
 });
 
+test('inert job-level sequence values never hide a run script', () => {
+  // A needs list consumes its items as metadata; a run script inside a job
+  // is still inspected, and a steps sequence without entries fails closed.
+  const source = 'jobs:\n  audit:\n    needs:\n      - prepare\n      - release\n    steps:\n      - run: npm install -g npm\n';
+  assert.equal(workflowGlobalNpmInstalls(source).length, 1);
+  assert.deepEqual(workflowGlobalNpmInstalls('jobs:\n  audit:\n    needs:\n      - prepare\n    steps:\n      - run: echo safe\n'), []);
+});
+
 test('indentationless step sequences still inspect only step run values', () => {
   const prefix = 'jobs:\n  audit:\n    steps:\n    - env: {run: "npm install -g npm"}\n      run: ';
   assert.deepEqual(workflowGlobalNpmInstalls(prefix + 'echo safe\n'), []);
@@ -165,7 +212,7 @@ test('workflow, job and step env compose and can force installs global', () => {
   assert.equal(workflowGlobalNpmInstalls(`jobs:\n  audit:\n    env:\n      NPM_CONFIG_GLOBAL: "true"\n    steps:\n      - run: npm install npm@11.19.0\n`).length, 1);
   // A safe step scope overrides an unsafe job scope.
   assert.equal(workflowGlobalNpmInstalls(`jobs:\n  audit:\n    env: {NPM_CONFIG_GLOBAL: "true"}\n    steps:\n      - env: {NPM_CONFIG_GLOBAL: "false"}\n        run: npm install npm@11.19.0\n`).length, 0);
-  // Only a job-local prefix inside the same segment covers a forced install.
+  // Only an approved bootstrap shape covers a forced install.
   assert.deepEqual(workflowGlobalNpmInstalls(workflow('env: {NPM_CONFIG_GLOBAL: "true"}\n        run: npm install --prefix "$RUNNER_TEMP/npm-local" npm@11.19.0')), []);
   assert.equal(workflowGlobalNpmInstalls(workflow('env: {NPM_CONFIG_GLOBAL: "true"}\n        run: npm install --prefix "$RUNNER_TEMP/npm-local" npm@11.19.0 && npm install npm@11.19.0')).length, 1);
   // Explicitly safe values stay accepted at every level.
@@ -186,6 +233,15 @@ test('computed location values reject installs at every effective env scope', ()
       workflow(`env:\n          ${entry}\n        run: npm install npm@11.21.0`),
     ]) assert.equal(workflowGlobalNpmInstalls(source).length, 1, source);
   }
+});
+
+test('only an exact approved bootstrap line is exempt, whatever surrounds it', () => {
+  // The exemption comes only from the whole line; text elsewhere on the line,
+  // in a comment, or in another command never grants it.
+  assert.deepEqual(globalNpmInstalls('npm install --prefix "$RUNNER_TEMP/npm-11.19.0" npm@11.19.0 --ignore-scripts --no-audit --no-fund'), []);
+  assert.equal(globalNpmInstalls('npm install --prefix "$RUNNER_TEMP/npm-11.19.0" npm@11.19.0 --ignore-scripts --no-audit --no-fund && npm install -g npm').length, 1);
+  assert.equal(globalNpmInstalls('npm install --prefix "$RUNNER_TEMP/npm-11.19.0" npm@latest --ignore-scripts --no-audit --no-fund').length, 0);
+  assert.equal(globalNpmInstalls('npm install --prefix "$RUNNER_TEMP/npm-11.19.0" npm@11.19.0 --ignore-scripts --no-audit --no-fund --prefix /shared').length, 0);
 });
 
 test('only actual separators isolate a sibling prefix exemption', () => {

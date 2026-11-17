@@ -55,6 +55,24 @@ test('publishing uses a recent npm, OIDC permission and provenance without token
   }
 });
 
+test('the job-local npm prefix is published to GITHUB_PATH and verified by exact version', () => {
+  // The bootstrap installs the pinned npm into a job-local prefix; later
+  // steps reach it only through the bin directory appended to $GITHUB_PATH,
+  // and the verify step must expect exactly the installed version, not
+  // merely any newer one.
+  const install = executable.split('\n').find(line => /^\s*npm install --prefix "\$RUNNER_TEMP\/npm-[\d.]+" npm@[\d.]+/u.test(line));
+  assert.ok(install, 'the release workflow must install the pinned npm into a job-local prefix');
+  const directory = install!.match(/"\$RUNNER_TEMP\/(npm-[\d.]+)"/u)![1];
+  const version = install!.match(/npm@([\d.]+)/u)![1];
+  assert.ok(executable.includes(`echo "$RUNNER_TEMP/${directory}/node_modules/.bin" >> "$GITHUB_PATH"`),
+    'the bootstrap step must append the same prefix bin directory to $GITHUB_PATH');
+  const lines = executable.split('\n');
+  const nameIndex = lines.findIndex(line => line.includes('Verify job-local npm version'));
+  assert.ok(nameIndex !== -1, 'the workflow must verify the job-local npm version');
+  const verify = lines.slice(nameIndex, nameIndex + 5).find(line => line.trim().startsWith('run:'));
+  assert.ok(verify?.includes(`= "${version}"`), 'the verify step must expect exactly the installed version');
+});
+
 test('the manifest remains public and names its catalog and public author', () => {
   assert.notEqual(manifest.private, true);
   for (const key of ['name', 'version', 'description', 'license', 'repository', 'bugs', 'engines']) assert.ok(manifest[key], key);

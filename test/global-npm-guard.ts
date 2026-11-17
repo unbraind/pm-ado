@@ -1,13 +1,17 @@
 /**
  * Threat model: catch accidental replacement of the runner's shared npm in
  * this repository's own reviewed workflows. False positives are acceptable;
- * misses are not. This guard never executes shell input.
+ * misses are not. This guard never executes shell input. Deliberate
+ * obfuscation is out of scope: an npm command held in a variable, `eval`,
+ * shell aliases, and scripts outside the workflow YAML would not pass review.
  */
 /**
- * Install-family commands: install and its abbreviated/misspelled aliases,
- * add, install-test/it, ci, and install-ci-test/cit all count as installing.
+ * Install-family commands: install and its abbreviated and misspelled
+ * aliases (i, in, ins, inst, insta, instal, isnt, isnta, isntal, isntall),
+ * add, install-test/it, install-ci-test/cit, ci, and update with its aliases
+ * (up, upgrade, udpate) all count as installing.
  */
-const installAliases = new Set(['install', 'i', 'in', 'ins', 'inst', 'insta', 'instal', 'isnt', 'isnta', 'isntal', 'isntall', 'add', 'install-test', 'it', 'ci', 'install-ci-test', 'cit']);
+const installFamily = new Set(['install', 'i', 'in', 'ins', 'inst', 'insta', 'instal', 'isnt', 'isnta', 'isntal', 'isntall', 'add', 'install-test', 'it', 'ci', 'install-ci-test', 'cit', 'update', 'up', 'upgrade', 'udpate']);
 
 /** npm reads these environment keys case-insensitively. */
 function relevantEnvKey(key: string): boolean {
@@ -30,178 +34,106 @@ function runForcesGlobal(script: string): boolean {
 /** An env scope the parser refuses to interpret forces every install to be checked as global. */
 const unreadableEnvScope = (): Record<string, string> => ({ npm_config_global: '${{ unreadable env scope }}' });
 
+/** Remove one surrounding pair of single or double quotes, if the token has one. */
+function unquote(word: string): string {
+  return word.length > 1 && (word[0] === '"' && word[word.length - 1] === '"' ||
+    word[0] === "'" && word[word.length - 1] === "'") ? word.slice(1, -1) : word;
+}
+
+/** The whitespace-separated tokens of one logical line. Quotes never split a token further. */
+function lineTokens(line: string): string[] {
+  return line.trim().split(/\s+/u).filter(Boolean).map(unquote);
+}
+
+/** One of the tokens marks this line as installing globally. */
+function globalMarker(tokens: string[]): boolean {
+  return tokens.some((word, index) => {
+    if (/^-[a-z]*g[a-z]*$/iu.test(word)) return true; // -g, -fg, -gpld
+    if (word.toLowerCase().includes('global')) return true; // --global, --location=global, -L=global
+    if (/^-L$/iu.test(word)) return index + 1 < tokens.length; // -L followed by any value
+    if (/^-L=/iu.test(word)) return true; // -L=<any value>
+    const name = /^--([a-z]+)(?:=.*)?$/iu.exec(word)?.[1]?.toLowerCase(); // --gl, --glob, --loc, --location
+    return name !== undefined && name.length >= 2 &&
+      ('global'.startsWith(name) || 'location'.startsWith(name));
+  });
+}
+
+/** An operand names npm when it contains npm anywhere or is computed. */
+function namesNpm(tokens: string[]): boolean {
+  return tokens.some(word => !word.startsWith('-') && (/npm/iu.test(word) || word.startsWith('$')));
+}
+
 /**
- * Split a run script into shell command segments at unquoted `;`, `&`, `|`
- * and newlines. Quoted, escaped, commented and heredoc text stays inside its
- * segment — matches inside it still count — but never delimits commands. Quote
- * state spans lines and across `$( … )` substitutions, which nest a fresh
- * quoting context even inside double quotes; an unbalanced quote or
- * substitution means the script cannot be delimited with confidence.
+ * The approved bootstrap shapes: whole logical lines that install npm into a
+ * job-local prefix under $RUNNER_TEMP, built from the real release workflows
+ * and the approved fixtures. A global install line with an npm operand is a
+ * violation unless its whole trimmed text matches one of these exactly, so
+ * the exemption comes only from an exact line, never from text elsewhere on
+ * the line, from a comment, or from another command. A trailing comment after
+ * the exact command is the only tolerated addition.
  */
-function commandSegments(script: string): string[] | undefined {
-  const segments: string[] = [];
-  // Each entry restores the quote state that was open when it was entered.
-  const contexts: string[] = [];
-  let start = 0;
-  let quote = '';
-  for (let index = 0; index < script.length; index++) {
-    const char = script[index];
-    if (quote === "'") { if (char === "'") quote = ''; continue; }
-    if (quote === '"') {
-      if (char === '\\') { index++; continue; }
-      if (char === '$' && script[index + 1] === '(') {
-        contexts.push(quote);
-        quote = '';
-        index++;
-        if (script[index + 1] === '(') { contexts.push(''); index++; }
-        continue;
-      }
-      if (char === '"') quote = '';
-      continue;
-    }
-    if (char === '"' || char === "'") { quote = char; continue; }
-    if (char === '\\') { index++; continue; }
-    if (char === '$' && script[index + 1] === '(') {
-      contexts.push(quote);
-      index++;
-      if (script[index + 1] === '(') { contexts.push(''); index++; }
-      continue;
-    }
-    if (char === '(' && contexts.length) { contexts.push(''); continue; }
-    if (char === ')' && contexts.length) { quote = contexts.pop()!; continue; }
-    if (char === '<' && script[index + 1] === '<') {
-      if (script[index + 2] === '<') { index += 2; continue; }
-      // A here-document body ends at its delimiter line and delimits nothing.
-      let cursor = index + 2;
-      let stripTabs = false;
-      if (script[cursor] === '-') { stripTabs = true; cursor++; }
-      let delimiter = '';
-      if (script[cursor] === "'" || script[cursor] === '"') {
-        const close = script.indexOf(script[cursor], cursor + 1);
-        if (close === -1) return undefined;
-        delimiter = script.slice(cursor + 1, close);
-        cursor = close + 1;
-      } else {
-        const word = /^[\w.-]+/u.exec(script.slice(cursor));
-        if (!word) return undefined;
-        delimiter = word[0];
-        cursor += delimiter.length;
-      }
-      if (!delimiter) return undefined;
-      let position = script.indexOf('\n', cursor);
-      if (position === -1) return undefined;
-      for (;;) {
-        position += 1;
-        const lineEnd = script.indexOf('\n', position);
-        if (lineEnd === -1) return undefined;
-        const line = script.slice(position, lineEnd);
-        if ((stripTabs ? line.replace(/^\t+/u, '') : line) === delimiter) {
-          index = lineEnd - 1;
-          break;
-        }
-        position = lineEnd;
-      }
-      continue;
-    }
-    if (char === '#' && (index === 0 || /[\s;&|(){}]/u.test(script[index - 1]))) {
-      // A comment runs to end of line: its text never delimits or quotes.
-      const newline = script.indexOf('\n', index);
-      index = (newline === -1 ? script.length : newline) - 1;
-      continue;
-    }
-    // Ampersands in redirects (2>&1, >&2, &>, &>>, <&) are operands.
-    if (char === '&' && (/[<>]/u.test(script[index - 1] ?? '') || script[index + 1] === '>')) continue;
-    if (char === '\n' || char === ';' || char === '&' || char === '|') {
-      segments.push(script.slice(start, index));
-      if ((char === '&' || char === '|') && script[index + 1] === char) index++;
-      start = index + 1;
-    }
-  }
-  if (quote || contexts.length) return undefined;
-  segments.push(script.slice(start));
-  return segments.filter(segment => segment.trim());
-}
-
-/** Strip only shell comments at word starts outside quotes, for exemptions. */
-function withoutComment(segment: string): string {
-  let quote = '';
-  for (let index = 0; index < segment.length; index++) {
-    const char = segment[index];
-    if (char === '\\' && quote !== "'") { index++; continue; }
-    if (quote) { if (char === quote) quote = ''; continue; }
-    if (char === '"' || char === "'") { quote = char; continue; }
-    if (char === '#' && (index === 0 || /[\s;&|(){}<>]/u.test(segment[index - 1]))) return segment.slice(0, index);
-  }
-  return segment;
-}
-
-/** Broad detection words retain comments and quoted/echoed matches. */
-function detectionWords(script: string): string[] {
-  return script.replace(/["']/gu, '').split(/[\s;&|(){}<>]+/u).filter(Boolean);
-}
+const approvedBootstrapShapes: RegExp[] = [
+  // The release workflow bootstrap: the pinned npm into $RUNNER_TEMP, followed
+  // by any of --ignore-scripts, --no-audit and --no-fund.
+  /^npm install --prefix "\$RUNNER_TEMP\/npm-[\w.-]+" npm@\d+(?:\.\d+)*(?: --ignore-scripts)?(?: --no-audit)?(?: --no-fund)?(?:\s+#.*)?$/u,
+  // The same bootstrap with the prefix option before the install-family word.
+  /^npm --prefix "\$RUNNER_TEMP\/npm-[\w.-]+" install npm@\d+(?:\.\d+)*(?:\s+#.*)?$/u,
+  // An approved fixture form: -g with a job-local --prefix, which relocates
+  // the global location, optionally followed by npm ci.
+  /^npm install -g npm --prefix "\$RUNNER_TEMP\/npm-[\w.-]+"(?: && npm ci)?(?:\s+#.*)?$/u,
+  // The same fixture form with the prefix flag quoted.
+  /^npm install -g npm "--prefix" "\$RUNNER_TEMP\/npm-[\w.-]+"(?:\s+#.*)?$/u,
+  // Env-assignment prefixes must precede npm and carry a job-local prefix.
+  /^env NPM_CONFIG_PREFIX="\$RUNNER_TEMP\/npm-[\w.-]+" NPM_CONFIG_GLOBAL=true npm install npm(?:\s+#.*)?$/u,
+  /^npm_config_prefix="\$RUNNER_TEMP\/npm-[\w.-]+" npm_config_global=true npm install npm(?:\s+#.*)?$/u,
+];
 
 /**
- * Grant exemptions only for simple npm commands we can confidently read.
- * Unknown syntax/arguments stay checked. All prefix values must be local;
- * comments, option terminators, quoted literal dollars and other commands
- * cannot contribute a prefix. Assignment prefixes must precede npm.
- */
-function hasLocalPrefix(command: string): boolean {
-  if (/[\\`;&|(){}<>\n]/u.test(command) || /'[^']*\$[^']*'/u.test(command)) return false;
-  const words = (command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/gu) ?? []).map(word => word.replace(/["']/gu, ''));
-  let index = words[0] === 'env' ? 1 : 0;
-  const prefixes: string[] = [];
-  while (/^[a-z_][\w]*=/iu.test(words[index] ?? '')) {
-    if (/^npm_config_prefix=/iu.test(words[index])) prefixes.push(words[index].slice(words[index].indexOf('=') + 1));
-    index++;
-  }
-  if (words[index++] !== 'npm') return false;
-  let installing = false;
-  for (; index < words.length; index++) {
-    const word = words[index];
-    if (word === '--prefix') prefixes.push(words[++index] ?? '');
-    else if (word.startsWith('--prefix=')) prefixes.push(word.slice('--prefix='.length));
-    else if (installAliases.has(word) && !installing) installing = true;
-    else if (['-g', '--global', '--global=true', '--ignore-scripts', '--no-audit', '--no-fund'].includes(word)) continue;
-    else if (installing && (word === 'npm' || /^npm@[^\s]+$/u.test(word))) continue;
-    else return false;
-  }
-  return installing && prefixes.length > 0 && prefixes.every(prefix =>
-    /^\$RUNNER_TEMP\/[\w-][\w.-]*(?:\/[\w-][\w.-]*)*$/u.test(prefix));
-}
-
-/**
- * Global configuration and flags apply conservatively to the whole run.
- * Segments are used ONLY to remove effective job-local prefix exemptions.
- * Detection keeps comments and quoted text, and checks each logical line so
- * an install without a continued operand is not joined to a later command.
+ * Scan logical lines fail-closed: join backslash continuations, then split on
+ * newlines only. Comment and here-document text is scanned like any other
+ * text — false positives there are acceptable. A global install line with an
+ * npm operand is a violation unless it matches an approved bootstrap shape,
+ * and writing npm configuration for later steps rejects the writing step.
  */
 export function globalNpmInstalls(script: string, env?: Record<string, string>): string[][] {
   const run = script.replace(/\\\r?\n/gu, '');
-  const words = detectionWords(run);
-  const global = envForcesGlobal(env ?? {}) || runForcesGlobal(run) || words.some((word, index) =>
-    ['--global', '--global=true', '--location=global', '-L=global'].includes(word) ||
-    /^-[a-z]*g[a-z]*$/iu.test(word) ||
-    (['--location', '-L'].includes(word) && words[index + 1] === 'global'));
-  const segments = commandSegments(run);
-  if (segments === undefined) return [['undelimitable command line']];
-  if (!global) return [];
-  let unchecked = run;
-  let offset = 0;
-  for (const segment of segments) {
-    const position = run.indexOf(segment, offset);
-    offset = position + segment.length;
-    const effective = withoutComment(segment);
-    // Mask only the effective exempt command; retain comments and separators.
-    if (hasLocalPrefix(effective)) unchecked = unchecked.slice(0, position) +
-      effective.replace(/[^\r\n]/gu, ' ') + unchecked.slice(position + effective.length);
+  const lines = run.split('\n').map(line => line.trim()).filter(Boolean);
+  const findings: string[][] = [];
+  // A global npm_config_* exported through GITHUB_ENV reaches every later
+  // step of the job; there is no way to check those steps, so reject the
+  // writing step itself instead of tracking state across steps.
+  if (/github_env/iu.test(run) && /npm_config_(?:global|location|prefix)/iu.test(run))
+    findings.push(['npm configuration written to GITHUB_ENV']);
+  for (const line of lines) {
+    // A written npmrc line names its target path and a write operator; the
+    // value being global or location-selected is what makes it a replacement.
+    if (/npmrc/iu.test(line) && (line.includes('>') || /\btee\b/iu.test(line) || /config\s+set/u.test(line)) &&
+      /global|location/iu.test(line))
+      findings.push(['npm configuration written to an npmrc file', line]);
   }
-  const installsNpm = unchecked.split('\n').some(line => {
-    const tokens = detectionWords(line);
-    return tokens.some((word, index) => installAliases.has(word) &&
-      tokens.slice(index + 1).some(packageWord => packageWord === 'npm' || packageWord.startsWith('npm@')));
+  const globalConfigured = envForcesGlobal(env ?? {}) || runForcesGlobal(run) || lines.some(line => {
+    // npm config set / npm set / npm c set name global or location; the run
+    // conservatively counts as global-configured from then on. Only a set
+    // token configures: the release workflow reads `npm config get
+    // globalconfig`, and a bare config token would reject that read-only
+    // step, so config alone must not count (narrowed: a real workflow tripped).
+    const tokens = lineTokens(line);
+    return /\bnpm\b/iu.test(line) && tokens.includes('set') && /global|location/iu.test(line);
   });
-  return installsNpm ? [words] : [];
+  for (const line of lines) {
+    const tokens = lineTokens(line);
+    // A line is an npm install line when it mentions npm at a word boundary
+    // — /usr/bin/npm, npx npm@…, command npm and `then npm` included — and
+    // any token is an install-family word.
+    if (!/\bnpm\b/iu.test(line)) continue;
+    const installIndex = tokens.findIndex(word => installFamily.has(word));
+    if (installIndex === -1) continue;
+    if (!globalConfigured && !globalMarker(tokens)) continue;
+    if (!namesNpm(tokens.slice(installIndex + 1))) continue;
+    if (approvedBootstrapShapes.some(shape => shape.test(line))) continue;
+    findings.push(tokens);
+  }
+  return findings;
 }
 
 /** Represent extraction failures as violations, never as a successful empty scan. */
@@ -329,6 +261,7 @@ export function workflowGlobalNpmInstalls(source: string): string[][] {
     let parent = parents[parents.length - 1]?.path ?? [];
     let text = line.slice(indent);
     let keyIndent = indent;
+    let sequence = false;
     if (text.startsWith('- ')) {
       if (parent.length === 3 && parent[0] === 'jobs' && parent[2] === 'steps') {
         parent = [...parent, '*'];
@@ -337,8 +270,12 @@ export function workflowGlobalNpmInstalls(source: string): string[][] {
       }
       text = text.slice(2);
       keyIndent += 2;
+      sequence = true;
     }
     const entry = /^(?:([\w-]+)|'([^']+)'|"([^"\\]+)"):\s*(.*)$/u.exec(text);
+    // Sequence items outside steps (a job's needs list, for example) are
+    // inert metadata: only steps[*].run is executable, so consume them.
+    if (sequence && !entry && parent.length === 3 && parent[0] === 'jobs' && parent[2] !== 'steps') continue;
     if (!entry) {
       if ((!parent.length && !['---', '...'].includes(text)) ||
         (parent[0] === 'jobs' && (parent.length <= 3 || (parent.length === 4 && parent[3] === '*')))) return unreadableRun();

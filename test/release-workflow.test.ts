@@ -165,6 +165,21 @@ test("the npm upgrade cannot be skipped and fails closed on the version it actua
   assert.match(step, /set -euo pipefail/);
 });
 
+/** Only the pinned bootstrap directory may be written to GITHUB_PATH once. */
+function assertOnlyPinnedPathWrite(step: string): void {
+  const approved = /^ *echo "\$RUNNER_TEMP\/npm-11\.19\.0\/node_modules\/\.bin" >> "\$GITHUB_PATH" *$/m;
+  assert.match(step, approved, "the bootstrap must publish its pinned bin directory");
+  assert.doesNotMatch(step.replace(approved, ""), /GITHUB_PATH/);
+}
+
+test("extra bootstrap GITHUB_PATH writes fail the publication contract", () => {
+  const bootstrap = executable(stepSource("Use an npm that supports trusted publishing"));
+  assertOnlyPinnedPathWrite(bootstrap);
+  const extra = '          echo "/shared/older-npm" >> "$GITHUB_PATH"\n';
+  assert.throws(() => assertOnlyPinnedPathWrite(bootstrap + extra), /GITHUB_PATH/);
+  assert.throws(() => assertOnlyPinnedPathWrite(bootstrap + bootstrap), /GITHUB_PATH/);
+});
+
 test("nothing between the upgrade and the publish step can put an older npm back", () => {
   // Keeping the 11.x upgrade and then installing npm 10 later leaves trusted
   // publishing broken while every check above still passes.
@@ -199,6 +214,7 @@ test("nothing between the upgrade and the publish step can put an older npm back
   // without installing anything, so it defeats an install-time check entirely.
   // Only the pinned-install step itself may prepend, and only the directory of
   // the npm it just installed; anything else still fails at review time.
+  assertOnlyPinnedPathWrite(executable(stepSource("Use an npm that supports trusted publishing")));
   const afterUpgrade = executable(workflow.slice(upgrade + stepSource("Use an npm that supports trusted publishing").length, publishEnd));
   assert.doesNotMatch(afterUpgrade, /GITHUB_PATH/);
 });

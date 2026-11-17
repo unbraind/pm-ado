@@ -2,6 +2,10 @@
 
 ## 2026.11.8 - 2026-11-08
 
+No changes.
+
+## 2026.11.17 - 2026-11-17
+
 ### Fixed
 
 - Adopt decision-bound native revision guards for Azure lifecycle writes ([pm-ado-sdk-history-fence](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-sdk-history-fence.toon))

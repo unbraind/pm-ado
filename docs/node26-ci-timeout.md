@@ -34,7 +34,7 @@ Hosted Node 26 now uses `ci:quick`: one ordinary test pass, with typechecking, d
 Using Node 26.13.0 with the requested network-family timeout:
 
 ```sh
-PM_TEST_DEPTH=quick node --test --test-reporter=spec --test-name-pattern='round-3 model: 512|boundary matrix sync-mixed|forward-only boundary matrix sync' test/sync.test.ts
+PM_TEST_DEPTH=quick node --test --test-reporter=spec --test-name-pattern="round-3 model: 512|boundary matrix sync-mixed|forward-only boundary matrix sync" test/sync.test.ts
 ```
 
 - boundary matrix sync-mixed: every REST/local/intent boundary preserves edits or holds an ambiguous create safely (207669.76025ms)

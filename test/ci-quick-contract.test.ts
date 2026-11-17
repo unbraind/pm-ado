@@ -7,12 +7,14 @@ import { parse } from "yaml";
 const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { scripts: Record<string, string> };
 
 /** Expand package script calls so adding coverage through an alias cannot evade the hosted contract. */
-function commands(name: string, ancestors: readonly string[] = []): string[] {
+function commands(name: string, ancestors: readonly string[] = [], scripts = manifest.scripts): string[] {
   assert.ok(!ancestors.includes(name), `recursive script: ${name}`);
-  assert.equal(typeof manifest.scripts[name], "string", `missing script: ${name}`);
-  return manifest.scripts[name].split(" && ").flatMap((command) => {
+  assert.equal(typeof scripts[name], "string", `missing script: ${name}`);
+  return scripts[name].split(" && ").flatMap((command) => {
     const nested = /^npm run ([\w:-]+)$/.exec(command)?.[1] ?? (command === "npm test" ? "test" : undefined);
-    return nested ? commands(nested, [...ancestors, name]) : [command];
+    if (nested) return commands(nested, [...ancestors, name], scripts);
+    assert.ok(command === "npm pack --dry-run" || !/^npm(?:\s|$)/.test(command), `unrecognised npm command: ${command}`);
+    return [command];
   });
 }
 
@@ -41,4 +43,10 @@ test("full coverage remains mandatory in CI Deep and before publication", () => 
   assert.ok(deep.jobs.deep.steps.some((step: { run?: string }) => step.run?.includes("npm run release:check")));
   const release = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
   assert.match(release, /npm run release:check/);
+});
+
+test("unrecognised npm flags cannot hide a coverage alias from the quick contract", () => {
+  const scripts = { quick: "npm run --silent coverage", coverage: "node scripts/coverage-gate.ts" };
+  assert.throws(() => commands("quick", [], scripts), /unrecognised npm command: npm run --silent coverage/);
+  assert.deepEqual(commands("quick", [], { ...scripts, quick: "npm run coverage" }), ["node scripts/coverage-gate.ts"]);
 });

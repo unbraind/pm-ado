@@ -2,25 +2,49 @@ id: pm-ado-node26-timeout
 title: Node 26 hosted quick gate repeats exhaustive coverage suites past the job deadline
 description: Hosted Node 26 jobs on main and pull requests reach the unchanged 30 minute limit while running repeated coverage passes; investigate exact per-test timings and preserve separate exhaustive certification.
 type: Issue
+pm_format_version: 2
 status: in_progress
 priority: 2
 tags: []
 created_at: "2026-11-16T19:28:25.310Z"
-updated_at: "2026-11-16T19:44:21.134Z"
+updated_at: "2026-11-17T02:28:06.225Z"
 author: codex-sol
 acceptance_criteria: Compare Node 22 and Node 26 job logs; reproduce expensive tests under Node 26; fix the verified cause without raising the job timeout; add regression coverage; pass targeted package and workflow gates.
-comments[4]{created_at,author,text}:
+comments[6]{created_at,author,text}:
   "2026-11-16T19:29:43.821Z",codex-sol,"Initial log evidence: Node 26 executes V8 coverage then the Istanbul statement pass, with completed tests throughout both cancelled jobs. Job 133454486570 finishes its first suite in 1064.210 s, then starts the same tests again; Node 22 uses npm test once. Investigation now compares per-test TAP/spec durations and checks unbounded model loops that ignore PM_TEST_DEPTH=quick."
   "2026-11-16T19:37:49.679Z",codex-sol,"Root cause confirmed in both hosted job pairs: Node 22 runs one plain npm test pass; Node 26 quick validation invokes release:check and therefore the complete V8 suite followed by another Istanbul suite. Completed tests continue until the 30 minute cancellation. First-pass suite durations: PR110 Node22 1005.273 s vs Node26 1170.851 s; PR116 Node22 1308.834 s vs Node26 1064.210 s. This does not prove a Node26 hang or consistently slower runtime. Route hosted Node26 to ci:quick with one ordinary suite and retain all full coverage requirements in CI Deep and publication; timeout remains 30 minutes. Detailed per-test comparisons are in docs/node26-ci-timeout.md."
   "2026-11-16T19:41:46.468Z",codex-sol,"Local Node 26.13.0 reproduction completed successfully: PM_TEST_DEPTH=quick node --test --test-reporter=spec --test-name-pattern=\"round-3 model: 512|boundary matrix sync-mixed|forward-only boundary matrix sync\" test/sync.test.ts. All selected matrices finished and the process exited in 659.869 s. Workflow contracts pass 26/26 directly and through pm test --run --progress; the new quick contract fails against original main scripts and passes after restoration. Typecheck, build, build:test, docstrings, changelog:check and git diff --check pass. No lint script or configuration is present, so lint is unavailable rather than claimed passing. Full-suite coverage and final hosted duration remain pending CI."
   "2026-11-16T19:44:21.132Z",codex-sol,"Implementation commit e2c57b7 contains the fix, contract tests, timing document and matching tracker history. Publication is blocked by the renewed shared-runner hold, expiring at 2026-11-16T21:00:00Z, beyond the 2026-11-16T20:06:18Z stop deadline from the last successful push. No branch push or new PR was created. The waiting push shell was cancelled so it cannot publish after this turn stops. Ready PR text is prepared outside tracked source. No timeout was raised and no workflow was dispatched or rerun."
+  "2026-11-17T02:22:53.202Z",codex-sol,"AB findings verified: the reproduction uses single quotes rejected by the process-fixture inventory, and commands() silently passes npm run with flags through as opaque text. Use documented double quotes and fail closed on unrecognised npm invocations, with a flagged-coverage regression."
+  "2026-11-17T02:28:02.943Z",codex-sol,"Review AB fixed PRRT_kwDOUMUq1864MnD7 and PRRT_kwDOUMUq1864HCzE. Documentation now double-quotes the multi-word test-name pattern. The contract explicitly refuses unrecognised npm commands (including npm run --silent coverage) rather than silently treating them as leaves; its known pack dry-run leaf remains accepted. Node 22 and Node 26 selected regression commands each pass 4/4. Linked process-fixture and quick-contract tests pass in tracker/source context, and existing linked workflow contracts pass. Typecheck, build:test, changelog:check and diff whitespace checks pass; no lint script exists. The initial none/snapshot fixture run failed because tracker records are intentionally absent there; corrected linked context passes."
 files[4]{path,scope}:
   .github/workflows/ci.yml,project
   docs/node26-ci-timeout.md,project
   package.json,project
   test/ci-quick-contract.test.ts,project
-tests[1]{command,scope,timeout_seconds,pm_context_mode,workspace_context_mode,provenance{author,created_at,source_kind,source_ref}}:
-  node --test --test-reporter=spec test/ci-quick-contract.test.ts test/release-workflow.test.ts test/verify-release-publish-attestation.test.ts test/pm-github-callers.test.ts,project,300,none,snapshot,codex-sol,"2026-11-16T19:34:17.481Z",local_mutation,fix/node26-test-timeout
+tests[2]:
+  - command: node --test --test-reporter=spec test/ci-quick-contract.test.ts test/release-workflow.test.ts test/verify-release-publish-attestation.test.ts test/pm-github-callers.test.ts
+    scope: project
+    timeout_seconds: 300
+    pm_context_mode: none
+    workspace_context_mode: snapshot
+    provenance:
+      author: codex-sol
+      created_at: "2026-11-16T19:34:17.481Z"
+      source_kind: local_mutation
+      source_ref: fix/node26-test-timeout
+  - command: node --test test/process-fixture.test.ts test/ci-quick-contract.test.ts
+    scope: project
+    timeout_seconds: 300
+    pm_context_mode: tracker
+    workspace_context_mode: source
+    provenance:
+      author: codex-sol
+      created_at: "2026-11-17T02:25:03.688Z"
+      source_kind: local_mutation
+      source_ref: fix/node26-test-timeout
+    updated_by: codex-sol
+    updated_at: "2026-11-17T02:26:54.097Z"
 docs[1]{path,scope}:
   docs/node26-ci-timeout.md,project
 body: ""

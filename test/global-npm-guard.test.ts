@@ -4,6 +4,35 @@ import { test } from 'node:test';
 import { globalNpmInstalls, workflowGlobalNpmInstalls } from './global-npm-guard.ts';
 
 const rejected = [
+  'npm install -g npm "--prefix $RUNNER_TEMP/npm-local"',
+  'npm install -g npm "npm_config_prefix=$RUNNER_TEMP/npm-local"',
+  // Round AH: run-wide signals, install families, redirects and effective prefixes.
+  'export NPM_CONFIG_GLOBAL=true; npm install npm@11.21.0',
+  'declare -x npm_config_location=global; npm install npm@11.21.0',
+  'npm install npm@11.21.0; env NPM_CONFIG_GLOBAL=true echo ready',
+  'NPM_CONFIG_LOCATION=$LOCATION; npm install npm@11.21.0',
+  'NPM_CONFIG_LOCATION=$(printf global); npm install npm@11.21.0',
+  'NPM_CONFIG_GLOBAL="${{ inputs.global }}"; npm install npm@11.21.0',
+  'npm install-test -g npm',
+  'npm it -g npm',
+  'npm install-ci-test -g npm',
+  'npm cit -g npm',
+  'npm ci -g npm',
+  'npm install -L global npm',
+  'npm install -L=global npm',
+  'npm install -fg npm@11.21.0',
+  'npm install -g 2>&1 npm@11.21.0',
+  ...['>&2', '&>output', '&>>output', '<&0'].map(redirect => `npm install -g ${redirect} npm@11.21.0`),
+  'npm install -g npm # --prefix "$RUNNER_TEMP/npm-local"',
+  'npm install -g npm # npm_config_prefix="$RUNNER_TEMP/npm-local"',
+  'npm install --prefix "$RUNNER_TEMP/bootstrap" npm@11.21.0 && npm install -g npm@11.21.0',
+  'npm install --prefix "$RUNNER_TEMP/bootstrap" npm@11.21.0 && npm install npm@11.21.0; export NPM_CONFIG_GLOBAL=true',
+  'echo --prefix "$RUNNER_TEMP/npm-local" "npm install -g npm"',
+  'npm install -g npm -- --prefix "$RUNNER_TEMP/npm-local"',
+  'npm install -g npm npm_config_prefix="$RUNNER_TEMP/npm-local"',
+  'npm install -g npm --prefix "$RUNNER_TEMP/npm-local" --prefix /shared',
+  "npm install -g npm --prefix '$RUNNER_TEMP/npm-local'",
+  'npm install --prefix "$RUNNER_TEMP/npm-local" npm # npm install -g npm',
   'npx npm install -g npm@latest',
   'echo "npm install -g npm@latest"',
   '# npm install -g npm@latest',
@@ -38,6 +67,13 @@ const rejected = [
   "npm 'add' '--location=global' 'npm@^11'",
 ];
 const accepted = [
+  'npm install -g npm "--prefix" "$RUNNER_TEMP/npm-local"',
+  'npm install -g npm --prefix="$RUNNER_TEMP/npm-local" # approved bootstrap',
+  'env NPM_CONFIG_PREFIX="$RUNNER_TEMP/npm-local" NPM_CONFIG_GLOBAL=true npm install npm',
+  'export NPM_CONFIG_GLOBAL=false; npm install npm',
+  'NPM_CONFIG_GLOBAL=0; npm install npm',
+  'NPM_CONFIG_GLOBAL=""; npm install npm',
+  'NPM_CONFIG_LOCATION=project; npm install npm',
   'npm install --prefix "$RUNNER_TEMP/npm-11.21.0" npm@11.21.0 --ignore-scripts --no-audit --no-fund',
   'npm --prefix "$RUNNER_TEMP/npm-11.21.0" install npm@11.21.0',
   'npm ci',
@@ -139,4 +175,29 @@ test('workflow, job and step env compose and can force installs global', () => {
   assert.deepEqual(envRuns('env:\n  OTHER_KEY: "true"\n', 'npm install npm@11.19.0'), []);
   // Unreadable env scopes fail closed when a run installs npm.
   assert.equal(workflowGlobalNpmInstalls(workflow('env: ${{ matrix.env }}\n        run: npm install npm@11.19.0')).length, 1);
+});
+
+test('computed location values reject installs at every effective env scope', () => {
+  for (const value of ['${{ inputs.location }}', "${{ 'global' }}", '$LOCATION', '$(printf global)']) {
+    const entry = `NPM_CONFIG_LOCATION: ${JSON.stringify(value)}`;
+    for (const source of [
+      `env:\n  ${entry}\n${workflow('run: npm install npm@11.21.0')}`,
+      `jobs:\n  audit:\n    env:\n      ${entry}\n    steps:\n      - run: npm install npm@11.21.0\n`,
+      workflow(`env:\n          ${entry}\n        run: npm install npm@11.21.0`),
+    ]) assert.equal(workflowGlobalNpmInstalls(source).length, 1, source);
+  }
+});
+
+test('only actual separators isolate a sibling prefix exemption', () => {
+  for (const separator of [';', '&&', '||', '|', '&', '\n']) {
+    assert.equal(globalNpmInstalls(`npm install -g npm ${separator} npm install --prefix "$RUNNER_TEMP/npm-local" npm`).length, 1);
+    assert.equal(globalNpmInstalls(`npm install --prefix "$RUNNER_TEMP/npm-local" npm ${separator} npm install -g npm`).length, 1);
+  }
+  // Quoted # is an argument; an unquoted word-start # begins a comment.
+  assert.equal(globalNpmInstalls('npm install -g npm "#" --prefix /shared # --prefix "$RUNNER_TEMP/npm-local"').length, 1);
+  for (const redirect of ['2>&1', '>&2', '&>output', '&>>output', '<&0']) {
+    assert.equal(globalNpmInstalls(`npm install -g ${redirect} npm`).length, 1);
+    // A redirect may not lend the local prefix of a sibling to an unsafe install.
+    assert.equal(globalNpmInstalls(`npm install -g ${redirect} npm && npm install --prefix "$RUNNER_TEMP/npm-local" npm`).length, 1);
+  }
 });

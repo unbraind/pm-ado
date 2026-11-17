@@ -2,13 +2,18 @@ id: pm-ado-toolchain-1104
 title: Migrate pm-toolchain PR 87 to the November 4 SDK contract
 description: "Update the grouped toolchain in https://github.com/unbraind/pm-ado/pull/87, reproduce failures, classify SDK contract changes, and preserve coverage and rollback checks."
 type: Chore
-status: in_progress
+status: closed
 priority: 2
 tags[4]: dependencies,"gh:unbraind/pm-ado#87",migration,sdk
 created_at: "2026-11-04T18:56:17.383Z"
-updated_at: "2026-11-04T20:15:28.547Z"
+updated_at: "2026-11-16T20:22:05.952Z"
+closed_at: "2026-11-16T20:22:05.933Z"
+completed_at: "2026-11-16T20:22:05.933Z"
 author: codex-toolchain-1104
 acceptance_criteria: Exact requested toolchain pins; meaningful contract assertions; passing package tests and all four unchanged coverage thresholds; typecheck and generated output current; evidence and remaining risks recorded.
+resolution: Implemented and merged in #87 (b5711a8).
+expected_result: The change described by this item is on main.
+actual_result: "Merged in #87 as b5711a8; checks successful at head 3522796: CodeQL, codeql, enable-auto-merge, release gate (bun), release gate (npm), test (22), test (26)."
 comments[13]{created_at,author,text}:
   "2026-11-04T18:56:21.320Z",codex-toolchain-1104,"Plan: synchronized origin/main and confirmed registry latest versions pm-cli 2026.11.4, pm-ops 2026.11.4, pm-changelog 2026.10.31. Reproduce focused failures before changing assertions, then run the full suite and unchanged coverage gate serially."
   "2026-11-04T18:57:09.462Z",codex-toolchain-1104,"Root cause (coupling): test/sdk-adoption.test.ts required docs to echo the exact development pin (main 2026.10.28 versus PR 2026.11.1/new 2026.11.4), so every bump broke it independently of runtime behavior. Replace that assertion with docs matching the declared peer/manifest minimum 2026.10.23; retain separate 2026.10.27 managed-preview capability requirement. Focused baseline: 1 passed, 1 failed."
@@ -39,4 +44,5 @@ docs[3]{path,scope}:
   docs/conflict-resolution.md,project
   docs/sdk-adoption.md,project
   README.md,project
+close_reason: "Delivered by #87 \"Bump the pm-toolchain group across 1 directory with 3 updates\" (merged as b5711a8). Checks successful at the PR head 3522796: CodeQL, codeql, enable-auto-merge, release gate (bun), release gate (npm), test (22), test (26)."
 body: ""

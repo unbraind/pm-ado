@@ -125,9 +125,11 @@ jobs:
         if: steps.changes.outputs.code == 'true' && matrix.node-version == 22
         run: npm test
 
-      - name: Quick npm release gate
+      # Full V8 and Istanbul passes belong to CI Deep and release:check. Running
+      # both here repeats the expensive model matrices beyond the hosted budget.
+      - name: Quick npm validation
         if: steps.changes.outputs.code == 'true' && matrix.node-version == 26
-        run: env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 npm run release:check
+        run: env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 npm run ci:quick
 
       # Packed-install tests already exercise Bun global and bunx launch paths.
       - name: Verify Bun can install the package graph

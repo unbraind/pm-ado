@@ -6,10 +6,10 @@ status: in_progress
 priority: 2
 tags[1]: "gh:unbraind/pm-ops#284"
 created_at: "2026-11-16T14:41:52.475Z"
-updated_at: "2026-11-16T19:29:00.069Z"
+updated_at: "2026-11-17T02:02:20.618Z"
 author: pi-glm
 acceptance_criteria: The release workflow installs the pinned npm with --prefix into a job-local directory and prepends that prefix bin to the job path; The workflow keeps the exact-version assertion on the effective npm; A workflow-contract test fails if any workflow replaces the global npm
-comments[10]{created_at,author,text}:
+comments[13]{created_at,author,text}:
   "2026-11-16T15:17:20.034Z",codex-sol,"Continuation: verified the existing worktree and remote branch state, preserved the earlier changes, and reused this item. Rerunning required gates to completion under the continuation author before committing results."
   "2026-11-16T15:27:41.370Z",codex-sol,"Root cause confirmed in the workflow source: global installation of the pinned npm replaces the same Node installation used by parallel jobs on a shared toolcache. Replaced each bootstrap with a job-local prefix, published only its bin directory to the job PATH, and retained exact-pin checks including a separate subsequent-step assertion. Workflow contracts reject global npm replacement across all workflow files. No runner settings or shared tool installations were modified."
   "2026-11-16T15:32:08.555Z",codex-sol,"Validation note: this package defines no lint script. Its existing docstring static gate is being run with typecheck, the quick npm test tier, the release workflow contracts and changelog:check; no new lint policy or dependency is introduced for this CI fix."
@@ -20,6 +20,9 @@ comments[10]{created_at,author,text}:
   "2026-11-16T16:47:56.999Z",codex-sol,"The broad local retry reached its 60-minute command limit: 604 tests reported 601 passed, 2 failed and 1 cancelled. Remaining failures concern packed consumer acceptance and the nested preload run; that complete 20-test workflow suite separately passed from the isolated committed checkout, and changelog:check passed. The broad suite is not certified green. Tracking PR: https://github.com/unbraind/pm-ado/pull/116. The PR remains open for orchestrator verification; exact-head CI is queued or running."
   "2026-11-16T19:23:52.314Z",codex-sol,"Review round P: replace the workflow-wide regex with a dependency-free shell command parser and regression fixtures. Parse run scripts with existing yaml where available; preserve allowed prefix-local installs. Verify typecheck, lint or docstring, focused guard/workflow contracts and changelog checks before pushing. No review-thread actions."
   "2026-11-16T19:28:59.317Z",codex-sol,"Review round P addresses PRRT_kwDOUMUq1864FZHh: replace the regex with the same dependency-free command parser as pm-ops, using the permitted raw-text workflow scan because no yaml parser is declared here. The scan joins shell continuations and unwraps simple quoted run scalars. Added 38 fixtures covering aliases, flags, locations, package specs, quotes/paths, separators and allowed installs. npm run typecheck, npm run build:test, npm run docstring and npm run changelog:check PASS. Linked guard/workflow contracts passed through pm test --run --only-last --progress: 58 pass, 0 fail/cancel/skip/todo. Full-suite certification remains with CI; the review thread remains untouched."
+  "2026-11-17T01:51:21.324Z",codex-sol,"Review round AA: pulled and verified the open PR head. Source inspection confirms the reported guard gaps. Replace shell tokenization with conservative logical-line matching and step-only script extraction, with intended false positives and regression fixtures."
+  "2026-11-17T01:58:36.115Z",codex-sol,Typecheck and test compilation passed. This package has no lint script; attempting its installed pm-ops ESLint export failed because the optional @babel/eslint-parser peer is absent. No dependencies added. Running the remaining configured gates separately; lint remains unavailable in this package.
+  "2026-11-17T02:02:14.278Z",codex-sol,"All four scoped threads verified valid against the original source: PRRT_kwDOUMUq1864GMbu, PRRT_kwDOUMUq1864LIvy, PRRT_kwDOUMUq1864LIv5, PRRT_kwDOUMUq1864LIwE. Direct reproduction returned zero findings for the seven unsafe shell cases and the named-step/folded workflows. Replaced tokenization with conservative logical-line matching; the dependency-free adapter extracts only step run scalars and fails closed on unsupported layouts. Final guard plus release-approval suite: 59 passed; separate release-workflow suite: 15 passed. Typecheck, test compilation and changelog:check passed. No duplication script is configured. Changed-file lint passed using the already installed shared pm-ops policy; AA_ESLINT_MODULE selects its complete installed module because this package has no lint script and lacks the optional local parser peer. No dependencies added. No findings refused. Full-suite certification remains with CI."
 files[7]{path,scope}:
   .github/workflows/release.yml,project
   test/global-npm-guard.test.ts,project
@@ -28,9 +31,13 @@ files[7]{path,scope}:
   test/release-workflow.test.ts,project
   test/verify-release-changelog-date.test.ts,project
   test/verify-release-publish-attestation.test.ts,project
-tests[4]{command,scope,timeout_seconds,provenance{author,created_at,source_kind,source_ref}}:
+tests[6]{command,scope,timeout_seconds,provenance{author,created_at,source_kind,source_ref}}:
   "npm run typecheck && npm run docstring && npm test && node --test --test-concurrency=2 test/release-approval.test.ts test/release-workflow.test.ts && npm run changelog:check",project,1200,codex-sol,"2026-11-16T15:20:04.254Z",local_mutation,fix/job-local-npm
   "npm run typecheck && npm run docstring && npm test && node --test --test-concurrency=2 test/release-approval.test.ts test/release-workflow.test.ts && npm run changelog:check && git diff --check",project,3600,codex-sol,"2026-11-16T15:42:20.703Z",local_mutation,fix/job-local-npm
   "node --test --test-concurrency=2 test/release-approval.test.ts test/release-workflow.test.ts && npm run changelog:check",project,900,codex-sol,"2026-11-16T15:53:18.306Z",local_mutation,fix/job-local-npm
   node --test test/global-npm-guard.test.ts test/release-approval.test.ts test/release-workflow.test.ts,project,1200,codex-sol,"2026-11-16T19:25:57.571Z",local_mutation,fix/job-local-npm
+  "npm run typecheck && npm run build:test && npm run changelog:check && node --test test/global-npm-guard.test.ts",project,1200,codex-sol,"2026-11-17T01:58:37.879Z",local_mutation,fix/job-local-npm
+  "node --input-type=module -e 'const { runLintGate } = await import(process.env.AA_ESLINT_MODULE); process.exitCode = await runLintGate({files: [\"test/global-npm-guard.ts\", \"test/global-npm-guard.test.ts\"]});'",project,180,codex-sol,"2026-11-17T01:59:16.648Z",local_mutation,fix/job-local-npm
+docs[1]{path,scope}:
+  CHANGELOG.md,project
 body: ""

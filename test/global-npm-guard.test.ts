@@ -4,6 +4,17 @@ import { test } from 'node:test';
 import { globalNpmInstalls, workflowGlobalNpmInstalls } from './global-npm-guard.ts';
 
 const rejected = [
+  'npx npm install -g npm@latest',
+  'echo "npm install -g npm@latest"',
+  '# npm install -g npm@latest',
+  'npm install --prefix npm -g pnpm',
+  'if true; then npm install -g npm; fi',
+  '(npm install -g npm)',
+  'echo ready & npm install -g npm',
+  'npm_config_global=true npm install npm@11.19.0',
+  'NPM_CONFIG_GLOBAL=true npm install npm@11.21.0',
+  'npm_config_location=global npm install npm',
+  'npm --scope @x install -g npm@11.21.0',
   'npm install -g npm@11.21.0',
   ...['i', 'in', 'ins', 'inst', 'insta', 'instal', 'isnt', 'isnta', 'isntal', 'isntall', 'add'].map(alias => `npm ${alias} -g npm@11.21.0`),
   'npm -g install npm@11.21.0',
@@ -25,11 +36,10 @@ const accepted = [
   'npm install --prefix "$RUNNER_TEMP/npm-11.21.0" npm@11.21.0 --ignore-scripts --no-audit --no-fund',
   'npm --prefix "$RUNNER_TEMP/npm-11.21.0" install npm@11.21.0',
   'npm ci',
+  'npm install -g some-other-package',
+  'npm install -g npm --prefix "$RUNNER_TEMP/npm-11.21.0"',
+  'npm_config_prefix="$RUNNER_TEMP/npm-11.21.0" npm_config_global=true npm install npm',
   'npm install -g pnpm',
-  'npx npm install -g npm@latest',
-  'echo "npm install -g npm@latest"',
-  '# npm install -g npm@latest',
-  'npm install --prefix npm -g pnpm',
   'npm --prefix install run ci',
   'npm install --global=false npm',
   'npm install --global -- npm-helper',
@@ -37,15 +47,64 @@ const accepted = [
 for (const command of rejected) test(`rejects ${JSON.stringify(command)}`, () => {
   assert.equal(globalNpmInstalls(command).length, 1);
   const workflow = `jobs:\n  audit:\n    steps:\n      - run: |\n${command.split('\n').map(line => `          ${line}`).join('\n')}\n`;
-  assert.equal(workflowGlobalNpmInstalls(workflow).length, 1);
-  if (!command.includes('\n')) assert.equal(workflowGlobalNpmInstalls(`jobs:\n  audit:\n    steps:\n      - run: ${JSON.stringify(command)}\n`).length, 1);
+  assert.deepEqual(workflowGlobalNpmInstalls(workflow), globalNpmInstalls(command));
+  if (!command.includes('\n')) assert.deepEqual(workflowGlobalNpmInstalls(`jobs:\n  audit:\n    steps:\n      - run: ${JSON.stringify(command)}\n`), globalNpmInstalls(command));
 });
 for (const command of accepted) test(`allows ${JSON.stringify(command)}`, () => {
   assert.deepEqual(globalNpmInstalls(command), []);
+  assert.deepEqual(workflowGlobalNpmInstalls(`jobs:\n  audit:\n    steps:\n      - run: ${JSON.stringify(command)}\n`), []);
 });
-test('every shell separator starts a new command, while quoted separators stay in arguments', () => {
-  for (const separator of [';', '&&', '||', '|', '\n']) {
+test('shell punctuation and quoted text cannot hide a replacement', () => {
+  for (const separator of [';', '&', '&&', '||', '|', '(', ')', '{', '}', '\n']) {
     assert.equal(globalNpmInstalls(`echo safe ${separator} npm install -g npm`).length, 1);
-    assert.deepEqual(globalNpmInstalls(`echo 'safe ${separator} npm install -g npm'`), []);
+    if (separator !== '\n') assert.equal(globalNpmInstalls(`echo 'safe ${separator} npm install -g npm'`).length, 1);
   }
+});
+
+/** Build a minimal workflow with real step-level fields. */
+function workflow(step: string): string {
+  return `jobs:\n  audit:\n    steps:\n      - ${step}\n`;
+}
+
+test('all six block scalar styles are extracted with YAML folding', () => {
+  for (const style of ['|', '|-', '|+', '>', '>-', '>+']) {
+    const body = style.startsWith('>') ? 'npm install\n          --global\n          npm@11.19.0' : 'npm install -g npm';
+    assert.equal(workflowGlobalNpmInstalls(workflow(`run: ${style}\n          ${body}`)).length, 1);
+  }
+  // More-indented lines and blank lines preserve logical-line boundaries.
+  for (const body of ['npm install\n            --global\n          npm', 'npm install\n\n          --global npm']) {
+    assert.deepEqual(workflowGlobalNpmInstalls(workflow(`run: >-\n          ${body}`)), []);
+  }
+});
+
+test('only step run values are scripts, regardless of metadata quotes and run keys', () => {
+  assert.equal(workflowGlobalNpmInstalls(workflow("name: Don't mutate npm\n        run: npm install -g npm")).length, 1);
+  assert.deepEqual(workflowGlobalNpmInstalls(workflow('env: {run: "npm install -g npm"}\n        run: echo safe')), []);
+  assert.deepEqual(workflowGlobalNpmInstalls(workflow('env:\n          run: npm install -g npm\n        run: echo safe')), []);
+  assert.deepEqual(workflowGlobalNpmInstalls(workflow('name: npm install -g npm\n        run: echo safe')), []);
+  assert.deepEqual(workflowGlobalNpmInstalls('env:\n  run: npm install -g npm\n' + workflow('run: echo safe')), []);
+});
+
+test('plain and quoted single-line run scalars are decoded independently', () => {
+  for (const value of ['npm install -g npm', '"npm install -g npm"', "'npm install -g npm'", "'echo ''npm install -g npm'''", '"npm install\\u0020-g npm"']) {
+    assert.equal(workflowGlobalNpmInstalls(workflow(`run: ${value}`)).length, 1);
+  }
+});
+
+test('unextractable step run values fail closed', () => {
+  for (const value of ['{script: echo safe}', '[echo safe]', 'null', '"unterminated', '*missing', '']) {
+    assert.ok(workflowGlobalNpmInstalls(workflow(`run: ${value}`)).length > 0, value);
+  }
+});
+
+test('unsupported executable workflow layouts fail closed', () => {
+  for (const source of ['{jobs: {audit: {steps: [{run: echo safe}]}}}', 'jobs: {audit: {steps: [{run: echo safe}]}}', 'jobs:\n  audit:\n    steps:\n      - {run: echo safe}']) {
+    assert.deepEqual(workflowGlobalNpmInstalls(source), [['unextractable step run']]);
+  }
+});
+
+test('indentationless step sequences still inspect only step run values', () => {
+  const prefix = 'jobs:\n  audit:\n    steps:\n    - env: {run: "npm install -g npm"}\n      run: ';
+  assert.deepEqual(workflowGlobalNpmInstalls(prefix + 'echo safe\n'), []);
+  assert.deepEqual(workflowGlobalNpmInstalls(prefix + 'npm install -g npm\n'), globalNpmInstalls('npm install -g npm'));
 });

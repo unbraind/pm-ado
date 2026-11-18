@@ -414,6 +414,22 @@ function snapshot(root: string): Record<string, string> {
 /** Get a single fully projected row from the disposable tracker. */
 async function row(pm: PmClient) { return (await pm.listAllComplete()).items[0]!; }
 
+test("sync uses the resolved project name in generated WIQL and keeps configured GUID provenance", async (t) => {
+  const project = "01234567-89ab-cdef-0123-456789abcdef";
+  const f = await fixture(t, [workItem(1, { "System.TeamProject": "Project" })]);
+  f.env.ADO_PROJECT = project;
+  f.response(project, { id: project, name: "Project" });
+  const result = await f.command("sync");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal((await row(f.pm)).ado_project, project);
+  assert.deepEqual(f.requests.filter(({ method }) => method === "GET"), [
+    { method: "GET", path: `/organization/_apis/projects/${project}?api-version=7.1`, body: undefined },
+  ]);
+  const query = f.requests.find(({ path }) => path.includes("/wiql?"));
+  assert.match(query!.path, new RegExp(`^/organization/${project}/_apis/wit/wiql\\?`, "u"));
+  assert.deepEqual(query!.body, { query: buildWiql({}, "Project") });
+});
+
 /** Certify the common successful initial import and return its complete native rows. */
 async function importedFixture(t: test.TestContext, initial?: AdoWorkItem[]) {
   const f = await fixture(t, initial);

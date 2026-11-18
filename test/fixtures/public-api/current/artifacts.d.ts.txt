@@ -51,8 +51,9 @@ export declare class ArtifactRefusal extends Error {
 }
 /**
  * Observe explicit imported identities through a complete, host-bound SDK read.
- * One Azure relation batch supplies the evidence. The function writes neither tracker
- * and never follows an artifact URL or resolves Git/Pipelines status.
+ * One Azure relation batch supplies the evidence after resolving a configured project ID.
+ * The function reads both trackers without writing to them. Git and Pipelines
+ * status and artifact URLs are outside this preview.
  */
 export declare function observeArtifactPlan(pm: Pick<PmClient, "listAllComplete">, config: AdoConfig, request: AdoTransport, ids: readonly string[]): Promise<ArtifactPlan>;
 /** Run the preview through the host SDK and let the host render JSON or TOON. */

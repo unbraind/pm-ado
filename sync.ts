@@ -437,7 +437,6 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
     if (mode === "export" && ["wiql", "area-path", "iteration-path"].some((name) => option(ctx.options, name) !== undefined)) {
       throw new CommandError("WIQL, area and iteration filters apply to import/sync only");
     }
-    const wiql = buildWiql(ctx.options, config.project);
     const client = new AdoClient(config, async (method, url, body, headers) => {
       const operation = `${method} ${new URL(url).pathname}`;
       // Create dispatch has its own observer, after the intent is durable.
@@ -446,6 +445,9 @@ export async function runSyncCommand(ctx: CommandHandlerContext, mode: "import" 
       try { return await transport(method, url, body, headers); }
       finally { if (!create) await observer?.({ boundary: "remote", phase: "after", operation }); }
     });
+    const queryProject = mode === "export" || option(ctx.options, "wiql") !== undefined
+      ? config.project : (await client.resolveProject()).name;
+    const wiql = buildWiql(ctx.options, queryProject);
     let sdk: ReturnType<typeof loadResolutionSdk>;
     try { sdk = loadResolutionSdk(sdkAnchors); }
     catch { throw new CommandError("Install pm-ado with pm install so the host links its SDK; guarded sync requires the SDK module"); }

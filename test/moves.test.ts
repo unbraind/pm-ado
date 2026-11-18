@@ -10,7 +10,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { PmClient, createExtensionCommandSdk, type ItemMetadata } from "@unbrained/pm-cli/sdk";
 import { createExtensionTestHarness } from "@unbrained/pm-cli/sdk/testing";
-import extension, { ARTIFACT_LIMITS, ArtifactRefusal, observeArtifactPlan, ContractRefusal, MOVE_LIMITS, MoveRefusal, simulateMove, type AdoWorkItem, type ArtifactPlan, type MoveOptions, type MovePreview } from "../index.ts";
+import extension, { AdoClient, ARTIFACT_LIMITS, ArtifactRefusal, observeArtifactPlan, ContractRefusal, MOVE_LIMITS, MoveRefusal, simulateMove, type AdoWorkItem, type ArtifactPlan, type MoveOptions, type MovePreview } from "../index.ts";
 import * as built from "../dist/index.js";
 import { runMoveCommand } from "../moves.ts";
 import { moveItem, moveService } from "./fixtures/move-service.ts";
@@ -411,6 +411,53 @@ test("artifact plan accounts for omitted rows, capped output, and opaque or malf
   assert.equal(empty.complete, true);
   assert.deepEqual(empty.rows[0]?.links, []);
   assert.deepEqual(snapshot(f.pmRoot), before);
+});
+
+test("artifact plan resolves a configured GUID and still refuses a foreign response project", async (t) => {
+  const f = await host(t);
+  const id = f.options.ids[0]!;
+  const projectId = "01234567-89ab-cdef-0123-456789abcdef";
+  const project = projectId.toUpperCase();
+  const metadataEndpoint = `projects/${projectId}`;
+  const config = { ...f.config, project };
+  await f.pm.update(id, { field: [`ado_project=${project}`] });
+  f.env.ADO_PROJECT = project;
+  f.overrides.set(metadataEndpoint, { status: 200, body: JSON.stringify({ id: project, name: "Example" }) });
+
+  const { stdout } = await f.cli(["--items", id, "--json"], "artifact-plan");
+  const plan = JSON.parse(stdout) as ArtifactPlan;
+  assert.equal(plan.complete, true);
+  assert.equal(plan.rows[0]!.rev, f.items.get(1)!.rev);
+  assert.deepEqual(f.calls.splice(0).map(({ method, url }) => [method, url]), [
+    ["GET", `${config.orgUrl}/_apis/${metadataEndpoint}?api-version=7.1`],
+    ["POST", `${config.orgUrl}/${project}/_apis/wit/workitemsbatch?api-version=7.1`],
+  ]);
+
+  const client = new AdoClient(config, f.request);
+  const identity = { name: "Example", id: projectId };
+  assert.deepEqual(await Promise.all([client.resolveProject(), client.resolveProject()]), [identity, identity]);
+  assert.equal(f.calls.splice(0).length, 1);
+
+  const observe = () => observeArtifactPlan(f.pm, config, f.request, [id]);
+  const unavailable = { name: "ArtifactRefusal", code: "read_failure", exitCode: 3 };
+  f.items.get(1)!.fields["System.TeamProject"] = "Other";
+  await assert.rejects(observe(), unavailable);
+  assert.deepEqual(f.calls.splice(0).map(({ method }) => method), ["GET", "POST"]);
+
+  for (const payload of [null, { id: "bbbbbbbb-89ab-cdef-0123-456789abcdef", name: "Example" },
+    { id: projectId, name: 7 }, { id: projectId, name: " " }]) {
+    f.overrides.set(metadataEndpoint, { status: 200, body: JSON.stringify(payload) });
+    await assert.rejects(observe(), unavailable);
+    assert.deepEqual(f.calls.splice(0).map(({ method }) => method), ["GET"]);
+  }
+  f.overrides.set(metadataEndpoint, { status: 403, body: "private-project-response" });
+  await assert.rejects(observe(), (error: unknown) => {
+    assert.ok(error instanceof ArtifactRefusal);
+    assert.equal(error.code, "read_failure");
+    assert.doesNotMatch(error.message, /private-project-response/u);
+    return true;
+  });
+  assert.deepEqual(f.calls.map(({ method }) => method), ["GET"]);
 });
 
 test("artifact plan refuses ambiguous scope and sanitizes malformed batches and remote failures", async (t) => {

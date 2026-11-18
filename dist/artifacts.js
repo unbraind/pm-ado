@@ -87,8 +87,9 @@ function inventory(pm_id, ado_id, item) {
 }
 /**
  * Observe explicit imported identities through a complete, host-bound SDK read.
- * One Azure relation batch supplies the evidence. The function writes neither tracker
- * and never follows an artifact URL or resolves Git/Pipelines status.
+ * One Azure relation batch supplies the evidence after resolving a configured project ID.
+ * The function reads both trackers without writing to them. Git and Pipelines
+ * status and artifact URLs are outside this preview.
  */
 export async function observeArtifactPlan(pm, config, request, ids) {
     if (ids.length === 0 || ids.length > ARTIFACT_LIMITS.items || new Set(ids).size !== ids.length || ids.includes("")) {
@@ -111,11 +112,12 @@ export async function observeArtifactPlan(pm, config, request, ids) {
             throw new ArtifactRefusal("selection");
         const project = normalizeScopeValue(config.project);
         const client = new AdoClient({ ...config, orgUrl: normalizeScopeValue(config.orgUrl, true), project }, request);
+        const { name: projectName } = await client.resolveProject();
         const batch = await client.getWorkItemsReport(remoteIds.sort((left, right) => left - right), { relations: true });
         const remote = new Map();
         for (const item of batch.items) {
             if (!remoteIds.includes(item.id) || remote.has(item.id) || !positiveId(item.rev) ||
-                item.fields?.["System.TeamProject"] !== project ||
+                item.fields?.["System.TeamProject"] !== projectName ||
                 (item.relations !== undefined && !Array.isArray(item.relations))) {
                 throw new ArtifactRefusal("read_failure");
             }

@@ -341,7 +341,7 @@ export declare const REQUIRED_ENV: readonly ["ADO_ORG_URL", "ADO_PROJECT", "ADO_
  */
 export declare function missingEnv(env: Readonly<Record<string, string | undefined>>): string[];
 /**
- * A minimal Azure DevOps Work Items client.
+ * A minimal Azure DevOps project and Work Items client.
  *
  * Deliberately small: it exposes only the calls this package makes, and it
  * takes its transport as a parameter so every mapping and patch-building
@@ -356,6 +356,14 @@ export declare class AdoClient {
      * @param transport - The request performer to use.
      */
     constructor(config: AdoConfig, transport: AdoTransport);
+    /**
+     * Resolve a configured GUID to its canonical name and ID with one lookup per client.
+     * A configured project name is already usable by Work Items and needs no lookup.
+     */
+    resolveProject(): Promise<{
+        name: string;
+        id: string | null;
+    }>;
     /**
      * Perform a request and decode its JSON body.
      *

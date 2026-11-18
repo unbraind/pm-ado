@@ -22,7 +22,7 @@ export function moveService(initial: AdoWorkItem[] = [moveItem(1)]) {
   /** Expose exactly the contract, read-only batch and non-saving validation endpoints. */
   const request: AdoTransport = async (method, raw, body, headers) => {
     const url = new URL(raw);
-    const path = url.pathname.split("/_apis/wit/")[1]!;
+    const path = url.pathname.split("/_apis/")[1]!.replace(/^wit\//u, "");
     const data = body === undefined ? undefined : JSON.parse(body) as Record<string, unknown> & JsonPatchOperation[];
     calls.push({ method, url: raw, body: data });
     assert.equal(headers.Authorization, `Basic ${Buffer.from(`:${config.token}`).toString("base64")}`);

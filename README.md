@@ -101,7 +101,7 @@ private data in its entire history.
 | variable | meaning |
 | --- | --- |
 | `ADO_ORG_URL` | e.g. `https://dev.azure.com/your-org` |
-| `ADO_PROJECT` | the project name |
+| `ADO_PROJECT` | the project name or ID |
 | `ADO_TOKEN` | a personal access token with Work Items (read & write) |
 
 A credential preflight aborts a network-mutating command **before** any store read or
@@ -247,7 +247,9 @@ pm ado artifact-plan --items example-a --output-format toon
 The same preview is available to SDK consumers as
 `observeArtifactPlan(pm, config, transport, ["example-a", "example-b"])`.
 It checks the complete PM identity index, then reads expanded relations in one
-Azure work-items batch. Each row reports the PM ID, Azure work-item ID, observed
+Azure work-items batch. A GUID in `ADO_PROJECT` adds one project lookup and
+requires **Project and Team read** access for artifact plans and generated sync
+queries. Each row reports the PM ID, Azure work-item ID, observed
 revision and up to 10 distinct links ordered by kind and canonical coordinates.
 A pull request includes its project, repository and PR IDs. A build includes its
 run ID and distinguishes `build`, `found_in_build` and `integrated_in_build`.

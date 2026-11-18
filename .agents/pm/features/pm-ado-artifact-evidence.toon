@@ -6,13 +6,11 @@ status: in_progress
 priority: 2
 tags[2]: artifacts,azure
 created_at: "2026-11-18T14:56:11.672Z"
-updated_at: "2026-11-18T19:12:21.408Z"
-assignee: codex-sol
-claim_principal: codex-sol
+updated_at: "2026-11-18T21:06:43.488Z"
 author: codex-sol
 acceptance_criteria: "Read an explicit bounded selection through the pm SDK and one Azure batch; classify documented PR and build references; account for missing, unsupported and malformed evidence; keep both trackers unchanged; verify the CLI and SDK with the existing REST harness and documented usage."
 parent: pm-ado-g4v1
-comments[13]{created_at,author,text}:
+comments[14]{created_at,author,text}:
   "2026-11-18T14:56:25.195Z",codex-sol,"Ranked gaps: 1. PR/build links survive sync but agents lack compact typed delivery evidence; expose a read-only inventory with revision and completeness receipts. 2. Area/iteration fields map and preview today, while team sprint discovery and reviewed bulk apply remain absent. 3. Stable import identity, sparse refresh and revision-bound conflict decisions work, while agents lack one bounded multi-item triage view of drift and conflict next actions. Artifact evidence ranks first because it supplies missing delivery verification through the work-item scope and existing SDK provenance."
   "2026-11-18T14:56:30.166Z",codex-sol,"Design: register an always read-only SDK extension command and typed evidence plan. Use certified tracker reads, strict organization/project identity, one expanded Azure batch, and deterministic capped link coordinates. Report omitted rows, malformed links and unsupported artifacts separately. Render no raw URLs, work item bodies or credentials. Existing import/export provenance and guarded sync stay in place."
   "2026-11-18T14:56:34.819Z",codex-sol,"Guard baseline discrepancy: origin/main has MD5 db66aa6ffc81fce62434520396f5c121 for test/global-npm-guard.test.ts. Verify byte equality against origin/main and execute the unchanged test."
@@ -26,6 +24,7 @@ comments[13]{created_at,author,text}:
   "2026-11-18T16:04:37.273Z",codex-sol,"The feature is ready for draft review. The npm guard passed and matches origin/main byte for byte. The requested git fetch --tags origin, npm run changelog:full and npm run changelog:check passed before final tracking; run them again after releasing this claim. Keep the Feature in progress for orchestrator verification."
   "2026-11-18T19:08:58.815Z",codex-sol,Investigating project identity for PR #123 with synthetic Azure REST responses. Preserve strict response scope and existing project-name behavior.
   "2026-11-18T19:11:29.291Z",codex-sol,Use a per-client organization-scoped project lookup for GUIDs. Artifact plans validate the canonical response name. Generated sync queries use it while local provenance and journal coordinates retain their configured value. Name configurations use the existing request paths.
+  "2026-11-18T21:06:42.071Z",codex-sol,"PR #123 review mapping: Greptile PRRT_kwDOUMUq1865FIYT and CodeRabbit PRRT_kwDOUMUq1865GHlG both map to f510a8421d86a8e88d390ffcb39ffb6bf2aa63eb. Synthetic REST tests cover GUID acceptance, wrong-project refusal, unchanged name configuration, lookup caching and generated sync WIQL. Focused tests passed 5/5 and the moves, unchanged npm guard and API suites passed 311/311. Build, typecheck, docstring lint and changelog checks passed. Node 26.13.0 with PM_TEST_DEPTH=quick and NODE_OPTIONS unset passed 1646/1646 tests in each coverage pass. All four dimensions reached 100% over 14 sources, including 2556/2556 independently measured statements. The initial Node 24 coverage attempt was stopped after a packed-install failure, and the Node 26 standalone packed-install retry passed 15/15. The NODE_OPTIONS fallback is tracked in pm-ado-coverage-node-options."
 files[6]{path,scope}:
   artifacts.ts,project
   index.ts,project
@@ -49,12 +48,12 @@ tests[3]:
       created_at: "2026-11-18T19:12:18.513Z"
       source_kind: local_mutation
       source_ref: feat/artifact-evidence
-  - command: env -u NODE_OPTIONS npm run coverage
+  - command: PM_TEST_DEPTH=quick env -u NODE_OPTIONS npm run coverage
     scope: project
-    timeout_seconds: 2400
+    timeout_seconds: 10800
     provenance:
       author: codex-sol
-      created_at: "2026-11-18T19:12:21.300Z"
+      created_at: "2026-11-18T21:06:40.556Z"
       source_kind: local_mutation
       source_ref: feat/artifact-evidence
 docs[1]{path,scope}:

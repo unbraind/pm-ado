@@ -1,0 +1,12 @@
+id: pm-ado-coverage-node-options
+title: Cover the coverage runner fallback with Node options set
+description: "The required WAN NODE_OPTIONS value leaves the fallback branch at scripts/coverage-gate.ts:288 unexercised. Archived origin/main coverage-runner tests passed 31/31 in both controls and measured 99.18% branches with the WAN override and 100% without it. The feature package run passed all 1644 tests, then stopped at 99.96% branches before the independent statement pass."
+type: Issue
+status: open
+priority: 2
+tags[2]: coverage,testing
+created_at: "2026-11-18T16:04:34.344Z"
+updated_at: "2026-11-18T16:04:34.344Z"
+author: codex-sol
+acceptance_criteria: Exercise inherited and absent NODE_OPTIONS in the existing coverage-runner tests; preserve the WAN options for network tests and retain the configured coverage thresholds.
+body: ""

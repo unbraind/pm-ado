@@ -1,4 +1,6 @@
 import type { ExtensionApi, PreflightOverrideContext } from "@unbrained/pm-cli/sdk/authoring";
+export { ARTIFACT_LIMITS, ArtifactRefusal, observeArtifactPlan } from "./artifacts.ts";
+export type { ArtifactLink, ArtifactPlan, ArtifactRefusalCode, ArtifactRow } from "./artifacts.ts";
 export { compileRefreshPlan, validateRefreshInput, refreshSaved, observeRefreshPlan, RefreshRefusal } from "./refresh.ts";
 export type { RefreshInput, RefreshSaved, RefreshRevision, RefreshField, RefreshBatch, RefreshPlan, RefreshRefusalCode } from "./refresh.ts";
 export { simulateMove, MoveRefusal, MOVE_LIMITS } from "./moves.ts";
@@ -392,7 +394,7 @@ export declare class AdoClient {
      * @returns The found items and the ids the service omitted.
      */
     getWorkItemsReport(ids: readonly number[], projection?: {
-        fields: readonly string[];
+        fields?: readonly string[];
         relations?: boolean;
     } | undefined): Promise<BatchReadResult>;
     /**

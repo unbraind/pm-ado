@@ -10,7 +10,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { PmClient, createExtensionCommandSdk, type ItemMetadata } from "@unbrained/pm-cli/sdk";
 import { createExtensionTestHarness } from "@unbrained/pm-cli/sdk/testing";
-import extension, { ContractRefusal, MOVE_LIMITS, MoveRefusal, simulateMove, type AdoWorkItem, type MoveOptions, type MovePreview } from "../index.ts";
+import extension, { ARTIFACT_LIMITS, ArtifactRefusal, observeArtifactPlan, ContractRefusal, MOVE_LIMITS, MoveRefusal, simulateMove, type AdoWorkItem, type ArtifactPlan, type MoveOptions, type MovePreview } from "../index.ts";
 import * as built from "../dist/index.js";
 import { runMoveCommand } from "../moves.ts";
 import { moveItem, moveService } from "./fixtures/move-service.ts";
@@ -178,15 +178,16 @@ async function host(t: test.TestContext) {
   installFixtureExtension(f.pmRoot);
   await f.pm.update(f.options.ids[0]!, { field: ["ado_id=1", `ado_org_url=${f.config.orgUrl}`, "ado_project=Example"] });
   const bin = join(f.root, "bin"); mkdirSync(bin); symlinkSync(process.execPath, join(bin, "node"));
-  const env = { ...process.env, NODE_OPTIONS: relocateNodePreloads(process.env.NODE_OPTIONS ?? "", repo), ADO_ORG_URL: f.config.orgUrl, ADO_TOKEN: f.config.token, PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1", GIT_CEILING_DIRECTORIES: tmpdir(), PATH: bin };
+  const env = { ...process.env, NODE_OPTIONS: relocateNodePreloads(process.env.NODE_OPTIONS ?? "", repo), ADO_ORG_URL: f.config.orgUrl, ADO_PROJECT: f.config.project, ADO_TOKEN: f.config.token, PM_AUTHOR: "fixture-agent", PM_NO_UPDATE_CHECK: "1", GIT_CEILING_DIRECTORIES: tmpdir(), PATH: bin };
   const harness = await createExtensionTestHarness(extension, { name: "pm-ado", capabilities: ["commands", "schema", "preflight"] });
   /** Invoke the actual registered handler with real SDK binding and restored process globals. */
-  const command = async (options: Record<string, unknown>, sdk = true, changes: Record<string, string | undefined> = {}) => {
+  const command = async <Output = MovePreview & { code: string; exit_code: number }>(options: Record<string, unknown>, sdk = true,
+    changes: Record<string, string | undefined> = {}, name = "ado move-preview") => {
     const previous = process.env, exit = process.exitCode; process.env = { ...env, ...changes };
-    try { return (await harness.runCommand({ command: "ado move-preview", pmRoot: sdk ? f.pmRoot : undefined, options })).result as MovePreview & { code: string; exit_code: number }; }
+    try { return (await harness.runCommand({ command: name, pmRoot: sdk ? f.pmRoot : undefined, options })).result as Output; }
     finally { process.env = previous; process.exitCode = exit; }
   };
-  return { ...f, env, command, cli: (args: string[]) => run(process.execPath, [join(repo, "node_modules/@unbrained/pm-cli/dist/cli.js"), "--pm-path", f.pmRoot, "ado", "move-preview", ...args], { cwd: f.root, env, maxBuffer: 8 * 1024 * 1024 }) };
+  return { ...f, env, command, cli: (args: string[], command = "move-preview") => run(process.execPath, [join(repo, "node_modules/@unbrained/pm-cli/dist/cli.js"), "--pm-path", f.pmRoot, "ado", command, ...args], { cwd: f.root, env, maxBuffer: 8 * 1024 * 1024 }) };
 }
 
 test("installed no-git CLI and SDK command render compact JSON/TOON and preserve authoritative bytes", async (t) => {
@@ -318,4 +319,155 @@ test("round-7 unscoped duplicate Azure IDs cannot borrow a selected native recor
     assert.equal(result.rows.length, 1); assert.equal(result.rows[0]!.id, first.id);
     assert.equal(result.ok, true);
   }
+});
+
+/** Use the existing move REST service and an installed no-git SDK tracker for artifact reads. */
+test("artifact plan returns deterministic PR/build coordinates through the SDK and installed CLI", async (t) => {
+  const f = await host(t);
+  const id = f.options.ids[0]!;
+  const projectId = "01234567-89ab-cdef-0123-456789abcdef";
+  const repositoryId = "12345678-90ab-cdef-0123-456789abcdef";
+  const pull = "vstfs:///Git/PullRequestId/";
+  const build = "vstfs:///Build/Build/";
+  const remote = f.items.get(1)!;
+  remote.fields["System.Description"] = "private-body";
+  remote.relations = [
+    { rel: "ArtifactLink", url: `${pull}${projectId.toUpperCase()}%2F${repositoryId}%2f17`, attributes: { comment: "private-comment" } },
+    { rel: "ArtifactLink", url: `${pull}${projectId}/${repositoryId}/17` },
+    { rel: "ArtifactLink", url: `${build}8`, attributes: { name: "Integrated in build" } },
+    { rel: "ArtifactLink", url: `${build}10`, attributes: { name: "Found in build" } },
+    { rel: "ArtifactLink", url: `${build}9` },
+    { rel: "Hyperlink", url: "https://example.invalid/private-link" },
+  ];
+  const before = snapshot(f.pmRoot);
+  const remoteBefore = structuredClone(remote);
+  const args = ["--items", id];
+  const expected: ArtifactPlan = {
+    ok: true, complete: true, rows: [{
+      pm_id: id, ado_id: 1, rev: remote.rev, links: [
+        { kind: "build", id: 9 },
+        { kind: "found_in_build", id: 10 },
+        { kind: "integrated_in_build", id: 8 },
+        { kind: "pull_request", project_id: projectId, repository_id: repositoryId, id: 17 },
+      ], omitted_links: 0, unsupported_links: 0, invalid_links: 0,
+    }],
+  };
+  assert.deepEqual(await observeArtifactPlan(f.pm, f.config, f.request, [id]), expected);
+  f.transformBatch((rows) => rows.map((row) => ({ ...row, relations: [...row.relations!].reverse() })));
+  const json = await f.cli([...args, "--json"], "artifact-plan");
+  assert.deepEqual(JSON.parse(json.stdout), expected);
+  assert.deepEqual(await f.command<ArtifactPlan>({ items: ` ${id} ` }, true, {}, "ado artifact-plan"), expected);
+  const toon = await f.cli([...args, "--output-format", "toon"], "artifact-plan");
+  assert.match(toon.stdout, /complete: true/u);
+  for (const output of [json.stdout, toon.stdout]) {
+    assert.ok(Buffer.byteLength(output) < 1800);
+    assert.doesNotMatch(output, /private-|synthetic-move-token|vstfs:\/\//u);
+  }
+  assert.deepEqual(snapshot(f.pmRoot), before);
+  assert.deepEqual(remote, remoteBefore);
+  assert.equal(f.calls.length, 4);
+  for (const call of f.calls) {
+    assert.equal(call.method, "POST");
+    assert.match(call.url, /workitemsbatch\?api-version=7\.1$/u);
+    assert.deepEqual(call.body, { ids: [1], $expand: "relations", errorPolicy: "omit" });
+  }
+});
+
+test("artifact plan accounts for omitted rows, capped output, and opaque or malformed relations", async (t) => {
+  const f = await host(t);
+  const id = f.options.ids[0]!;
+  const { item: { id: missing } } = await f.pm.create({ title: "Omitted fixture", type: "Task", field: [
+    "ado_id=2", `ado_org_url=${f.config.orgUrl}`, "ado_project=Example",
+  ] });
+  const remote = f.items.get(1)!;
+  const guid = "01234567-89ab-cdef-0123-456789abcdef";
+  const urls = [
+    "vstfs:///Git/Commit/opaque",
+    "vstfs:///Git/PullRequestId/malformed",
+    `vstfs:///Git/PullRequestId/${guid}/${guid}/2147483648`,
+    "vstfs:///Build/Build/2147483648",
+    "vstfs:///Build/Build/10?injected=private",
+    undefined,
+  ];
+  remote.relations = [
+    ...Array.from({ length: ARTIFACT_LIMITS.linksPerItem + 1 }, (_, index) => ({ rel: "ArtifactLink", url: `vstfs:///Build/Build/${index + 1}` })),
+    ...urls.map((url) => ({ rel: "ArtifactLink", url: url as string })),
+    null as unknown as NonNullable<AdoWorkItem["relations"]>[number],
+  ];
+  const before = snapshot(f.pmRoot);
+  const plan = await observeArtifactPlan(f.pm, f.config, f.request, [missing, id]);
+  assert.equal(plan.complete, false);
+  assert.deepEqual(plan.rows.map((row) => row.pm_id), [id, missing].sort());
+  const observed = plan.rows.find((row) => row.pm_id === id)!;
+  assert.deepEqual(observed.links.map((link) => link.id), Array.from({ length: ARTIFACT_LIMITS.linksPerItem }, (_, index) => index + 1));
+  assert.deepEqual([observed.omitted_links, observed.unsupported_links, observed.invalid_links], [1, 1, 6]);
+  assert.deepEqual(plan.rows.find((row) => row.pm_id === missing), {
+    pm_id: missing, ado_id: 2, rev: null, links: [], omitted_links: 0, unsupported_links: 0, invalid_links: 0,
+  });
+  assert.deepEqual(f.calls.map((call) => call.body), [{ ids: [1, 2], $expand: "relations", errorPolicy: "omit" }]);
+
+  f.transformBatch((rows) => rows.map(({ relations: _, ...row }) => row));
+  const empty = await observeArtifactPlan(f.pm, f.config, f.request, [id]);
+  assert.equal(empty.complete, true);
+  assert.deepEqual(empty.rows[0]?.links, []);
+  assert.deepEqual(snapshot(f.pmRoot), before);
+});
+
+test("artifact plan refuses ambiguous scope and sanitizes malformed batches and remote failures", async (t) => {
+  const f = await host(t);
+  const id = f.options.ids[0]!;
+  const observe = (ids = [id]) => observeArtifactPlan(f.pm, f.config, f.request, ids);
+  const selection = { name: "ArtifactRefusal", code: "selection", exitCode: 2 };
+  const unavailable = { name: "ArtifactRefusal", code: "read_failure", exitCode: 3 };
+  for (const ids of [[], Array.from({ length: ARTIFACT_LIMITS.items + 1 }, (_, index) => `fixture-${index}`), [id, id], [""], ["fixture-missing"]]) {
+    await assert.rejects(observe(ids), selection);
+  }
+  const { item: { id: foreign } } = await f.pm.create({ title: "Foreign fixture", type: "Task", field: [
+    "ado_id=1", `ado_org_url=${f.config.orgUrl}`, "ado_project=Other",
+  ] });
+  const { item: { id: unlinked } } = await f.pm.create({ title: "Unlinked fixture", type: "Task" });
+  await assert.rejects(observe([foreign]), selection);
+  await assert.rejects(observe([unlinked]), selection);
+  assert.equal(f.calls.length, 0);
+  f.transformBatch((rows) => [...rows, rows[0]!]);
+  await assert.rejects(observe(), unavailable);
+  for (const change of [{ id: 2 }, { rev: 0 }, { fields: undefined }, { fields: { "System.TeamProject": "Other" } }, { relations: null }]) {
+    f.transformBatch((rows) => [{ ...rows[0]!, ...change }]);
+    await assert.rejects(observe(), unavailable);
+  }
+  f.transformBatch(() => undefined);
+  await assert.rejects(observe(), unavailable);
+
+  f.overrides.set("workitemsbatch", { status: 403, body: "private-remote-response" });
+  await assert.rejects(observe(), (error: unknown) => {
+    assert.ok(error instanceof ArtifactRefusal);
+    assert.equal(error.code, "read_failure");
+    assert.doesNotMatch(error.message, /private-|synthetic-move-token/u);
+    return true;
+  });
+  await assert.rejects(f.cli(["--items", id, "--json"], "artifact-plan"), (error: { code: number; stdout: string; stderr: string }) => {
+    assert.equal(error.code, 3);
+    assert.equal(JSON.parse(error.stdout).code, "read_failure");
+    assert.doesNotMatch(error.stdout + error.stderr, /private-|synthetic-move-token/u);
+    return true;
+  });
+  await assert.rejects(f.cli(["--json"], "artifact-plan"), (error: { code: number; stdout: string }) => {
+    assert.equal(error.code, 2);
+    assert.equal(JSON.parse(error.stdout).code, "configuration");
+    return true;
+  });
+
+  await f.pm.create({ title: "Duplicate fixture", type: "Task", field: [
+    "ado_id=1", `ado_org_url=${f.config.orgUrl}`, "ado_project=Example",
+  ] });
+  const calls = f.calls.length;
+  await assert.rejects(observe(), selection);
+  const command = (options: Record<string, unknown>, sdk = true, changes = {}) =>
+    f.command(options, sdk, changes, "ado artifact-plan");
+  assert.equal((await command({ items: id }, false)).code, "configuration");
+  assert.equal((await command({ items: id }, true, { ADO_TOKEN: "" })).code, "configuration");
+  assert.equal((await command({})).code, "configuration");
+  assert.equal((await command({ items: 42 })).code, "selection");
+  assert.equal((await command({ items: id })).code, "selection");
+  assert.equal(f.calls.length, calls);
 });

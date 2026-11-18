@@ -1,0 +1,28 @@
+id: pm-ado-artifact-evidence
+title: Inspect Azure PR and pipeline links from linked pm items
+description: Give agents revision-stamped delivery evidence using existing Azure work item relations.
+type: Feature
+status: in_progress
+priority: 2
+tags[2]: artifacts,azure
+created_at: "2026-11-18T14:56:11.672Z"
+updated_at: "2026-11-18T15:02:07.803Z"
+assignee: codex-sol
+claim_principal: codex-sol
+author: codex-sol
+acceptance_criteria: "Read an explicit bounded selection through the pm SDK and one Azure batch; classify documented PR and build references; account for missing, unsupported and malformed evidence; keep both trackers unchanged; verify the CLI and SDK with the existing REST harness and documented usage."
+parent: pm-ado-g4v1
+comments[4]{created_at,author,text}:
+  "2026-11-18T14:56:25.195Z",codex-sol,"Ranked gaps: 1. PR/build links survive sync but agents lack compact typed delivery evidence; expose a read-only inventory with revision and completeness receipts. 2. Area/iteration fields map and preview today, while team sprint discovery and reviewed bulk apply remain absent. 3. Stable import identity, sparse refresh and revision-bound conflict decisions work, while agents lack one bounded multi-item triage view of drift and conflict next actions. Artifact evidence ranks first because it supplies missing delivery verification through the work-item scope and existing SDK provenance."
+  "2026-11-18T14:56:30.166Z",codex-sol,"Design: register an always read-only SDK extension command and typed evidence plan. Use certified tracker reads, strict organization/project identity, one expanded Azure batch, and deterministic capped link coordinates. Report omitted rows, malformed links and unsupported artifacts separately. Render no raw URLs, work item bodies or credentials. Existing import/export provenance and guarded sync stay in place."
+  "2026-11-18T14:56:34.819Z",codex-sol,"Guard baseline discrepancy: origin/main has MD5 db66aa6ffc81fce62434520396f5c121 for test/global-npm-guard.test.ts. Verify byte equality against origin/main and execute the unchanged test."
+  "2026-11-18T15:02:07.802Z",codex-sol,"The first installed CLI and SDK acceptance passed all three artifact-plan cases on the existing REST harness. Follow-up Features cover team sprint mapping, compact bulk triage and reviewed artifact-link writes. This read-only plan uses the host's registered provenance and Work Items read authorization."
+files[3]{path,scope}:
+  artifacts.ts,project
+  index.ts,project
+  test/moves.test.ts,project
+tests[1]{command,scope,timeout_seconds,provenance{author,created_at,source_kind,source_ref}}:
+  node --test test/moves.test.ts test/global-npm-guard.test.ts test/public-api.test.ts,project,300,codex-sol,"2026-11-18T15:02:06.746Z",local_mutation,feat/artifact-evidence
+docs[1]{path,scope}:
+  README.md,project
+body: ""

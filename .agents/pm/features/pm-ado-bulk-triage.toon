@@ -1,0 +1,13 @@
+id: pm-ado-bulk-triage
+title: Triage Azure drift and conflicts across selected pm items
+description: ""
+type: Feature
+status: open
+priority: 3
+tags: []
+created_at: "2026-11-18T15:01:20.468Z"
+updated_at: "2026-11-18T15:01:20.468Z"
+author: codex-sol
+acceptance_criteria: "Produce a bounded read-only summary that joins stable identities, sparse refresh and conflict decisions with explicit next actions."
+parent: pm-ado-g4v1
+body: ""

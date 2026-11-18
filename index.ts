@@ -23,6 +23,9 @@ import type {
 } from "@unbrained/pm-cli/sdk/authoring";
 import { runSyncCommand, SYNC_FLAGS } from "./sync.ts";
 import { runRefreshCommand } from "./refresh.ts";
+import { runArtifactCommand } from "./artifacts.ts";
+export { ARTIFACT_LIMITS, ArtifactRefusal, observeArtifactPlan } from "./artifacts.ts";
+export type { ArtifactLink, ArtifactPlan, ArtifactRefusalCode, ArtifactRow } from "./artifacts.ts";
 export { compileRefreshPlan, validateRefreshInput, refreshSaved, observeRefreshPlan, RefreshRefusal } from "./refresh.ts";
 export type { RefreshInput, RefreshSaved, RefreshRevision, RefreshField, RefreshBatch, RefreshPlan, RefreshRefusalCode } from "./refresh.ts";
 import { runMoveCommand } from "./moves.ts";
@@ -859,7 +862,7 @@ export class AdoClient {
    * @param projection - Optional sparse field references and explicit relation expansion; omitted preserves full reads.
    * @returns The found items and the ids the service omitted.
    */
-  async getWorkItemsReport(ids: readonly number[], projection: { fields: readonly string[]; relations?: boolean } | undefined = undefined): Promise<BatchReadResult> {
+  async getWorkItemsReport(ids: readonly number[], projection: { fields?: readonly string[]; relations?: boolean } | undefined = undefined): Promise<BatchReadResult> {
     const items: AdoWorkItem[] = [];
     const missing: number[] = [];
     for (const batch of batchIds(ids)) {
@@ -1135,6 +1138,16 @@ export default defineExtension({
         handler: (ctx: CommandHandlerContext) => runSyncCommand(ctx, mode),
       });
     }
+
+    api.registerCommand({
+      name: "ado artifact-plan",
+      description: "Inspect PR and pipeline build links on selected Azure work items without writes",
+      examples: ["pm ado artifact-plan --items example-a,example-b --json"],
+      flags: [
+        { long: "--items", value_type: "string", value_name: "ids", description: "Comma-separated exact linked pm IDs (1..20)" },
+      ],
+      handler: runArtifactCommand,
+    });
 
     api.registerCommand({
       name: "ado refresh-plan",

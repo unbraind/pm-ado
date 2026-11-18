@@ -2,6 +2,8 @@ import { isDeepStrictEqual } from "node:util";
 import { normalizeScopeValue } from "./normalization.js";
 import { runSyncCommand, SYNC_FLAGS } from "./sync.js";
 import { runRefreshCommand } from "./refresh.js";
+import { runArtifactCommand } from "./artifacts.js";
+export { ARTIFACT_LIMITS, ArtifactRefusal, observeArtifactPlan } from "./artifacts.js";
 export { compileRefreshPlan, validateRefreshInput, refreshSaved, observeRefreshPlan, RefreshRefusal } from "./refresh.js";
 import { runMoveCommand } from "./moves.js";
 export { simulateMove, MoveRefusal, MOVE_LIMITS } from "./moves.js";
@@ -935,6 +937,15 @@ export default defineExtension({
                 handler: (ctx) => runSyncCommand(ctx, mode),
             });
         }
+        api.registerCommand({
+            name: "ado artifact-plan",
+            description: "Inspect PR and pipeline build links on selected Azure work items without writes",
+            examples: ["pm ado artifact-plan --items example-a,example-b --json"],
+            flags: [
+                { long: "--items", value_type: "string", value_name: "ids", description: "Comma-separated exact linked pm IDs (1..20)" },
+            ],
+            handler: runArtifactCommand,
+        });
         api.registerCommand({
             name: "ado refresh-plan",
             description: "Probe linked Azure revisions and compile costed sparse read batches without writes",

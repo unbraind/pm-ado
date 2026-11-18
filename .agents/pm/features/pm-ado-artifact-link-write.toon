@@ -1,0 +1,13 @@
+id: pm-ado-artifact-link-write
+title: Plan and attach Azure PR and build references at a checked revision
+description: ""
+type: Feature
+status: open
+priority: 3
+tags: []
+created_at: "2026-11-18T15:01:21.928Z"
+updated_at: "2026-11-18T15:01:21.928Z"
+author: codex-sol
+acceptance_criteria: "Use verified typed coordinates, dry-run planning and Azure revision checks to attach intended links; preserve unrelated relations and report conflicts and safe retry semantics."
+parent: pm-ado-artifact-evidence
+body: ""

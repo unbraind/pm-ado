@@ -1,0 +1,13 @@
+id: pm-ado-team-sprint-mapping
+title: Discover team sprint and area mappings before batch moves
+description: ""
+type: Feature
+status: open
+priority: 2
+tags: []
+created_at: "2026-11-18T15:01:19.082Z"
+updated_at: "2026-11-18T15:01:19.082Z"
+author: codex-sol
+acceptance_criteria: Discover team classification paths and date-bounded iterations; expose mapping decisions and revision-bound reviewed batch moves with per-item receipts.
+parent: pm-ado-g4v1
+body: ""

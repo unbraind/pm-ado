@@ -101,7 +101,7 @@ private data in its entire history.
 | variable | meaning |
 | --- | --- |
 | `ADO_ORG_URL` | e.g. `https://dev.azure.com/your-org` |
-| `ADO_PROJECT` | the project name |
+| `ADO_PROJECT` | the project name or ID |
 | `ADO_TOKEN` | a personal access token with Work Items (read & write) |
 
 A credential preflight aborts a network-mutating command **before** any store read or
@@ -166,10 +166,10 @@ Guarded sync requires the SDK module link created by `pm install`. Manually
 removing it produces an explicit dependency refusal; read-only refresh still works.
 
 `ado validate`, `ado contract`, `ado import`, `ado export`, `ado sync`,
-`ado move-preview`, `ado resolve-plan`, `ado resolve-apply` and `ado refresh-plan` work in
-plain trackers without git. Network operations still need Azure configuration;
-contract discovery requires an explicit project. Package release/changelog and
-GitHub workflows need a git checkout and are separate from tracker operations.
+`ado move-preview`, `ado resolve-plan`, `ado resolve-apply`, `ado refresh-plan`
+and `ado artifact-plan` work in plain trackers without git. Network operations
+still need Azure configuration. Contract discovery requires an explicit project.
+Release, changelog and GitHub workflows need a git checkout.
 
 ## Resolve field conflicts at their saved revisions
 
@@ -233,6 +233,40 @@ remain unavailable. The SDK and CLI never mutate either tracker.
 
 See the [typed SDK example, limits and remedies](docs/sparse-refresh.md). This
 command works in a plain tracker without git and includes every configured status.
+
+## Inspect linked pull requests and pipeline builds
+
+With `ADO_ORG_URL`, `ADO_PROJECT` and an `ADO_TOKEN` with **Work Items read**,
+inspect up to 20 exact pm IDs already linked by import, export or sync.
+
+```sh
+pm ado artifact-plan --items example-a,example-b --json
+pm ado artifact-plan --items example-a --output-format toon
+```
+
+The same preview is available to SDK consumers as
+`observeArtifactPlan(pm, config, transport, ["example-a", "example-b"])`.
+It checks the complete PM identity index, then reads expanded relations in one
+Azure work-items batch. A GUID in `ADO_PROJECT` adds one project lookup and
+requires **Project and Team read** access for artifact plans and generated sync
+queries. Each row reports the PM ID, Azure work-item ID, observed
+revision and up to 10 distinct links ordered by kind and canonical coordinates.
+A pull request includes its project, repository and PR IDs. A build includes its
+run ID and distinguishes `build`, `found_in_build` and `integrated_in_build`.
+The receipt omits item bodies, raw URLs and link comments.
+[Azure artifact link types](https://learn.microsoft.com/en-us/rest/api/azure/devops/wit/artifact-link-types/list?view=azure-devops-rest-7.1) ·
+[Azure PR artifact IDs](https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/get-pull-requests?view=azure-devops-rest-7.1)
+
+Inspect `complete` before interpreting an empty link list. `rev: null` means
+Azure omitted the work item. `omitted_links`, `invalid_links` and
+`unsupported_links` count capped, malformed and other artifact links. An
+incomplete receipt still returns the available evidence. Invalid configuration
+or ambiguous identity exits 2. A failed tracker or Azure read, including a
+returned work item from another project, exits 3 with a sanitized remedy.
+
+The command only reads both trackers. The receipt describes associations at the
+observed work-item revision. PR merge state, build results and classic release
+links require separate evidence.
 
 ## Empty prepared releases
 

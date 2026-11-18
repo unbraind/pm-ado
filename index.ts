@@ -23,6 +23,9 @@ import type {
 } from "@unbrained/pm-cli/sdk/authoring";
 import { runSyncCommand, SYNC_FLAGS } from "./sync.ts";
 import { runRefreshCommand } from "./refresh.ts";
+import { runArtifactCommand } from "./artifacts.ts";
+export { ARTIFACT_LIMITS, ArtifactRefusal, observeArtifactPlan } from "./artifacts.ts";
+export type { ArtifactLink, ArtifactPlan, ArtifactRefusalCode, ArtifactRow } from "./artifacts.ts";
 export { compileRefreshPlan, validateRefreshInput, refreshSaved, observeRefreshPlan, RefreshRefusal } from "./refresh.ts";
 export type { RefreshInput, RefreshSaved, RefreshRevision, RefreshField, RefreshBatch, RefreshPlan, RefreshRefusalCode } from "./refresh.ts";
 import { runMoveCommand } from "./moves.ts";
@@ -752,8 +755,10 @@ export function missingEnv(env: Readonly<Record<string, string | undefined>>): s
   return REQUIRED_ENV.filter((name) => !env[name]?.trim());
 }
 
+const projectGuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+
 /**
- * A minimal Azure DevOps Work Items client.
+ * A minimal Azure DevOps project and Work Items client.
  *
  * Deliberately small: it exposes only the calls this package makes, and it
  * takes its transport as a parameter so every mapping and patch-building
@@ -762,6 +767,7 @@ export function missingEnv(env: Readonly<Record<string, string | undefined>>): s
 export class AdoClient {
   readonly #config: AdoConfig;
   readonly #transport: AdoTransport;
+  #projectIdentity?: Promise<{ name: string; id: string }>;
 
   /**
    * Construct a client bound to one project.
@@ -782,6 +788,27 @@ export class AdoClient {
   }
 
   /**
+   * Resolve a configured GUID to its canonical name and ID with one lookup per client.
+   * A configured project name is already usable by Work Items and needs no lookup.
+   */
+  async resolveProject(): Promise<{ name: string; id: string | null }> {
+    const project = this.#config.project;
+    if (!projectGuid.test(project)) return { name: project, id: null };
+    return this.#projectIdentity ??= this.#lookupProject(project.toLowerCase());
+  }
+
+  /** Read organization-scoped project metadata and verify it belongs to the requested ID. */
+  async #lookupProject(id: string): Promise<{ name: string; id: string }> {
+    const url = `${stripTrailingSlashes(this.#config.orgUrl)}/_apis/projects/${id}?api-version=7.1`;
+    const project = await this.#requestAt("GET", url) as { id?: unknown; name?: unknown } | null;
+    if (typeof project?.id !== "string" || project.id.toLowerCase() !== id ||
+        typeof project.name !== "string" || !project.name.trim()) {
+      throw new CommandError("Invalid Azure DevOps project identity response", EXIT_CODE.remote);
+    }
+    return { name: project.name, id };
+  }
+
+  /**
    * Perform a request and decode its JSON body.
    *
    * @param method - The HTTP method.
@@ -795,6 +822,11 @@ export class AdoClient {
    */
   async request(method: string, path: string, body?: unknown, contentType = "application/json"): Promise<unknown> {
     const url = `${this.#config.orgUrl}/${encodeURIComponent(this.#config.project)}${path}`;
+    return this.#requestAt(method, url, body, contentType);
+  }
+
+  /** Send a decoded REST request to a project or organization endpoint. */
+  async #requestAt(method: string, url: string, body?: unknown, contentType = "application/json"): Promise<unknown> {
     // The invariant lives here rather than at one call site, so it guards EVERY
     // patch this client will ever send. A patch document that does not open
     // with a revision assertion is an unchecked write, and an unchecked write
@@ -859,7 +891,7 @@ export class AdoClient {
    * @param projection - Optional sparse field references and explicit relation expansion; omitted preserves full reads.
    * @returns The found items and the ids the service omitted.
    */
-  async getWorkItemsReport(ids: readonly number[], projection: { fields: readonly string[]; relations?: boolean } | undefined = undefined): Promise<BatchReadResult> {
+  async getWorkItemsReport(ids: readonly number[], projection: { fields?: readonly string[]; relations?: boolean } | undefined = undefined): Promise<BatchReadResult> {
     const items: AdoWorkItem[] = [];
     const missing: number[] = [];
     for (const batch of batchIds(ids)) {
@@ -1135,6 +1167,16 @@ export default defineExtension({
         handler: (ctx: CommandHandlerContext) => runSyncCommand(ctx, mode),
       });
     }
+
+    api.registerCommand({
+      name: "ado artifact-plan",
+      description: "Inspect PR and pipeline build links on selected Azure work items without writes",
+      examples: ["pm ado artifact-plan --items example-a,example-b --json"],
+      flags: [
+        { long: "--items", value_type: "string", value_name: "ids", description: "Comma-separated exact linked pm IDs (1..20)" },
+      ],
+      handler: runArtifactCommand,
+    });
 
     api.registerCommand({
       name: "ado refresh-plan",

@@ -309,7 +309,6 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
         if (mode === "export" && ["wiql", "area-path", "iteration-path"].some((name) => option(ctx.options, name) !== undefined)) {
             throw new CommandError("WIQL, area and iteration filters apply to import/sync only");
         }
-        const wiql = buildWiql(ctx.options, config.project);
         const client = new AdoClient(config, async (method, url, body, headers) => {
             const operation = `${method} ${new URL(url).pathname}`;
             // Create dispatch has its own observer, after the intent is durable.
@@ -324,6 +323,9 @@ export async function runSyncCommand(ctx, mode, observer, sdkAnchors) {
                     await observer?.({ boundary: "remote", phase: "after", operation });
             }
         });
+        const queryProject = mode === "export" || option(ctx.options, "wiql") !== undefined
+            ? config.project : (await client.resolveProject()).name;
+        const wiql = buildWiql(ctx.options, queryProject);
         let sdk;
         try {
             sdk = loadResolutionSdk(sdkAnchors);

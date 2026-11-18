@@ -2,6 +2,8 @@ import { isDeepStrictEqual } from "node:util";
 import { normalizeScopeValue } from "./normalization.js";
 import { runSyncCommand, SYNC_FLAGS } from "./sync.js";
 import { runRefreshCommand } from "./refresh.js";
+import { runArtifactCommand } from "./artifacts.js";
+export { ARTIFACT_LIMITS, ArtifactRefusal, observeArtifactPlan } from "./artifacts.js";
 export { compileRefreshPlan, validateRefreshInput, refreshSaved, observeRefreshPlan, RefreshRefusal } from "./refresh.js";
 import { runMoveCommand } from "./moves.js";
 export { simulateMove, MoveRefusal, MOVE_LIMITS } from "./moves.js";
@@ -591,8 +593,9 @@ export const REQUIRED_ENV = ["ADO_ORG_URL", "ADO_PROJECT", "ADO_TOKEN"];
 export function missingEnv(env) {
     return REQUIRED_ENV.filter((name) => !env[name]?.trim());
 }
+const projectGuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 /**
- * A minimal Azure DevOps Work Items client.
+ * A minimal Azure DevOps project and Work Items client.
  *
  * Deliberately small: it exposes only the calls this package makes, and it
  * takes its transport as a parameter so every mapping and patch-building
@@ -601,6 +604,7 @@ export function missingEnv(env) {
 export class AdoClient {
     #config;
     #transport;
+    #projectIdentity;
     /**
      * Construct a client bound to one project.
      *
@@ -618,6 +622,26 @@ export class AdoClient {
         return `Basic ${Buffer.from(`:${this.#config.token}`).toString("base64")}`;
     }
     /**
+     * Resolve a configured GUID to its canonical name and ID with one lookup per client.
+     * A configured project name is already usable by Work Items and needs no lookup.
+     */
+    async resolveProject() {
+        const project = this.#config.project;
+        if (!projectGuid.test(project))
+            return { name: project, id: null };
+        return this.#projectIdentity ??= this.#lookupProject(project.toLowerCase());
+    }
+    /** Read organization-scoped project metadata and verify it belongs to the requested ID. */
+    async #lookupProject(id) {
+        const url = `${stripTrailingSlashes(this.#config.orgUrl)}/_apis/projects/${id}?api-version=7.1`;
+        const project = await this.#requestAt("GET", url);
+        if (typeof project?.id !== "string" || project.id.toLowerCase() !== id ||
+            typeof project.name !== "string" || !project.name.trim()) {
+            throw new CommandError("Invalid Azure DevOps project identity response", EXIT_CODE.remote);
+        }
+        return { name: project.name, id };
+    }
+    /**
      * Perform a request and decode its JSON body.
      *
      * @param method - The HTTP method.
@@ -631,6 +655,10 @@ export class AdoClient {
      */
     async request(method, path, body, contentType = "application/json") {
         const url = `${this.#config.orgUrl}/${encodeURIComponent(this.#config.project)}${path}`;
+        return this.#requestAt(method, url, body, contentType);
+    }
+    /** Send a decoded REST request to a project or organization endpoint. */
+    async #requestAt(method, url, body, contentType = "application/json") {
         // The invariant lives here rather than at one call site, so it guards EVERY
         // patch this client will ever send. A patch document that does not open
         // with a revision assertion is an unchecked write, and an unchecked write
@@ -935,6 +963,15 @@ export default defineExtension({
                 handler: (ctx) => runSyncCommand(ctx, mode),
             });
         }
+        api.registerCommand({
+            name: "ado artifact-plan",
+            description: "Inspect PR and pipeline build links on selected Azure work items without writes",
+            examples: ["pm ado artifact-plan --items example-a,example-b --json"],
+            flags: [
+                { long: "--items", value_type: "string", value_name: "ids", description: "Comma-separated exact linked pm IDs (1..20)" },
+            ],
+            handler: runArtifactCommand,
+        });
         api.registerCommand({
             name: "ado refresh-plan",
             description: "Probe linked Azure revisions and compile costed sparse read batches without writes",

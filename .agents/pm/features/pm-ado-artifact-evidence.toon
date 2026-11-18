@@ -1,0 +1,61 @@
+id: pm-ado-artifact-evidence
+title: Inspect Azure PR and pipeline links from linked pm items
+description: Give agents revision-stamped delivery evidence using existing Azure work item relations.
+type: Feature
+status: in_progress
+priority: 2
+tags[2]: artifacts,azure
+created_at: "2026-11-18T14:56:11.672Z"
+updated_at: "2026-11-18T21:06:43.488Z"
+author: codex-sol
+acceptance_criteria: "Read an explicit bounded selection through the pm SDK and one Azure batch; classify documented PR and build references; account for missing, unsupported and malformed evidence; keep both trackers unchanged; verify the CLI and SDK with the existing REST harness and documented usage."
+parent: pm-ado-g4v1
+comments[14]{created_at,author,text}:
+  "2026-11-18T14:56:25.195Z",codex-sol,"Ranked gaps: 1. PR/build links survive sync but agents lack compact typed delivery evidence; expose a read-only inventory with revision and completeness receipts. 2. Area/iteration fields map and preview today, while team sprint discovery and reviewed bulk apply remain absent. 3. Stable import identity, sparse refresh and revision-bound conflict decisions work, while agents lack one bounded multi-item triage view of drift and conflict next actions. Artifact evidence ranks first because it supplies missing delivery verification through the work-item scope and existing SDK provenance."
+  "2026-11-18T14:56:30.166Z",codex-sol,"Design: register an always read-only SDK extension command and typed evidence plan. Use certified tracker reads, strict organization/project identity, one expanded Azure batch, and deterministic capped link coordinates. Report omitted rows, malformed links and unsupported artifacts separately. Render no raw URLs, work item bodies or credentials. Existing import/export provenance and guarded sync stay in place."
+  "2026-11-18T14:56:34.819Z",codex-sol,"Guard baseline discrepancy: origin/main has MD5 db66aa6ffc81fce62434520396f5c121 for test/global-npm-guard.test.ts. Verify byte equality against origin/main and execute the unchanged test."
+  "2026-11-18T15:02:07.802Z",codex-sol,"The first installed CLI and SDK acceptance passed all three artifact-plan cases on the existing REST harness. Follow-up Features cover team sprint mapping, compact bulk triage and reviewed artifact-link writes. This read-only plan uses the host's registered provenance and Work Items read authorization."
+  "2026-11-18T15:07:25.873Z",codex-sol,"Implementation commit fde1e63c6324c032ca8dc426ecb1dd3b1ec0e7b2. Pinned build, test build and docstring lint passed. PM linked run passed 310/310 tests for moves, the unchanged npm guard and published SDK compatibility under Node and Bun. The artifact tests exercised installed CLI and registered SDK commands, four link roles, missing and malformed evidence, deterministic caps and sanitized refusals. Targeted V8 lines, branches and functions were 100% for artifacts.ts."
+  "2026-11-18T15:07:28.437Z",codex-sol,Public tracker harnesses passed on archived 29- and 32-item inputs with synthetic Azure projections. Authoritative tracker hashes matched and the move fixture had no remote changes. npm production audit returned zero vulnerabilities and the native precondition probe passed 19/19. Full package coverage is in progress.
+  "2026-11-18T15:10:02.346Z",codex-sol,The pinned strict health check reports extension_host_pm_cli_version_skew on both the feature tracker and an archived origin/main tracker. Existing item pm-ado-extension-host-skew owns this baseline toolchain issue. The feature uses the current pinned host and adds no toolchain changes.
+  "2026-11-18T15:26:23.128Z",codex-sol,"Node 22 and 26 each passed all three artifact acceptance cases. The targeted two-pass gate measured artifacts.ts at 100% lines, branches, functions and independent statements (96/96), with 20/20 tests in each pass. The initial Node 24 package run was stopped before totals after a packed-install failure and an earlier test assertion. The archived origin/main packed suite passed 15/15 when retried in isolation. The unchanged package coverage scope and thresholds are being rerun with Node 26 and the repository quick test depth."
+  "2026-11-18T16:04:35.351Z",codex-sol,"Package gate command PM_TEST_DEPTH=quick npm run coverage on Node 26 passed 1644/1644 tests with zero skips, including the packed npm/Bun launcher matrix and all files referencing changed code. V8 covered 100% lines and functions and 99.96% branches. The sole missing branch is the NODE_OPTIONS fallback in scripts/coverage-gate.ts:288, which stopped the package-wide Istanbul pass. The archived origin/main runner reproduced 99.18% branches with the required WAN option and 100% with NODE_OPTIONS absent; both controls passed 31/31. Tracked in pm-ado-coverage-node-options. Feature module coverage is 100% in all four dimensions."
+  "2026-11-18T16:04:36.275Z",codex-sol,"The assessed base was 693be2a. The feature patch also applies to release commit cebc9bf. Testing that composition in a public scratch copy passed typecheck, build and generated-output equality, build:test and all three artifact cases."
+  "2026-11-18T16:04:37.273Z",codex-sol,"The feature is ready for draft review. The npm guard passed and matches origin/main byte for byte. The requested git fetch --tags origin, npm run changelog:full and npm run changelog:check passed before final tracking; run them again after releasing this claim. Keep the Feature in progress for orchestrator verification."
+  "2026-11-18T19:08:58.815Z",codex-sol,Investigating project identity for PR #123 with synthetic Azure REST responses. Preserve strict response scope and existing project-name behavior.
+  "2026-11-18T19:11:29.291Z",codex-sol,Use a per-client organization-scoped project lookup for GUIDs. Artifact plans validate the canonical response name. Generated sync queries use it while local provenance and journal coordinates retain their configured value. Name configurations use the existing request paths.
+  "2026-11-18T21:06:42.071Z",codex-sol,"PR #123 review mapping: Greptile PRRT_kwDOUMUq1865FIYT and CodeRabbit PRRT_kwDOUMUq1865GHlG both map to f510a8421d86a8e88d390ffcb39ffb6bf2aa63eb. Synthetic REST tests cover GUID acceptance, wrong-project refusal, unchanged name configuration, lookup caching and generated sync WIQL. Focused tests passed 5/5 and the moves, unchanged npm guard and API suites passed 311/311. Build, typecheck, docstring lint and changelog checks passed. Node 26.13.0 with PM_TEST_DEPTH=quick and NODE_OPTIONS unset passed 1646/1646 tests in each coverage pass. All four dimensions reached 100% over 14 sources, including 2556/2556 independently measured statements. The initial Node 24 coverage attempt was stopped after a packed-install failure, and the Node 26 standalone packed-install retry passed 15/15. The NODE_OPTIONS fallback is tracked in pm-ado-coverage-node-options."
+files[6]{path,scope}:
+  artifacts.ts,project
+  index.ts,project
+  sync.ts,project
+  test/fixtures/move-service.ts,project
+  test/moves.test.ts,project
+  test/sync.test.ts,project
+tests[3]:
+  - command: node --test test/moves.test.ts test/global-npm-guard.test.ts test/public-api.test.ts
+    scope: project
+    timeout_seconds: 300
+    provenance:
+      author: codex-sol
+      created_at: "2026-11-18T15:02:06.746Z"
+      source_kind: local_mutation
+      source_ref: feat/artifact-evidence
+  - command: "node --test --test-name-pattern=\"artifact plan|sync uses the resolved project\" test/moves.test.ts test/sync.test.ts"
+    scope: project
+    provenance:
+      author: codex-sol
+      created_at: "2026-11-18T19:12:18.513Z"
+      source_kind: local_mutation
+      source_ref: feat/artifact-evidence
+  - command: PM_TEST_DEPTH=quick env -u NODE_OPTIONS npm run coverage
+    scope: project
+    timeout_seconds: 10800
+    provenance:
+      author: codex-sol
+      created_at: "2026-11-18T21:06:40.556Z"
+      source_kind: local_mutation
+      source_ref: feat/artifact-evidence
+docs[1]{path,scope}:
+  README.md,project
+body: ""

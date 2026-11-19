@@ -191,15 +191,22 @@ async function runGate(dir: string): Promise<{ code: number; stderr: string; std
 // Success path
 // ---------------------------------------------------------------------------
 
-test("coverage gate passes a fully-covered fixture project", async (t) => {
+test("coverage gate passes a fully-covered fixture project without inherited Node options", async (t) => {
   const fixture = createFixture("cg-success-");
   t.after(fixture.cleanup);
 
   writeRunnableFixture(fixture.dir);
   writeStandardGate(fixture.dir);
 
+  const previous = process.env.NODE_OPTIONS;
+  delete process.env.NODE_OPTIONS;
+  t.after(() => {
+    if (previous !== undefined) process.env.NODE_OPTIONS = previous;
+  });
+
   const { code, stdout, stderr } = await runGate(fixture.dir);
   assert.strictEqual(code, 0, `gate should pass; stderr: ${stderr}`);
+  assert.match(stdout, /statements 1\/1 \(100%\)/);
   assert.match(stdout, /thresholds met/);
 });
 

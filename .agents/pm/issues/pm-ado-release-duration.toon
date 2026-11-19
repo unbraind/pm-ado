@@ -1,0 +1,82 @@
+id: pm-ado-release-duration
+title: Daily Release repeats multi-hour sync validation
+description: Diagnose the Daily Release check duration and reduce it without lowering the four 100% coverage thresholds or dropping release gates.
+type: Issue
+status: open
+priority: 1
+tags[3]: ci,performance,release-gate
+created_at: "2026-11-19T15:39:38.798Z"
+updated_at: "2026-11-19T18:20:45.253Z"
+author: codex-sol
+comments[8]:
+  - created_at: "2026-11-19T15:39:41.541Z"
+    author: codex-sol
+    text: "Read-only diagnosis found that the package-owned Daily Release step runs the full coverage script, which executes the test corpus under both V8 and Istanbul with no quick depth set. PM_TEST_DEPTH=quick is already used by hosted PR CI. Compare per-suite logs and measure the affected command locally before changing the check."
+  - created_at: "2026-11-19T15:41:15.156Z"
+    author: codex-sol
+    text: "Nov 16 pre-merge 2h49m06s, then the protected PR step failed. Nov 17 pre-merge 2h18m16s and merged validation 2h17m13s. Nov 18 pre-merge 2h51m41s and merged validation was cancelled after 2h45m28s. The Nov 17 first V8 pass spent 55m05s in the 500- and 512-sequence sync models; the first Istanbul pass spent 45m48s there. The workflow now selects quick model depth at both existing release:check invocations. The exhaustive CI Deep matrix and the four 100% coverage thresholds still apply."
+  - created_at: "2026-11-19T15:51:19.901Z"
+    author: codex-sol
+    text: "Sibling comparison: pm-jira run 43860908293 used the reusable pm-ops workflow and completed Run release checks in 2m57s. pm-ado owns both slower invocations. Hosted PR CI run 44398139464 completed Node 22 Engines floor tests in 18m18s and Node 26 Quick npm validation in 16m12s. The workflow contract rejects the original release workflow and passes with the quick environment on both steps."
+    edited_at: "2026-11-19T15:51:42.303Z"
+  - created_at: "2026-11-19T16:20:18.191Z"
+    author: codex-sol
+    text: "Code commit 61f857e scopes the depth change to the two release steps. Typecheck, test compilation, the workflow contract, actionlint and changelog regeneration and checking passed. The package-pinned strict PM health check reported the already tracked pm-ado-extension-host-skew (CLI 2026.11.14 and managed pm-github host 2026.11.18). Local model timing and the quick coverage run are in progress."
+  - created_at: "2026-11-19T16:26:37.026Z"
+    author: codex-sol
+    text: "On Node 22.23.4 the same selected sync model passed at full depth in 44m08.27s (500 sequences) and quick depth in 1m45.67s (50 sequences), a 96.0% reduction for this subtest. The shared host exposed four logical CPUs. One-minute load was 7.01 to 14.51 during the full run and 14.17 to 14.38 during the quick run. Both tests ran directly and used the same command with the depth environment as the difference."
+  - created_at: "2026-11-19T17:21:00.364Z"
+    author: codex-sol
+    text: "The first local quick gate completed all 1646 tests in 97m31s elapsed on the shared host. V8 reported 100% lines and functions and 99.96% branches, with the only uncovered branch in the no-NODE_OPTIONS fallback already tracked by pm-ado-coverage-node-options. The positive fixture now executes the fallback in isolation. Coverage gates and network settings for the remaining suite are unaffected."
+  - created_at: "2026-11-19T17:29:18.094Z"
+    author: codex-sol
+    text: "After rebasing over main 9a89662, the release workflow change is eb2677e. The full V8 report and corrected focused report cover 5313/5313 lines, 2593/2593 branches and 476/476 functions across all 14 sources. The separate release gates and all 50 post-rebase workflow and coverage tests passed. The production Istanbul pass is running with the complete quick-profile test selection."
+  - created_at: "2026-11-19T18:20:39.025Z"
+    author: codex-sol
+    text: "Workflow commit eb2677e uses the quick profile for both release gates. Fixture commit c7716c1 ensures coverage with the requested WAN setting. Full and targeted V8 reports account for 5313/5313 lines, 2593/2593 branches and 476/476 functions. Independent production Istanbul passed all 1646 tests and measured 2556/2556 statements in 56m59.81s under changing shared-host load. Gates were verified by component after the fixture fix. Typecheck, test compilation, docstrings, zero-vulnerability production audit, pack dry run, changelog regeneration and verification, attestation, release date, 19 native precondition cases, actionlint and 50 focused post-rebase tests passed."
+files[4]:
+  - path: .github/workflows/release.yml
+    scope: project
+  - path: test/ci-quick-contract.test.ts
+    scope: project
+  - path: test/coverage-gate.test.ts
+    scope: project
+  - path: test/sync.test.ts
+    scope: project
+    note: Contains the two seeded sync models timed in the job logs
+tests[4]:
+  - command: node --test test/ci-quick-contract.test.ts test/release-workflow.test.ts
+    scope: project
+    provenance:
+      author: codex-sol
+      created_at: "2026-11-19T15:41:12.862Z"
+      source_kind: local_mutation
+      source_ref: fix/release-check-duration
+  - command: "PM_TEST_DEPTH=quick npm run release:check"
+    scope: project
+    timeout_seconds: 10800
+    provenance:
+      author: codex-sol
+      created_at: "2026-11-19T15:41:12.862Z"
+      source_kind: local_mutation
+      source_ref: fix/release-check-duration
+  - command: "env -u PM_TEST_DEPTH node --test --test-reporter=spec --test-name-pattern=\"500 seeded import/export/sync sequences\" test/sync.test.ts"
+    scope: project
+    timeout_seconds: 7200
+    provenance:
+      author: codex-sol
+      created_at: "2026-11-19T17:29:15.937Z"
+      source_kind: local_mutation
+      source_ref: fix/release-check-duration
+  - command: "PM_TEST_DEPTH=quick node --test --test-reporter=spec --test-name-pattern=\"500 seeded import/export/sync sequences\" test/sync.test.ts"
+    scope: project
+    timeout_seconds: 1800
+    provenance:
+      author: codex-sol
+      created_at: "2026-11-19T17:29:15.937Z"
+      source_kind: local_mutation
+      source_ref: fix/release-check-duration
+docs[2]{path,scope}:
+  docs/node26-ci-timeout.md,project
+  docs/statement-coverage.md,project
+body: ""

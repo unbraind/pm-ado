@@ -35,14 +35,19 @@ test("hosted Node 26 runs the test suite once without either coverage pass", () 
   assert.ok(steps.every((step) => !step.run?.includes("npm run release:check")));
 });
 
-test("full coverage remains mandatory in CI Deep and before publication", () => {
+test("CI Deep uses full model depth and both daily release checks use quick depth with coverage", () => {
   assert.ok(commands("release:check").some((command) => command.includes("scripts/coverage-gate.ts")));
   assert.equal(manifest.scripts.prepublishOnly, "npm run release:check");
   const deep = parse(readFileSync(new URL("../.github/workflows/ci-deep.yml", import.meta.url), "utf8"));
   assert.equal(deep.jobs.deep.env.PM_TEST_DEPTH, "full");
   assert.ok(deep.jobs.deep.steps.some((step: { run?: string }) => step.run?.includes("npm run release:check")));
-  const release = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
-  assert.match(release, /npm run release:check/);
+  const release = parse(readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8"));
+  const checks = (release.jobs.release.steps as { name?: string; run?: string; env?: Record<string, string> }[])
+    .filter((step) => /^ *npm run release:check$/m.test(step.run ?? ""));
+  assert.deepEqual(checks.map((step) => [step.name, step.env?.PM_TEST_DEPTH]), [
+    ["Run release checks", "quick"],
+    ["Verify merged release", "quick"],
+  ]);
 });
 
 test("unrecognised npm flags cannot hide a coverage alias from the quick contract", () => {

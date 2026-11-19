@@ -308,6 +308,10 @@ jobs:
 
       - name: Run release checks
         if: steps.decide.outputs.should_release == 'true'
+        env:
+          # Use the hosted CI model depth with both coverage passes. CI Deep
+          # exercises the longer seeded sequences.
+          PM_TEST_DEPTH: quick
         run: npm run release:check
 
       - name: Commit release files
@@ -534,6 +538,7 @@ jobs:
         env:
           MERGED_SHA: ${{ steps.release_pr.outputs.merged_sha }}
           NPM_VERSION: ${{ steps.decide.outputs.npm_version }}
+          PM_TEST_DEPTH: quick
         run: |
           set -euo pipefail
           git fetch origin main --force

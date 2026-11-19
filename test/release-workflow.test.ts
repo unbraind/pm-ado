@@ -579,7 +579,7 @@ for (const timing of ["before", "after"] as const) {
       ["init", "--initial-branch=main"], ["add", "package.json", ".agents/pm"],
       // Commit a tracker-bearing snapshot, deliberately excluding the omitted item.
       ...(timing === "before" ? [["reset", "--", ".agents/pm/tasks", ".agents/pm/history"], ["add", `.agents/pm/tasks/${seed.id}.toon`, `.agents/pm/history/${seed.id}.jsonl`]] : []),
-      ["-c", "user.name=SteveBot", "-c", "user.email=1153461+unbraind@users.noreply.github.com", "commit", "-m", "Fixture release"],
+      ["-c", "user.name=unbrained", "-c", "user.email=1153461+unbraind@users.noreply.github.com", "commit", "-m", "Fixture release"],
       ["tag", `v${pkg.version}`],
     ]) await runCommand("git", args, { cwd: root, env: childEnv });
     if (timing === "after") {

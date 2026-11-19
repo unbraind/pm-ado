@@ -2,15 +2,13 @@ id: pm-ado-release-duration
 title: Daily Release repeats multi-hour sync validation
 description: Diagnose the Daily Release check duration and reduce it without lowering the four 100% coverage thresholds or dropping release gates.
 type: Issue
-status: in_progress
+status: open
 priority: 1
 tags[3]: ci,performance,release-gate
 created_at: "2026-11-19T15:39:38.798Z"
-updated_at: "2026-11-19T17:21:52.505Z"
-assignee: codex-sol
-claim_principal: codex-sol
+updated_at: "2026-11-19T18:20:45.253Z"
 author: codex-sol
-comments[6]:
+comments[8]:
   - created_at: "2026-11-19T15:39:41.541Z"
     author: codex-sol
     text: "Read-only diagnosis found that the package-owned Daily Release step runs the full coverage script, which executes the test corpus under both V8 and Istanbul with no quick depth set. PM_TEST_DEPTH=quick is already used by hosted PR CI. Compare per-suite logs and measure the affected command locally before changing the check."
@@ -30,6 +28,12 @@ comments[6]:
   - created_at: "2026-11-19T17:21:00.364Z"
     author: codex-sol
     text: "The first local quick gate completed all 1646 tests in 97m31s elapsed on the shared host. V8 reported 100% lines and functions and 99.96% branches, with the only uncovered branch in the no-NODE_OPTIONS fallback already tracked by pm-ado-coverage-node-options. The positive fixture now executes the fallback in isolation. Coverage gates and network settings for the remaining suite are unaffected."
+  - created_at: "2026-11-19T17:29:18.094Z"
+    author: codex-sol
+    text: "After rebasing over main 9a89662, the release workflow change is eb2677e. The full V8 report and corrected focused report cover 5313/5313 lines, 2593/2593 branches and 476/476 functions across all 14 sources. The separate release gates and all 50 post-rebase workflow and coverage tests passed. The production Istanbul pass is running with the complete quick-profile test selection."
+  - created_at: "2026-11-19T18:20:39.025Z"
+    author: codex-sol
+    text: "Workflow commit eb2677e uses the quick profile for both release gates. Fixture commit c7716c1 ensures coverage with the requested WAN setting. Full and targeted V8 reports account for 5313/5313 lines, 2593/2593 branches and 476/476 functions. Independent production Istanbul passed all 1646 tests and measured 2556/2556 statements in 56m59.81s under changing shared-host load. Gates were verified by component after the fixture fix. Typecheck, test compilation, docstrings, zero-vulnerability production audit, pack dry run, changelog regeneration and verification, attestation, release date, 19 native precondition cases, actionlint and 50 focused post-rebase tests passed."
 files[4]:
   - path: .github/workflows/release.yml
     scope: project
@@ -40,7 +44,7 @@ files[4]:
   - path: test/sync.test.ts
     scope: project
     note: Contains the two seeded sync models timed in the job logs
-tests[2]:
+tests[4]:
   - command: node --test test/ci-quick-contract.test.ts test/release-workflow.test.ts
     scope: project
     provenance:
@@ -54,6 +58,22 @@ tests[2]:
     provenance:
       author: codex-sol
       created_at: "2026-11-19T15:41:12.862Z"
+      source_kind: local_mutation
+      source_ref: fix/release-check-duration
+  - command: "env -u PM_TEST_DEPTH node --test --test-reporter=spec --test-name-pattern=\"500 seeded import/export/sync sequences\" test/sync.test.ts"
+    scope: project
+    timeout_seconds: 7200
+    provenance:
+      author: codex-sol
+      created_at: "2026-11-19T17:29:15.937Z"
+      source_kind: local_mutation
+      source_ref: fix/release-check-duration
+  - command: "PM_TEST_DEPTH=quick node --test --test-reporter=spec --test-name-pattern=\"500 seeded import/export/sync sequences\" test/sync.test.ts"
+    scope: project
+    timeout_seconds: 1800
+    provenance:
+      author: codex-sol
+      created_at: "2026-11-19T17:29:15.937Z"
       source_kind: local_mutation
       source_ref: fix/release-check-duration
 docs[2]{path,scope}:

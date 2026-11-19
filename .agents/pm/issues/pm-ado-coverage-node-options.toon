@@ -2,11 +2,23 @@ id: pm-ado-coverage-node-options
 title: Cover the coverage runner fallback with Node options set
 description: "The required WAN NODE_OPTIONS value leaves the fallback branch at scripts/coverage-gate.ts:288 unexercised. Archived origin/main coverage-runner tests passed 31/31 in both controls and measured 99.18% branches with the WAN override and 100% without it. The feature package run passed all 1644 tests, then stopped at 99.96% branches before the independent statement pass."
 type: Issue
-status: open
+status: in_progress
 priority: 2
 tags[2]: coverage,testing
 created_at: "2026-11-18T16:04:34.344Z"
-updated_at: "2026-11-18T16:04:34.344Z"
+updated_at: "2026-11-19T17:22:16.638Z"
+assignee: codex-sol
+claim_principal: codex-sol
 author: codex-sol
 acceptance_criteria: Exercise inherited and absent NODE_OPTIONS in the existing coverage-runner tests; preserve the WAN options for network tests and retain the configured coverage thresholds.
+comments[2]{created_at,author,text}:
+  "2026-11-19T17:20:58.977Z",codex-sol,"Round DV reproduced this at full package scope under the required network NODE_OPTIONS. All 1646 quick-depth tests passed and the V8 gate stopped at 99.96% branches. Only the absent-options branch in scripts/coverage-gate.ts was uncovered. Extend the existing coverage fixture to exercise absent NODE_OPTIONS, scoped to the fixture. The existing inherited-options fixture remains in place."
+  "2026-11-19T17:22:16.637Z",codex-sol,"With the same exported NODE_OPTIONS, the 31 coverage-runner tests pass and measure 100% V8 lines, branches and functions for scripts/coverage-gate.ts. The existing inherited-options case and the isolated absent-options case both pass."
+files[2]{path,scope}:
+  scripts/coverage-gate.ts,project
+  test/coverage-gate.test.ts,project
+tests[1]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
+  node --test --experimental-test-coverage --test-coverage-include=scripts/coverage-gate.ts --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 test/coverage-gate.test.ts,project,codex-sol,"2026-11-19T17:21:56.678Z",local_mutation,fix/release-check-duration
+docs[1]{path,scope}:
+  docs/statement-coverage.md,project
 body: ""

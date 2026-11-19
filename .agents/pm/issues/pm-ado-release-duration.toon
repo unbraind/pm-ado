@@ -6,11 +6,11 @@ status: in_progress
 priority: 1
 tags[3]: ci,performance,release-gate
 created_at: "2026-11-19T15:39:38.798Z"
-updated_at: "2026-11-19T15:51:42.305Z"
+updated_at: "2026-11-19T17:21:52.505Z"
 assignee: codex-sol
 claim_principal: codex-sol
 author: codex-sol
-comments[3]:
+comments[6]:
   - created_at: "2026-11-19T15:39:41.541Z"
     author: codex-sol
     text: "Read-only diagnosis found that the package-owned Daily Release step runs the full coverage script, which executes the test corpus under both V8 and Istanbul with no quick depth set. PM_TEST_DEPTH=quick is already used by hosted PR CI. Compare per-suite logs and measure the affected command locally before changing the check."
@@ -21,10 +21,21 @@ comments[3]:
     author: codex-sol
     text: "Sibling comparison: pm-jira run 43860908293 used the reusable pm-ops workflow and completed Run release checks in 2m57s. pm-ado owns both slower invocations. Hosted PR CI run 44398139464 completed Node 22 Engines floor tests in 18m18s and Node 26 Quick npm validation in 16m12s. The workflow contract rejects the original release workflow and passes with the quick environment on both steps."
     edited_at: "2026-11-19T15:51:42.303Z"
-files[3]:
+  - created_at: "2026-11-19T16:20:18.191Z"
+    author: codex-sol
+    text: "Code commit 61f857e scopes the depth change to the two release steps. Typecheck, test compilation, the workflow contract, actionlint and changelog regeneration and checking passed. The package-pinned strict PM health check reported the already tracked pm-ado-extension-host-skew (CLI 2026.11.14 and managed pm-github host 2026.11.18). Local model timing and the quick coverage run are in progress."
+  - created_at: "2026-11-19T16:26:37.026Z"
+    author: codex-sol
+    text: "On Node 22.23.4 the same selected sync model passed at full depth in 44m08.27s (500 sequences) and quick depth in 1m45.67s (50 sequences), a 96.0% reduction for this subtest. The shared host exposed four logical CPUs. One-minute load was 7.01 to 14.51 during the full run and 14.17 to 14.38 during the quick run. Both tests ran directly and used the same command with the depth environment as the difference."
+  - created_at: "2026-11-19T17:21:00.364Z"
+    author: codex-sol
+    text: "The first local quick gate completed all 1646 tests in 97m31s elapsed on the shared host. V8 reported 100% lines and functions and 99.96% branches, with the only uncovered branch in the no-NODE_OPTIONS fallback already tracked by pm-ado-coverage-node-options. The positive fixture now executes the fallback in isolation. Coverage gates and network settings for the remaining suite are unaffected."
+files[4]:
   - path: .github/workflows/release.yml
     scope: project
   - path: test/ci-quick-contract.test.ts
+    scope: project
+  - path: test/coverage-gate.test.ts
     scope: project
   - path: test/sync.test.ts
     scope: project

@@ -932,7 +932,7 @@ export function runCredentialPreflight(ctx, env, write, exit) {
 const defineExtension = (module) => module;
 export default defineExtension({
     name: "pm-ado",
-    version: "2026.11.19",
+    version: "2026.11.20",
     activate(api) {
         // schema — Azure DevOps provenance, including the revision every write asserts.
         api.registerItemFields([

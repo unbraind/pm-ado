@@ -1,0 +1,20 @@
+id: pm-ado-z51z
+title: Scheduled GitHub sync privacy preflight refuses the plan over absolute host paths in a mirrored item comment
+description: "The scheduled gated GitHub issue sync fails at the preview privacy preflight with two absolute-host-path findings under the synthetic github-recovery-plan id. The findings come from a tracker comment that names literal system temporary-directory paths. Fix the tracker data by rewording that comment without host paths, keeping the meaning, and record the edit in history."
+type: Issue
+status: in_progress
+priority: 1
+tags: []
+created_at: "2026-11-23T13:16:13.169Z"
+updated_at: "2026-11-23T13:19:32.467Z"
+assignee: codex-agent
+claim_principal: codex-agent
+author: codex-agent
+comments[2]{created_at,author,text}:
+  "2026-11-23T13:16:24.701Z",codex-agent,"Root cause reproduced in the package worktree with the pinned pm-github 2026.11.15 extension: pm github import --dry-run --gate fails the privacy preflight with two absolute-host-path findings, item github-recovery-plan, field text, excerpts redacted to a var-directory path and its symlinked counterpart. The flagged text is the round-7 fixture comment on the issue-33 mirror item, which names the two literal system temporary-directory paths. The import would carry that existing comment in its plan, so the preflight blocks every scheduled run. Fix: reword that one comment to drop the literal paths while keeping the finding description, then rerun the dry-run preflight to a passing verdict."
+  "2026-11-23T13:19:32.467Z",codex-agent,"Fix verified. The offending round-7 receipt comment on the issue-33 mirror item was reworded via pm comment --edit with --expect-at fencing; the literal system temporary-directory paths are gone from current content, the original wording is preserved in append-only history, and the edit is recorded with its own history event. The pinned pm-github dry-run gated import now exits 0 against the real tracker (plan: 4 new, 5 update, preflight verdict pass, findings 0) where it previously failed the privacy preflight with two absolute-host-path findings. Gates: typecheck pass, changelog:full regenerated and changelog:check pass after fetching tags, identity/privacy audit test 4/4 pass, linked test command passed exit 0. Tracker-only change: no production code touched."
+files[1]{path,scope,note}:
+  .agents/pm/issues/pm-ado-github-5532dc4b9a65-33.toon,project,Mirror item whose comment carried literal system temporary-directory paths
+tests[1]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
+  pm github import unbraind/pm-ado --state all --atomic --gate --dry-run --with-comments --json,project,codex-agent,"2026-11-23T13:18:51.762Z",local_mutation,sched-1123/pm-ado
+body: ""

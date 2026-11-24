@@ -346,14 +346,15 @@ async function fixture(t: test.TestContext, initial: AdoWorkItem[] = [workItem()
   delete env.ADO_WORK_ITEM_TYPE;
   const harness = await createExtensionTestHarness(extension, { name: "pm-ado", capabilities: ["commands", "schema", "preflight"] });
   assert.deepEqual(harness.activation.failed, []);
-  /** Execute through real registration with the real host-created SDK client. */
-  const command = async (mode: string, options: Record<string, unknown> = {}, global: { author?: string } = {}) => {
+  /** Execute through real registration with an SDK unless the fixture omits its tracker context. */
+  const command = async (mode: string, options: Record<string, unknown> = {},
+    { withoutSdk, ...global }: { author?: string; withoutSdk?: boolean } = {}) => {
     const before = { ...process.env };
     const cwd = process.cwd();
     process.chdir(root);
     process.env = { ...env };
     try {
-      const result = await harness.runCommand({ command: `ado ${mode}`, pmRoot: options.withoutSdk ? undefined : pmRoot, options, global });
+      const result = await harness.runCommand({ command: `ado ${mode}`, pmRoot: withoutSdk ? undefined : pmRoot, options, global });
       return result.result as { ok: boolean; code?: string; exit_code?: number; error?: string; plans: { action: string; import_fields: string[]; export_fields: string[]; ado_id: number | null; linked_fields?: string[] }[]; conflicts: { stored_rev: number; remote_rev: number; fields: Record<string, unknown> }[]; diagnostics: unknown[] } & Pick<SyncCommandResult, "kind" | "sync_conflict">;
     } finally { process.env = before; process.chdir(cwd); }
   };
@@ -809,7 +810,10 @@ test("dry-run still needs credentials and a host SDK; transport failures remain 
   f.env.ADO_TOKEN = "";
   assert.equal((await f.command("import", { dryRun: true })).exit_code, 2);
   f.env.ADO_TOKEN = "synthetic-token";
-  assert.equal((await f.command("import", { withoutSdk: true })).exit_code, 2);
+  await assert.rejects(f.command("import", { withoutSdk: true }), { code: "unknown_option", exitCode: 2 });
+  const missingSdk = await f.command("import", {}, { withoutSdk: true });
+  assert.equal(missingSdk.exit_code, 2);
+  assert.match(missingSdk.error!, /requires a host-bound SDK/u);
   assert.equal(f.requests.length, 0);
   await f.disconnect();
   const failed = await f.command("import");
@@ -1265,7 +1269,7 @@ test("resolution handlers expose typed refusal remedies and core Plan artifacts 
   assert.equal((await f.command("resolve-apply", { artifact: "missing.json" })).code, "apply_failed");
   assert.equal((await f.command("resolve-plan")).code, "configuration");
   assert.equal((await f.command("resolve-apply")).code, "configuration");
-  assert.equal((await f.command("resolve-plan", { withoutSdk: true, item: item.id })).code, "configuration");
+  assert.equal((await f.command("resolve-plan", { item: item.id }, { withoutSdk: true })).code, "configuration");
   f.env.ADO_STATUS_MAP = "{";
   assert.equal((await f.command("resolve-plan", { item: item.id })).code, "configuration");
   delete f.env.ADO_STATUS_MAP;

@@ -519,6 +519,13 @@ test("changelog generation records breaking API changes before publish", () => {
   }
 });
 
+test("every changelog entry point retains published dependency updates", () => {
+  const scripts = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")).scripts as Record<string, string>;
+  for (const name of ["changelog", "changelog:full", "changelog:check", "release:notes"]) {
+    assert.match(scripts[name], /(?:^|\s)--dependency-updates(?=\s|$)/u, name);
+  }
+});
+
 test("the release workflow generates the changelog only through the package scripts", () => {
   // A second copy of the generator flags in the workflow drifted from the
   // scripts once (#71 added --include-empty to the scripts only), and

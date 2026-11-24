@@ -2,6 +2,8 @@ import { sameScope, normalizeFieldValues, normalizeStatusValue, normalizeScopeVa
 import { NativeWriteFence, nativeHead, NativeHistoryConflict, isNativeHead } from "./history-fence.js";
 /** Portable, revision-bound decisions over the existing Azure sync field map. */
 import { agreementMutation, advanceSyncBase, readBaseRevisions } from "./agreement.js";
+/** Fields a read-back agreement writes; a conflict limited to them is a peer's matching agreement. */
+const AGREEMENT_FIELDS = new Set(["ado_sync_base", "ado_rev", "ado_sync_intent"]);
 import { createHash, createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
@@ -399,7 +401,9 @@ export class AdoResolutionService {
                     catch (error) {
                         // A matching peer agreement still invalidates this writer's fence.
                         // Retry the settled decision so the normal path rechecks both sides.
-                        if (error instanceof NativeHistoryConflict && error.fields.ado_sync_base?.current === JSON.stringify(base)) {
+                        // Only an agreement-only conflict is retryable: any other changed field is a real local edit.
+                        if (error instanceof NativeHistoryConflict && error.fields.ado_sync_base?.current === JSON.stringify(base)
+                            && Object.keys(error.fields).every((name) => AGREEMENT_FIELDS.has(name))) {
                             throw new ResolutionRefusal("ado_partial_apply", `A peer recorded matching Azure agreement for decision ${decision}. Rerun ado resolve-apply with the SAME --plan or --artifact to verify settlement; do not repeat the PATCH manually.`);
                         }
                         throw error;

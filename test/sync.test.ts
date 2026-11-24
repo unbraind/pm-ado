@@ -1559,6 +1559,31 @@ test("resolution recovery reports a retryable agreement race after a peer replay
   assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 1);
 });
 
+test("resolution recovery keeps a peer agreement followed by a local edit classified as stale_local", async (t) => {
+  const f = await fixture(t);
+  await f.command("import");
+  const item = await row(f.pm);
+  await f.pm.update(item.id, { title: "Concurrent agreement" });
+  const peer = resolver(f);
+  const plan = choices(await peer.plan(item.id));
+  let peerEdited = false;
+  f.afterBatch(async () => {
+    // The peer replays the matching agreement and then changes an unrelated field
+    // before the first writer's read-back fence is checked.
+    if (!peerEdited && (await row(f.pm)).ado_resolution_receipt) {
+      peerEdited = true;
+      assert.equal((await peer.apply(plan)).replayed, true);
+      await f.pm.update(item.id, { title: "Local edit after the agreement" });
+    }
+  });
+  await assert.rejects(resolver(f).apply(plan), (error: unknown) => {
+    assert.notEqual((error as { code?: string }).code, "ado_partial_apply", "a mixed conflict must not be reported as retryable");
+    return true;
+  });
+  assert.ok(peerEdited);
+  assert.equal((await row(f.pm)).title, "Local edit after the agreement");
+});
+
 test("resolution recovery handles a peer settling between prepare and settlement", async (t) => {
   const f = await fixture(t);
   await f.command("import");

@@ -6,9 +6,9 @@ status: in_progress
 priority: 2
 tags[1]: "gh:unbraind/pm-ado#84"
 created_at: "2026-11-24T20:31:57.485Z"
-updated_at: "2026-11-24T21:14:50.523Z"
+updated_at: "2026-11-24T22:12:53.999Z"
 author: codex-agent
-comments[7]{created_at,author,text}:
+comments[10]{created_at,author,text}:
   "2026-11-24T20:40:20.660Z",codex-agent,"Reproduced the inline Bash sticky flag with one pending read followed by a verified empty read. The legacy timeout still labels approval required. Linked hosted jobs show completed approvals followed by queued or running checks, and the retry replaced the same tree with a new commit. Plan: delegate to the released canonical workflow, retain owner approval and the daily minute, and reconcile durable candidates hourly."
   "2026-11-24T20:44:43.387Z",codex-agent,"Revert proof: restoring only the vendored release.yml failed five of nine caller and CI contract tests. Restoring the caller passed those contracts. The pinned pm-ops 2026.11.22 mocked continuation, adapter and restart suites passed 128 of 128 tests, including current approval and settling diagnosis, failed reads, protected exact-head merge, and the pending candidate held beyond the previous deadline. The same tree and parent were confirmed for the two historical release PR heads. The recovery-race evidence is tracked in pm-ado-resolution-recovery-race."
   "2026-11-24T20:51:57.515Z",codex-agent,"The release/approval/changelog/attestation command passed via pinned pm test. An additional caller wiring test passed pinned and refused the vendored workflow in a disposable copy. Classic main protection requires test (22) and test (26), and squash auto-merge is enabled. The package quick-depth wrapper delegates to the same package manager in npm and Bun fixture runs. Hosted PR CI will be visible in the branch workflow run list at https://github.com/unbraind/pm-ado/actions/workflows/ci.yml?query=branch%3Afix%2Fadopt-reusable-daily-release."
@@ -16,18 +16,25 @@ comments[7]{created_at,author,text}:
   "2026-11-24T21:02:06.429Z",codex-agent,"Targeted release and workflow validation passed 348 tests including the dedicated reconciliation wiring case. Typecheck, build, test build, the publish attestation check, changelog date validation, and strict tracker health passed. The standalone quick-depth coverage gate is running at the original thresholds. The hosted PR will certify the pushed head."
   "2026-11-24T21:12:06.319Z",codex-agent,"PR 131 review thread discussion_r4686543044 identified a GitHub dependency in ordinary tests. Caller tests now read only local inputs. The detailed source contracts run explicitly in publish attestation and the existing CI/release gates. With external fetch refused, reverting to the first PR head failed five of nine caller and CI tests. The live attestation command passed all 16 pinned-source tests."
   "2026-11-24T21:14:48.669Z",codex-agent,"Follow-up verification: ordinary caller, release and CI tests passed 18 of 18 with external fetch disabled. Both linked commands passed, including all 16 upstream-source contract assertions through release attestation. Both hosted Node versions use that explicit check. The source-only follow-up leaves production resolution code, approval scope and coverage thresholds as tested."
-files[8]{path,scope}:
+  "2026-11-24T22:01:34.293Z",codex-agent,"Review follow-up on b4af57d. PM_OPS_OFFLINE=1 makes the real-checkout attestation test fail while 7 publisher-fixture tests pass. The launcher reports unverified-offline because the bundled snapshot lacks v2026.11.22. With the flag absent the suite passes 8 of 8. The source check makes one fetch at present, so one transient failure rejects all shared assertions. Plan: keep fixture tests offline, require live checkout verification in explicit attestation, and retry transient source fetches at the same SHA."
+  "2026-11-24T22:05:13.314Z",codex-agent,"PRRT_kwDOUMUq1867nHNu: transient source reads retry up to four times against the identical SHA URL with a separate timeout per attempt. One-shot revert fails the recovery and exhaustion tests; the permanent HTTP failures still exit on attempt one. Outside-diff attestation finding: restoring the real-checkout assertion to the local suite reproduces 7 of 8 with PM_OPS_OFFLINE=1. Explicit attestation now owns that assertion, requires recognized provenance and a successful live canonical tag lookup, and runs the pinned source contracts. The explicit checkout case refuses offline deferral."
+  "2026-11-24T22:12:52.215Z",codex-agent,"Targeted release and workflow tests passed 341 of 341. Explicit live attestation passed 17 of 17. The offline checkout control refused deferral, and a successful response with invalid workflow content failed after one fetch. Typecheck, build, test build and docstrings passed. Ordinary npm test is running with external connections refused and a sealed loopback registry. The real npm-global, Bun-global, npx, bunx, local-bin and copied-extension fixture passed in that run."
+files[11]{path,scope}:
   .github/workflows/ci.yml,project
   .github/workflows/release.yml,project
   package.json,project
   test/ci-quick-contract.test.ts,project
+  test/helpers/pinned-workflow-source.ts,project
   test/helpers/release-caller.ts,project
   test/hosted/release-workflow-source.test.ts,project
+  test/pinned-workflow-source.test.ts,project
   test/release-approval.test.ts,project
   test/release-workflow.test.ts,project
-tests[2]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
+  test/verify-release-publish-attestation.test.ts,project
+tests[3]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
   node --test --test-concurrency=2 test/ci-quick-contract.test.ts test/global-npm-guard.test.ts test/release-approval.test.ts test/release-workflow.test.ts test/verify-release-changelog-date.test.ts test/verify-release-publish-attestation.test.ts,project,codex-agent,"2026-11-24T20:44:42.006Z",local_mutation,fix/adopt-reusable-daily-release
   "npm run verify:release-publish-attestation",project,codex-agent,"2026-11-24T21:12:04.326Z",local_mutation,fix/adopt-reusable-daily-release
+  node --test --test-concurrency=2 test/pinned-workflow-source.test.ts test/verify-release-publish-attestation.test.ts test/ci-quick-contract.test.ts test/release-workflow.test.ts test/release-approval.test.ts test/global-npm-guard.test.ts test/verify-release-changelog-date.test.ts,project,codex-agent,"2026-11-24T22:05:10.904Z",local_mutation,fix/adopt-reusable-daily-release
 docs[2]:
   - path: docs/ci-tiers.md
     scope: project

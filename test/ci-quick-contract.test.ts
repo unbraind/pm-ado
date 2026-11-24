@@ -54,7 +54,6 @@ test("CI Deep uses full model depth and Daily Release runs quick-depth npm and B
 
 test("release attestation explicitly runs the live workflow-source contracts", () => {
   assert.deepEqual(commands("verify:release-publish-attestation"), [
-    "node scripts/verify-release-publish-attestation.ts",
     "node --test --test-concurrency=2 test/hosted/release-workflow-source.test.ts",
   ]);
   assert.match(manifest.scripts.test, /(?:^|\s)test\/\*\.test\.ts$/u);

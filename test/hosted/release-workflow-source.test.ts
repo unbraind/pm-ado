@@ -1,9 +1,35 @@
 /** Compare public release authority with the live, immutable workflow during attestation. */
 import assert from "node:assert/strict";
+import { resolve } from "node:path";
 import { test } from "node:test";
+import { report, verify } from "pm-ops/attestation";
+import { defaultCanonicalTagResolver, inspectReleaseCaller } from "pm-ops/release-caller";
 import { parse } from "yaml";
 import { caller, callerSource, releaseCallerPolicy } from "../helpers/release-caller.ts";
 import { workflowGlobalNpmInstalls } from "../global-npm-guard.ts";
+import { fetchPinnedWorkflowSource } from "../helpers/pinned-workflow-source.ts";
+
+test("this repository's own workflows pass the gate with a live canonical pin", () => {
+  const result = verify(resolve(import.meta.dirname, "../.."));
+  const lines: string[] = [];
+  let exitCode = 0;
+  report(result, line => lines.push(line), code => { exitCode = code; });
+  console.log(lines.join("\n"));
+  assert.equal(exitCode, 0, lines.join("\n"));
+  assert.equal(result.recognition.kind, "recognized", lines.join("\n"));
+  assert.ok(lines.some(line => line.includes("every publish invocation is attested")));
+
+  // The canonical auditor can fall back to its bundled tag snapshot.
+  // Hosted attestation also requires a fresh resolution of the caller's tag.
+  let live = false;
+  const pin = inspectReleaseCaller(callerSource, tag => {
+    const tags = defaultCanonicalTagResolver(tag);
+    live = true;
+    return tags;
+  });
+  assert.ok(live, "Hosted attestation requires a live canonical release tag lookup");
+  assert.equal(pin.status, "verified", pin.errors.join("\n"));
+});
 
 /** Named Actions steps as they execute after YAML block scalar decoding. */
 interface ReleaseStep {
@@ -41,9 +67,7 @@ function canonicalRelease(): Promise<CanonicalRelease> {
     assert.notEqual(result.status, "refused", result.errors.join("\n"));
     const sha = caller.jobs.release.uses.split("@")[1];
     const url = `https://raw.githubusercontent.com/unbraind/pm-ops/${sha}/.github/workflows/daily-release.yml`;
-    const response = await fetch(url, { signal: AbortSignal.timeout(30_000), redirect: "error" });
-    assert.ok(response.ok, `Cannot read pinned Daily Release source (HTTP ${response.status})`);
-    const source = await response.text();
+    const source = await fetchPinnedWorkflowSource(url);
     return { ...(parse(source) as Omit<CanonicalRelease, "source">), source };
   })();
 }

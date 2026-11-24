@@ -10,6 +10,8 @@ import { workflowGlobalNpmInstalls } from "../global-npm-guard.ts";
 import { fetchPinnedWorkflowSource } from "../helpers/pinned-workflow-source.ts";
 
 test("this repository's own workflows pass the gate with a live canonical pin", () => {
+  const snapshot = releaseCallerPolicy();
+  assert.notEqual(snapshot.status, "refused", snapshot.errors.join("\n"));
   const result = verify(resolve(import.meta.dirname, "../.."));
   const lines: string[] = [];
   let exitCode = 0;
@@ -18,9 +20,14 @@ test("this repository's own workflows pass the gate with a live canonical pin", 
   assert.equal(exitCode, 0, lines.join("\n"));
   assert.equal(result.recognition.kind, "recognized", lines.join("\n"));
   assert.ok(lines.some(line => line.includes("every publish invocation is attested")));
+  assert.ok(result.notes.some(line => line.startsWith(
+    `ok - .github/workflows/release.yml: canonical release delegation to ${caller.jobs.release.uses};`,
+  )), "The audit must recognize this checkout's exact release caller");
 
-  // The canonical auditor can fall back to its bundled tag snapshot.
-  // Hosted attestation also requires a fresh resolution of the caller's tag.
+  // When the bundled snapshot lacks this tag, the audit can only recognize
+  // the exact delegation after resolving its tag live.
+  if (snapshot.status === "unverified-offline") return;
+  // With a bundled match the audit may have used its offline fallback.
   let live = false;
   const pin = inspectReleaseCaller(callerSource, tag => {
     const tags = defaultCanonicalTagResolver(tag);

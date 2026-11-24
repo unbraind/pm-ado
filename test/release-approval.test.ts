@@ -21,6 +21,14 @@ test('the caller requires owner approval on main', () => {
   assert.equal(caller.jobs.release.with['release-enabled'], "${{ github.ref == 'refs/heads/main' && vars.PM_RELEASE_APPROVED == 'true' }}");
 });
 
+test('the README puts npm trusted publisher setup before owner approval', () => {
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  const release = readme.split(/^#{1,3} /mu).find(section => section.startsWith('Daily release\n'))?.replace(/\s+/gu, ' ') ?? '';
+  assert.match(release, /Configure the npm trusted publisher for `unbraind\/pm-ado` with workflow file `release\.yml` and allow direct `npm publish`\. Then set the `PM_RELEASE_APPROVED` repository variable to `true`/u);
+  assert.match(release, /stops at its OIDC preflight if the publisher is missing/u);
+  assert.match(release, /The variable only enables Daily Release on `main`\. npm publisher authorization is configured in npm/u);
+});
+
 test('no workflow replaces the shared global npm installation', () => {
   const workflowRoot = new URL('../.github/workflows/', import.meta.url);
   for (const entry of readdirSync(workflowRoot).sort()) {

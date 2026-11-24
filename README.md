@@ -24,8 +24,14 @@ the installed host. npm/Bun dependency installation alone does not activate it.
 
 ### Daily release
 
-`release.yml` calls the pinned pm-ops workflow from `main` when the repository
-variable `PM_RELEASE_APPROVED` is `true`. Preparation is scheduled at 03:23 UTC.
+Configure the npm trusted publisher for `unbraind/pm-ado` with workflow file
+`release.yml` and allow direct `npm publish`. Then set the `PM_RELEASE_APPROVED`
+repository variable to `true`. The variable only enables Daily Release on
+`main`. npm publisher authorization is configured in npm, and the pinned
+workflow stops at its OIDC preflight if the publisher is missing.
+[npm trusted publishing setup](https://docs.npmjs.com/trusted-publishers/#configuring-trusted-publishing)
+
+Preparation is scheduled at 03:23 UTC.
 Hourly reconciliation at minute 41 reads the current candidate and its
 exact-head checks. The workflow requests protected auto-merge and uses npm
 trusted publishing with OIDC provenance after verifying the merged candidate.

@@ -6,10 +6,10 @@ status: in_progress
 priority: 2
 tags[3]: concurrency,recovery,testing
 created_at: "2026-11-08T08:03:32.358Z"
-updated_at: "2026-11-24T21:57:01.060Z"
+updated_at: "2026-11-24T23:31:45.542Z"
 author: codex-agent
 acceptance_criteria: "Capture the exact failing assertion and refusal values; reproduce the relevant interleaving with real native trackers under coverage; determine whether production recovery or the acceptance oracle is wrong; preserve one remote PATCH, at least one accepted writer, deterministic replay and unchanged coverage thresholds."
-comments[9]{created_at,author,text}:
+comments[12]{created_at,author,text}:
   "2026-11-08T08:15:13.251Z",codex-agent,"Final broad-suite failure detail: the assertion in test/sync.test.ts:1509 rejects the concurrent writer refusal because its code is outside ado_partial_apply/apply_failed. The reporter does not include the actual refusal code, so capture it during investigation rather than assuming a production or test-only cause. The test passed in the earlier npm V8 suite and its subsequent focused retry passes 1/1; the Bun broad suite failed it once. No safety assertion was relaxed. That suite was separately cancelled at the 1650-second local gate limit; cancellation and partial coverage are not this assertion failure."
   "2026-11-08T12:27:27.674Z",codex-agent,"PR 91 review PRRT_kwDOUMUq1860_Uoy: documented the TypeScript runtime prerequisite in the item body rather than rewriting historical evidence. The current continuation uses Node 24.19.0. Search of package retry records found this one focused retry entry; package engines already require Node 22.18+. Preserve the original command and name filter. The production concurrency investigation remains open."
   "2026-11-08T12:39:33.038Z",codex-agent,"Runtime documentation regression passes through the pinned pm test runner: 1/1, zero skipped/cancelled. Native-parser and package-wide deadline regression baseline passes 3/3; removing only this prerequisite body in a disposable package copy makes its documentation contract fail 0/1, and restoration passes. This resolves only review PRRT_kwDOUMUq1860_Uoy; the underlying intermittent same-decision writer observation remains an open investigation. No production recovery assertion or audit event changed."
@@ -19,6 +19,9 @@ comments[9]{created_at,author,text}:
   "2026-11-24T20:44:52.570Z",codex-agent,"Deterministic non-Git fixture pauses at Azure agreement read-back and lets the peer replay the same settled decision before the first writer checks its native fence. Reverting only resolution.ts returns stale_local (0 of 1), matching the rejection class excluded by the hosted test. With the fix, matching peer agreement yields retryable ado_partial_apply, with one PATCH and byte-stable replay. The existing unrelated fixed-clock edit retains stale_local. The hosted log does not include its observed refusal code."
   "2026-11-24T20:51:54.595Z",codex-agent,"The new linked command passed via pinned pm test. The two pre-existing links were refused by the runner because their provenance belongs to a different branch. Their selectors plus the new recovery and CLI checks passed directly under Node 22 and isolated Git configuration: 5 of 5. Existing links were preserved."
   "2026-11-24T21:57:01.060Z","harness:claude-code","Review follow-up (CodeRabbit on resolution.ts): the retryable ado_partial_apply classification checked only ado_sync_base, so a peer's matching agreement followed by a local title edit was also reported as retryable. It now requires an agreement-only conflict (every conflicting field is one of ado_sync_base, ado_rev, ado_sync_intent); a mixed conflict keeps its previous classification. New test 'resolution recovery keeps a peer agreement followed by a local edit classified as stale_local' fails when the restriction is removed; the matching-agreement test still passes."
+  "2026-11-24T23:26:43.017Z",codex-agent,"Review PRRT_kwDOUMUq1867oyUQ: reproduce the agreement write race after the full native head check succeeds, and verify that a peer title change stays stale_local."
+  "2026-11-24T23:29:34.628Z",codex-agent,"Review PRRT_kwDOUMUq1867oyUQ: NativeWriteFence.update can throw a conflict projected to agreement fields after the full fence check. Resolution now rechecks the complete native history delta and allows retry only for a matching agreement-only conflict. The regression interleaves replay and a title edit at update entry. On f34a271 it reports ado_partial_apply instead of stale_local. With the fix it reports stale_local, preserves the title, and records one PATCH. Both existing agreement race tests pass."
+  "2026-11-24T23:31:33.378Z",codex-agent,Daily Release run 45408908701 failed at Run release checks on resolution recovery serializes two writers using the same prepared decision. The runner rejected the observed refusal code in that test. The focused late-writer regression passed through pm test (1 of 1).
 files[6]{path,scope}:
   dist/resolution.d.ts.map,project
   dist/resolution.js,project
@@ -26,10 +29,11 @@ files[6]{path,scope}:
   resolution.ts,project
   test/process-fixture.test.ts,project
   test/sync.test.ts,project
-tests[3]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
+tests[4]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
   "node --test --test-concurrency=2 --test-name-pattern=\"resolution recovery serializes two writers\" test/sync.test.ts",project,codex-agent,"2026-11-08T19:54:37.314Z",local_mutation,closeout-records-statement-enforcement-delivery
   "node --test --test-concurrency=2 --test-name-pattern=\"recorded TypeScript recovery retry\" test/process-fixture.test.ts",project,codex-agent,"2026-11-08T19:54:39.159Z",local_mutation,closeout-records-statement-enforcement-delivery
   "node --test --test-concurrency=2 --test-name-pattern=\"retryable agreement race|agreement refuses a fixed-clock edit\" test/sync.test.ts",project,codex-agent,"2026-11-24T20:44:51.434Z",local_mutation,fix/adopt-reusable-daily-release
+  node --test --test-name-pattern=edit.during.the.agreement.write test/sync.test.ts,project,codex-agent,"2026-11-24T23:29:28.617Z",local_mutation,fix/adopt-reusable-daily-release
 docs[1]{path,scope,note}:
   docs/conflict-resolution.md,project,Existing partial-apply recovery and same-plan replay contract
 body: "Focused retry prerequisite: use Node 22.18+ or Node 24+ with built-in TypeScript type stripping enabled. Node 23.0–23.5 requires --experimental-strip-types. The recorded retry keeps its original target and test-name filter. This retry is historical evidence of intermittency, not proof that the broad-suite concurrency issue is resolved."

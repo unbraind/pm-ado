@@ -1584,6 +1584,31 @@ test("resolution recovery keeps a peer agreement followed by a local edit classi
   assert.equal((await row(f.pm)).title, "Local edit after the agreement");
 });
 
+test("resolution recovery keeps an edit during the agreement write classified as stale_local", async (t) => {
+  const f = await fixture(t);
+  await f.command("import");
+  const item = await row(f.pm);
+  await f.pm.update(item.id, { title: "Concurrent agreement" });
+  const peer = resolver(f);
+  const plan = choices(await peer.plan(item.id));
+  const update = NativeWriteFence.prototype.update;
+  let peerEdited = false;
+  t.mock.method(NativeWriteFence.prototype, "update", async function (this: NativeWriteFence, ...args: Parameters<typeof update>) {
+    if (!peerEdited) {
+      assert.equal(args[1].message, "Azure read-back agreement");
+      // The caller has checked its full fence. Interleave before update projects the conflict.
+      peerEdited = true;
+      assert.equal((await peer.apply(plan)).replayed, true);
+      await f.pm.update(item.id, { title: "Local edit during the agreement write" });
+    }
+    return update.apply(this, args);
+  });
+  await assert.rejects(resolver(f).apply(plan), { code: "stale_local", exitCode: 4 });
+  assert.ok(peerEdited);
+  assert.equal((await row(f.pm)).title, "Local edit during the agreement write");
+  assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 1);
+});
+
 test("resolution recovery handles a peer settling between prepare and settlement", async (t) => {
   const f = await fixture(t);
   await f.command("import");

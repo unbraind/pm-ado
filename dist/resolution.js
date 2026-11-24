@@ -2,7 +2,7 @@ import { sameScope, normalizeFieldValues, normalizeStatusValue, normalizeScopeVa
 import { NativeWriteFence, nativeHead, NativeHistoryConflict, isNativeHead } from "./history-fence.js";
 /** Portable, revision-bound decisions over the existing Azure sync field map. */
 import { agreementMutation, advanceSyncBase, readBaseRevisions } from "./agreement.js";
-/** Fields a read-back agreement writes; a conflict limited to them is a peer's matching agreement. */
+/** Fields written when publishing read-back agreement. */
 const AGREEMENT_FIELDS = new Set(["ado_sync_base", "ado_rev", "ado_sync_intent"]);
 import { createHash, createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -10,6 +10,11 @@ import { realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { AdoClient, CommandError, RevisionConflict, STATE_MAP, readConfig, buildUpdatePatch, PATCH_MEDIA_TYPE } from "./index.js";
 import { ADO_FIELD_MAP, IMPORT_STATE_MAP, azureFields, localValues, readBase, remoteValues, stateMap, transport, threeWayFieldConflict, readLocalAgreement, remoteAgreement, remoteScalarValues } from "./sync.js";
+/** Match a conflict whose changes are all agreement fields and include the expected base. */
+function matchesAgreementConflict(error, serializedBase) {
+    return error instanceof NativeHistoryConflict && error.fields.ado_sync_base?.current === serializedBase
+        && Object.keys(error.fields).every((name) => AGREEMENT_FIELDS.has(name));
+}
 /** A failed decision with a concrete recovery action; server bodies are never exposed. */
 export class ResolutionRefusal extends Error {
     /** Semantic conflict exit propagated by the host runtime. */
@@ -399,12 +404,13 @@ export class AdoResolutionService {
                             await nativeWrites.update(plan.local.id, { field, unset, message: "Azure read-back agreement" }, `ado-agreement-${this.sdk.deriveMutationTransactionId(JSON.stringify([plan.local.id, version, field]))}`);
                     }
                     catch (error) {
-                        // A matching peer agreement still invalidates this writer's fence.
-                        // Retry the settled decision so the normal path rechecks both sides.
-                        // Only an agreement-only conflict is retryable: any other changed field is a real local edit.
-                        if (error instanceof NativeHistoryConflict && error.fields.ado_sync_base?.current === JSON.stringify(base)
-                            && Object.keys(error.fields).every((name) => AGREEMENT_FIELDS.has(name))) {
-                            throw new ResolutionRefusal("ado_partial_apply", `A peer recorded matching Azure agreement for decision ${decision}. Rerun ado resolve-apply with the SAME --plan or --artifact to verify settlement; do not repeat the PATCH manually.`);
+                        const serializedBase = JSON.stringify(base);
+                        if (matchesAgreementConflict(error, serializedBase)) {
+                            // update() can report only the fields it would write. Verify the complete fence delta.
+                            const fullConflict = await nativeWrites.assertCurrent(inspected.id).catch((current) => current);
+                            if (matchesAgreementConflict(fullConflict, serializedBase)) {
+                                throw new ResolutionRefusal("ado_partial_apply", `A peer recorded matching Azure agreement for decision ${decision}. Rerun ado resolve-apply with the SAME --plan or --artifact to verify settlement; do not repeat the PATCH manually.`);
+                            }
                         }
                         throw error;
                     }

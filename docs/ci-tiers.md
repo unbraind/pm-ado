@@ -11,6 +11,8 @@ Daily Release prepares at 03:23 UTC and reconciles release intent hourly at
 minute 41. The pinned pm-ops caller uses `release:check:quick` for preparation
 with npm and Bun. The script selects the quick model depth for the complete
 release gate. Publication verifies the merged tree against the prepared artifact.
+Ordinary workflow tests exercise the local caller. The publish attestation gate
+also checks the immutable upstream workflow source.
 
 | Check | PR Node 22 | PR Node 26 | Docs/tracker only (both) | Deep (each matrix leg) |
 | --- | --- | --- | --- | --- |

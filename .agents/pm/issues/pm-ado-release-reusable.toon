@@ -1,0 +1,32 @@
+id: pm-ado-release-reusable
+title: Release timeout asks for workflow approval after automatic approval succeeded
+description: "Replace the vendored Daily Release with the pinned pm-ops caller. Track approval diagnosis, durable candidate continuation, and the release-check failure reported by the latest scheduled run. https://github.com/unbraind/pm-ado/issues/84"
+type: Issue
+status: in_progress
+priority: 2
+tags[1]: "gh:unbraind/pm-ado#84"
+created_at: "2026-11-24T20:31:57.485Z"
+updated_at: "2026-11-24T21:02:08.007Z"
+author: codex-agent
+comments[5]{created_at,author,text}:
+  "2026-11-24T20:40:20.660Z",codex-agent,"Reproduced the inline Bash sticky flag with one pending read followed by a verified empty read. The legacy timeout still labels approval required. Linked hosted jobs show completed approvals followed by queued or running checks, and the retry replaced the same tree with a new commit. Plan: delegate to the released canonical workflow, retain owner approval and the daily minute, and reconcile durable candidates hourly."
+  "2026-11-24T20:44:43.387Z",codex-agent,"Revert proof: restoring only the vendored release.yml failed five of nine caller and CI contract tests. Restoring the caller passed those contracts. The pinned pm-ops 2026.11.22 mocked continuation, adapter and restart suites passed 128 of 128 tests, including current approval and settling diagnosis, failed reads, protected exact-head merge, and the pending candidate held beyond the previous deadline. The same tree and parent were confirmed for the two historical release PR heads. The recovery-race evidence is tracked in pm-ado-resolution-recovery-race."
+  "2026-11-24T20:51:57.515Z",codex-agent,"The release/approval/changelog/attestation command passed via pinned pm test. An additional caller wiring test passed pinned and refused the vendored workflow in a disposable copy. Classic main protection requires test (22) and test (26), and squash auto-merge is enabled. The package quick-depth wrapper delegates to the same package manager in npm and Bun fixture runs. Hosted PR CI will be visible in the branch workflow run list at https://github.com/unbraind/pm-ado/actions/workflows/ci.yml?query=branch%3Afix%2Fadopt-reusable-daily-release."
+  "2026-11-24T20:58:58.081Z",codex-agent,Final caller-only behavioral revert in a disposable copy failed six of nine caller and CI tests and the dedicated reconciliation/candidate wiring test failed one of one. The restored caller passed the corresponding checks. The npm release and protection assertions exercise the actual SHA-pinned workflow source.
+  "2026-11-24T21:02:06.429Z",codex-agent,"Targeted release and workflow validation passed 348 tests including the dedicated reconciliation wiring case. Typecheck, build, test build, the publish attestation check, changelog date validation, and strict tracker health passed. The standalone quick-depth coverage gate is running at the original thresholds. The hosted PR will certify the pushed head."
+files[6]{path,scope}:
+  .github/workflows/release.yml,project
+  package.json,project
+  test/ci-quick-contract.test.ts,project
+  test/helpers/release-caller.ts,project
+  test/release-approval.test.ts,project
+  test/release-workflow.test.ts,project
+tests[1]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
+  node --test --test-concurrency=2 test/ci-quick-contract.test.ts test/global-npm-guard.test.ts test/release-approval.test.ts test/release-workflow.test.ts test/verify-release-changelog-date.test.ts test/verify-release-publish-attestation.test.ts,project,codex-agent,"2026-11-24T20:44:42.006Z",local_mutation,fix/adopt-reusable-daily-release
+docs[2]:
+  - path: docs/ci-tiers.md
+    scope: project
+    note: Scheduled release and coverage depth
+  - path: README.md
+    scope: project
+body: ""

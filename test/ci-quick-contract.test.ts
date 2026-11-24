@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { parse } from "yaml";
+import { caller, canonicalRelease, releaseStep } from "./helpers/release-caller.ts";
 
 const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { scripts: Record<string, string> };
 
@@ -35,19 +36,20 @@ test("hosted Node 26 runs the test suite once without either coverage pass", () 
   assert.ok(steps.every((step) => !step.run?.includes("npm run release:check")));
 });
 
-test("CI Deep uses full model depth and both daily release checks use quick depth with coverage", () => {
+test("CI Deep uses full model depth and Daily Release runs quick-depth npm and Bun coverage", async () => {
   assert.ok(commands("release:check").some((command) => command.includes("scripts/coverage-gate.ts")));
   assert.equal(manifest.scripts.prepublishOnly, "npm run release:check");
   const deep = parse(readFileSync(new URL("../.github/workflows/ci-deep.yml", import.meta.url), "utf8"));
   assert.equal(deep.jobs.deep.env.PM_TEST_DEPTH, "full");
   assert.ok(deep.jobs.deep.steps.some((step: { run?: string }) => step.run?.includes("npm run release:check")));
-  const release = parse(readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8"));
-  const checks = (release.jobs.release.steps as { name?: string; run?: string; env?: Record<string, string> }[])
-    .filter((step) => /^ *npm run release:check$/m.test(step.run ?? ""));
-  assert.deepEqual(checks.map((step) => [step.name, step.env?.PM_TEST_DEPTH]), [
-    ["Run release checks", "quick"],
-    ["Verify merged release", "quick"],
-  ]);
+  assert.equal(caller.jobs.release.with["verify-script"], "release:check:quick");
+  assert.equal(manifest.scripts["release:check:quick"], "PM_TEST_DEPTH=quick npm run release:check");
+  const { jobs } = await canonicalRelease();
+  const checks = releaseStep(jobs.prepare, "Run release checks").run;
+  assert.equal(jobs.prepare.env.VERIFY_SCRIPT, "${{ inputs.verify-script }}");
+  assert.match(checks, /npm run "\$VERIFY_SCRIPT"/u);
+  assert.match(checks, /verifyBunScript\(process.env.VERIFY_SCRIPT\)/u);
+  assert.match(releaseStep(jobs.release, "Verify merged release").run, /git rev-parse 'HEAD\^\{tree\}'.+"\$VERIFIED_TREE"/u);
 });
 
 test("unrecognised npm flags cannot hide a coverage alias from the quick contract", () => {

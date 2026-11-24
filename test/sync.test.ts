@@ -1527,10 +1527,35 @@ test("resolution recovery serializes two writers using the same prepared decisio
   const results = await Promise.allSettled([resolver(f).apply(plan), resolver(f).apply(plan)]);
   assert.ok(results.some((result) => result.status === "fulfilled" && result.value.ok));
   for (const result of results) if (result.status === "rejected") {
-    assert.ok(["ado_partial_apply", "apply_failed"].includes((result.reason as ResolutionRefusal).code));
+    assert.ok(["ado_partial_apply", "apply_failed"].includes((result.reason as ResolutionRefusal).code), String(result.reason));
     assert.equal((result.reason as ResolutionRefusal).exitCode, 4);
   }
   assert.equal((await resolver(f).apply(plan)).replayed, true);
+  assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 1);
+});
+
+test("resolution recovery reports a retryable agreement race after a peer replays the same decision", async (t) => {
+  const f = await fixture(t);
+  await f.command("import");
+  const item = await row(f.pm);
+  await f.pm.update(item.id, { title: "Concurrent agreement" });
+  const peer = resolver(f);
+  const plan = choices(await peer.plan(item.id));
+  let peerAgreed = false;
+  f.afterBatch(async () => {
+    // Settlement has released its lease. The first writer currently owns a
+    // read-back fence, and the replay can advance agreement before it publishes.
+    if (!peerAgreed && (await row(f.pm)).ado_resolution_receipt) {
+      peerAgreed = true;
+      const replay = await peer.apply(plan);
+      assert.equal(replay.replayed, true);
+    }
+  });
+  await assert.rejects(resolver(f).apply(plan), { code: "ado_partial_apply", exitCode: 4 });
+  assert.ok(peerAgreed);
+  const agreed = snapshot(f.pmRoot);
+  assert.equal((await peer.apply(plan)).replayed, true);
+  assert.deepEqual(snapshot(f.pmRoot), agreed);
   assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 1);
 });
 

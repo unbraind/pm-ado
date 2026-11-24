@@ -3,51 +3,54 @@ import { workflowGlobalNpmInstalls } from './global-npm-guard.ts';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { test } from 'node:test';
+import { caller, callerSource, canonicalRelease, executable, releaseStep } from './helpers/release-caller.ts';
 
-const workflow = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
-const executable = workflow.split('\n').filter(line => !line.trimStart().startsWith('#')).join('\n');
 const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 test('daily and manual release triggers remain available', () => {
-  assert.match(executable, /^  schedule:\s*\n    - cron: ["']23 3 \* \* \*["']/mu);
-  assert.match(executable, /^  workflow_dispatch:/mu);
+  assert.deepEqual(caller.on.schedule, [{ cron: '23 3 * * *' }, { cron: '41 * * * *' }]);
+  assert.deepEqual(caller.on.workflow_dispatch.inputs, {
+    'retire-unpublished': { description: 'Retire only owned untouched unpublished intent', type: 'boolean', default: false },
+  });
+  const inputs = caller.jobs.release.with;
+  assert.equal(inputs['reconcile-only'], "${{ (github.event_name == 'schedule' && github.event.schedule == '41 * * * *') || inputs.retire-unpublished == true }}");
+  assert.equal(inputs['retire-unpublished'], "${{ github.event_name == 'workflow_dispatch' && inputs.retire-unpublished == true }}");
 });
 
-test('every release preparation and publication job defaults to owner approval on main', () => {
-  for (const name of ['prepare', 'release', 'resume_release']) {
-    const block = executable.match(new RegExp(`^  ${name}:\\n([\\s\\S]*?)(?=^  [a-z_]+:|$(?![\\s\\S]))`, 'mu'))?.[1];
-    if (block === undefined) { assert.notEqual(name, 'release'); continue; }
-    const condition = block.match(/^    if: (.+)$/mu)?.[1];
-    assert.ok(condition, `${name} must gate the entire job`);
-    const gate = "vars.PM_RELEASE_APPROVED == 'true'";
-    const main = "github.ref == 'refs/heads/main'";
-    assert.ok(condition === `${gate} && ${main}` || condition === `${main} && ${gate}` ||
-      condition === `${main} && ${gate} && needs.prepare.outputs.should_release == 'true'` ||
-      condition === `${main} && ${gate} && needs.prepare.outputs.resume_release_notes == 'true'`,
-    `${name} must require both owner approval and main without an alternative condition`);
+test('every release preparation and publication job requires owner approval on main', async () => {
+  assert.equal(caller.jobs.release.with['release-enabled'], "${{ github.ref == 'refs/heads/main' && vars.PM_RELEASE_APPROVED == 'true' }}");
+  const { jobs } = await canonicalRelease();
+  for (const name of ['reconcile', 'prepare', 'request', 'release', 'recover']) {
+    const condition = jobs[name].if;
+    assert.match(condition, /^inputs\.release-enabled && github\.ref == 'refs\/heads\/main'(?: && |$)/u, name);
+    assert.doesNotMatch(condition, /\|\|/u, name);
   }
 });
 
-test('no workflow replaces the shared global npm installation', () => {
-  // A global npm install replaces the npm inside the runner's shared Node
-  // installation. Parallel jobs on one host share that installation, so one
-  // job's global install corrupts a sibling's npm mid-install. Every pinned
-  // npm install must target a job-local prefix instead.
+test('no workflow replaces the shared global npm installation', async () => {
   const workflowRoot = new URL('../.github/workflows/', import.meta.url);
   for (const entry of readdirSync(workflowRoot).sort()) {
     if (!/\.ya?ml$/u.test(entry)) continue;
     const source = readFileSync(new URL(entry, workflowRoot), 'utf8');
-    assert.deepEqual(workflowGlobalNpmInstalls(source), [], `${entry} must install the pinned npm into a job-local prefix`);
+    assert.deepEqual(workflowGlobalNpmInstalls(source), [], entry + ' must install the pinned npm into a job-local prefix');
   }
+  assert.deepEqual(workflowGlobalNpmInstalls((await canonicalRelease()).source), []);
 });
 
-test('publishing uses a recent npm, OIDC permission and provenance without token environments', () => {
-  assert.match(executable, /^\s+id-token: write$/mu);
-  const version = executable.match(/npm install --prefix "\$RUNNER_TEMP\/npm-(\d+)\.(\d+)\.(\d+)" npm@\1\.\2\.\3/u)?.slice(1).map(Number);
+test('publishing uses a recent npm, OIDC permission and provenance without token environments', async () => {
+  assert.deepEqual(caller.permissions, {});
+  assert.deepEqual(caller.jobs.release.permissions, {
+    contents: 'write', 'pull-requests': 'write', actions: 'write', checks: 'read', 'id-token': 'write', issues: 'write',
+  });
+  const { jobs } = await canonicalRelease();
+  assert.equal(jobs.release.permissions['id-token'], 'write');
+  const bootstrap = executable(releaseStep(jobs.release, 'Use an npm that supports trusted publishing').run);
+  const version = bootstrap.match(/npm install --prefix "\$RUNNER_TEMP\/npm-(\d+)\.(\d+)\.(\d+)" npm@\1\.\2\.\3/u)?.slice(1).map(Number);
   assert.ok(version && (version[0] > 11 || version[0] === 11 && (version[1] > 5 || version[1] === 5 && version[2] >= 1)), 'publishing must install a trusted-publishing-capable npm into a job-local prefix');
-  assert.doesNotMatch(executable, /\b(?:NODE_AUTH_TOKEN|NPM_TOKEN)\s*:/u);
-  assert.doesNotMatch(executable, /secrets\.(?:NODE_AUTH_TOKEN|NPM_TOKEN)/u);
-  const publishes = executable.split('\n').filter(line => /^\s*npm publish\s/u.test(line));
+  const publish = releaseStep(jobs.release, 'Publish npm package');
+  const source = JSON.stringify([callerSource, jobs.release.env, publish.env]);
+  assert.doesNotMatch(source, /NODE_AUTH_TOKEN|NPM_TOKEN|secrets\s*(?:[:.]|\[)/u);
+  const publishes = executable(publish.run).split('\n').filter(line => /^\s*npm publish\s/u.test(line));
   assert.ok(publishes.length > 0);
   for (const line of publishes) {
     assert.match(line, /(?:^|\s)--provenance(?:\s|$)/u);
@@ -55,29 +58,24 @@ test('publishing uses a recent npm, OIDC permission and provenance without token
   }
 });
 
-test('the job-local npm prefix is published to GITHUB_PATH and verified by exact version', () => {
-  // The bootstrap installs the pinned npm into a job-local prefix; later
-  // steps reach it only through the bin directory appended to $GITHUB_PATH,
-  // and the verify step must expect exactly the installed version, not
-  // merely any newer one.
-  const install = executable.split('\n').find(line => /^\s*npm install --prefix "\$RUNNER_TEMP\/npm-[\d.]+" npm@[\d.]+/u.test(line));
-  assert.ok(install, 'the release workflow must install the pinned npm into a job-local prefix');
-  const directory = install!.match(/"\$RUNNER_TEMP\/(npm-[\d.]+)"/u)![1];
-  const version = install!.match(/npm@([\d.]+)/u)![1];
-  assert.ok(executable.includes(`echo "$RUNNER_TEMP/${directory}/node_modules/.bin" >> "$GITHUB_PATH"`),
-    'the bootstrap step must append the same prefix bin directory to $GITHUB_PATH');
-  const lines = executable.split('\n');
-  const nameIndex = lines.findIndex(line => line.includes('Verify job-local npm version'));
-  assert.ok(nameIndex !== -1, 'the workflow must verify the job-local npm version');
-  const verify = lines.slice(nameIndex, nameIndex + 5).find(line => line.trim().startsWith('run:'));
-  assert.ok(verify?.includes(`= "${version}"`), 'the verify step must expect exactly the installed version');
+test('the job-local npm prefix is published to GITHUB_PATH and verified by exact version', async () => {
+  const { jobs } = await canonicalRelease();
+  for (const job of [jobs.prepare, jobs.release]) {
+    const bootstrap = executable(releaseStep(job, 'Use an npm that supports trusted publishing').run);
+    const install = bootstrap.match(/^\s*npm install --prefix "\$RUNNER_TEMP\/(npm-([\d.]+))" npm@\2(?=\s|$)/mu);
+    assert.ok(install, 'the release workflow must install the pinned npm into a job-local prefix');
+    const [, directory, version] = install;
+    assert.ok(bootstrap.includes('echo "$RUNNER_TEMP/' + directory + '/node_modules/.bin" >> "$GITHUB_PATH"'));
+    const verify = releaseStep(job, 'Verify job-local npm version');
+    assert.equal(verify.run, 'test "$(npm --version)" = "' + version + '"');
+  }
 });
 
 test('the manifest remains public and names its catalog and public author', () => {
   assert.notEqual(manifest.private, true);
   for (const key of ['name', 'version', 'description', 'license', 'repository', 'bugs', 'engines']) assert.ok(manifest[key], key);
   assert.deepEqual(manifest.publishConfig, { access: 'public', provenance: true });
-  assert.equal(manifest.homepage, `https://pm-cli.unbrained.dev/packages/${manifest.name}`);
+  assert.equal(manifest.homepage, 'https://pm-cli.unbrained.dev/packages/' + manifest.name);
   assert.deepEqual(manifest.author, { name: 'unbrained', url: 'https://unbrained.dev/about' });
   assert.ok(manifest.files.length > 0);
   assert.ok(readFileSync(new URL('../LICENSE', import.meta.url), 'utf8').length > 0);

@@ -390,10 +390,20 @@ export class AdoResolutionService {
                     return { revision: remote.rev, values: remoteAgreement(remote, local.values, this.config, readback.identities, normalizedMaps.imports, normalizedMaps.exports, normalization) };
                 },
                 publish: async (base, revision, version) => {
-                    await nativeWrites.assertCurrent(inspected.id);
-                    const { field, unset } = agreementMutation(readback.item, base, revision);
-                    if (field.length || unset !== undefined)
-                        await nativeWrites.update(plan.local.id, { field, unset, message: "Azure read-back agreement" }, `ado-agreement-${this.sdk.deriveMutationTransactionId(JSON.stringify([plan.local.id, version, field]))}`);
+                    try {
+                        await nativeWrites.assertCurrent(inspected.id);
+                        const { field, unset } = agreementMutation(readback.item, base, revision);
+                        if (field.length || unset !== undefined)
+                            await nativeWrites.update(plan.local.id, { field, unset, message: "Azure read-back agreement" }, `ado-agreement-${this.sdk.deriveMutationTransactionId(JSON.stringify([plan.local.id, version, field]))}`);
+                    }
+                    catch (error) {
+                        // A matching peer agreement still invalidates this writer's fence.
+                        // Retry the settled decision so the normal path rechecks both sides.
+                        if (error instanceof NativeHistoryConflict && error.fields.ado_sync_base?.current === JSON.stringify(base)) {
+                            throw new ResolutionRefusal("ado_partial_apply", `A peer recorded matching Azure agreement for decision ${decision}. Rerun ado resolve-apply with the SAME --plan or --artifact to verify settlement; do not repeat the PATCH manually.`);
+                        }
+                        throw error;
+                    }
                 } });
             if (agreement.differences.length)
                 throw this.partial(decision, agreement.remote.revision);

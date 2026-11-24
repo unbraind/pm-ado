@@ -1,0 +1,24 @@
+id: pm-ado-sdk-host-alignment-1122
+title: Adopt pm-cli 2026.11.24 host-aligned SDK behaviour
+description: "Companion: pm-cli-website-spus. Adopt the current SDK and retain published dependency notes."
+type: Chore
+status: in_progress
+priority: 2
+tags: []
+created_at: "2026-11-24T09:14:29.730Z"
+updated_at: "2026-11-24T09:18:55.091Z"
+assignee: codex-agent
+claim_principal: codex-agent
+author: codex-agent
+acceptance_criteria: "Pin the current first-party toolchain, preserve credential and transport refusals with a real tracker, retain dependency notes across all changelog entry points, and pass the package release gates."
+files[4]{path,scope}:
+  package-lock.json,project
+  package.json,project
+  test/release-workflow.test.ts,project
+  test/sync.test.ts,project
+tests[1]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
+  "node --test --test-concurrency=2 --test-name-pattern=\"dry-run still needs credentials|resolution handlers expose typed refusal|retains published dependency updates\" test/sync.test.ts test/release-workflow.test.ts",project,codex-agent,"2026-11-24T09:18:54.837Z",local_mutation,deps/adopt-pm-cli-host-alignment-1122
+docs[2]{path,scope}:
+  CHANGELOG.md,project
+  docs/sync.md,project
+body: ""

@@ -6,11 +6,13 @@ status: in_progress
 priority: 2
 tags: []
 created_at: "2026-11-24T09:14:29.730Z"
-updated_at: "2026-11-24T09:18:55.091Z"
+updated_at: "2026-11-24T13:34:48.416Z"
 assignee: codex-agent
 claim_principal: codex-agent
 author: codex-agent
 acceptance_criteria: "Pin the current first-party toolchain, preserve credential and transport refusals with a real tracker, retain dependency notes across all changelog entry points, and pass the package release gates."
+comments[1]{created_at,author,text}:
+  "2026-11-24T13:34:48.414Z",codex-agent,"Both \"dry-run still needs credentials and a host SDK; transport failures remain nonzero\" and \"resolution handlers expose typed refusal remedies and core Plan artifacts through the host SDK\" exercised one fixture failure. The old harness let a fixture-only withoutSdk key through with the command options. The current harness applies native option validation before dispatch and throws unknown_option with exit 2 for that key. The fixture now selects whether to supply the tracker root through its own context. The real host still refuses the unknown option, and the package still refuses missing credentials, missing SDK context and failed transport.\n\nAll four changelog entry points explicitly request dependency updates. Regeneration produced the same pm-ado changelog. Removing any one of the four flags failed the new contract. Reverting only how the fixture selects tracker context failed both SDK tests. After restoration, the three focused cases passed on Node 22, 24 and 26.\n\nThe full-depth baseline reached the 60-minute cap with 1,357 passes, both expected fixture failures and one cancellation from the cutoff. The npm release check passed with the repository quick profile, 1,647/1,647 tests in each coverage pass, 100% on all four coverage dimensions across 14 files, 2,556/2,556 statements and 19/19 native precondition cases. The strict health, identity and privacy checks, production audit, pack dry run, changelog check and linked pm test passed. The Bun release check is running.\n\nThe current SDK testing declaration still describes undeclared keys as pass-through. With pm-cli 2026.11.24 and ado import registered, call harness.runCommand({ command: \"ado import\", options: { withoutSdk: true } }). Native pre-dispatch validation throws unknown_option with exit 2. This is a declaration documentation discrepancy around the verified refusal."
 files[4]{path,scope}:
   package-lock.json,project
   package.json,project

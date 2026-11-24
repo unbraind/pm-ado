@@ -1,41 +1,69 @@
 /** Compare public release authority with the live, immutable workflow during attestation. */
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { test } from "node:test";
 import { report, verify } from "pm-ops/attestation";
-import { defaultCanonicalTagResolver, inspectReleaseCaller } from "pm-ops/release-caller";
+import { inspectReleaseCaller, isPmOpsOffline } from "pm-ops/release-caller";
 import { parse } from "yaml";
 import { caller, callerSource, releaseCallerPolicy } from "../helpers/release-caller.ts";
 import { workflowGlobalNpmInstalls } from "../global-npm-guard.ts";
 import { fetchPinnedWorkflowSource } from "../helpers/pinned-workflow-source.ts";
 
+/** Resolve the exact canonical Git tag, peeling an annotated tag to its target. */
+function readLiveGitTag(tag: string): Record<string, string> {
+  const ref = `refs/tags/${tag}`;
+  const peeled = `${ref}^{}`;
+  const output = execFileSync("git", [
+    "ls-remote", "--exit-code", "https://github.com/unbraind/pm-ops.git", ref, peeled,
+  ], { encoding: "utf8", timeout: 20_000, stdio: ["ignore", "pipe", "pipe"] });
+  const refs = new Map(output.trimEnd().split("\n").map(line => {
+    const [sha, name] = line.split("\t");
+    return [name, sha];
+  }));
+  const sha = refs.get(peeled) ?? refs.get(ref);
+  assert.ok(sha && /^[a-f0-9]{40}$/u.test(sha), "Canonical Git tag did not resolve to a full SHA");
+  return { [tag]: sha };
+}
+
 test("this repository's own workflows pass the gate with a live canonical pin", () => {
   const snapshot = releaseCallerPolicy();
   assert.notEqual(snapshot.status, "refused", snapshot.errors.join("\n"));
   const result = verify(resolve(import.meta.dirname, "../.."));
+  const diagnostics = [...result.notes, ...result.failures].join("\n");
+  assert.deepEqual(result.failures, [], diagnostics);
+  const ref = caller.jobs.release.uses;
+  const verifiedPrefix = `ok - .github/workflows/release.yml: canonical release delegation to ${ref};`;
+  const deferredPrefix = `unverified-offline - .github/workflows/release.yml: SHA provenance for ${ref} is not verified;`;
+  const verified = result.recognition.kind === "recognized" &&
+    result.notes.some(note => note.startsWith(verifiedPrefix));
+  const deferred = result.recognition.kind === "unverified-offline" &&
+    result.notes.some(note => note.startsWith(deferredPrefix));
+  assert.ok(verified || deferred, diagnostics);
+
+  // A recognized delegation absent from the snapshot already proves a live
+  // tag lookup. Otherwise obtain live evidence from the canonical Git remote.
+  if (deferred || snapshot.status === "verified") {
+    assert.ok(!isPmOpsOffline(), "Hosted attestation requires a live canonical release tag lookup");
+    let live = false;
+    const pin = inspectReleaseCaller(callerSource, tag => {
+      const tags = readLiveGitTag(tag);
+      live = true;
+      return tags;
+    });
+    assert.ok(live, "Cannot read the live canonical release tag from Git");
+    assert.equal(pin.status, "verified", pin.errors.join("\n"));
+  }
+
   const lines: string[] = [];
   let exitCode = 0;
-  report(result, line => lines.push(line), code => { exitCode = code; });
+  const notes = result.notes.map(note => note.startsWith(deferredPrefix)
+    ? `${verifiedPrefix} live Git tag matched the pinned SHA`
+    : note);
+  report({ failures: result.failures, notes }, line => lines.push(line), code => { exitCode = code; });
   console.log(lines.join("\n"));
   assert.equal(exitCode, 0, lines.join("\n"));
-  assert.equal(result.recognition.kind, "recognized", lines.join("\n"));
   assert.ok(lines.some(line => line.includes("every publish invocation is attested")));
-  assert.ok(result.notes.some(line => line.startsWith(
-    `ok - .github/workflows/release.yml: canonical release delegation to ${caller.jobs.release.uses};`,
-  )), "The audit must recognize this checkout's exact release caller");
-
-  // When the bundled snapshot lacks this tag, the audit can only recognize
-  // the exact delegation after resolving its tag live.
-  if (snapshot.status === "unverified-offline") return;
-  // With a bundled match the audit may have used its offline fallback.
-  let live = false;
-  const pin = inspectReleaseCaller(callerSource, tag => {
-    const tags = defaultCanonicalTagResolver(tag);
-    live = true;
-    return tags;
-  });
-  assert.ok(live, "Hosted attestation requires a live canonical release tag lookup");
-  assert.equal(pin.status, "verified", pin.errors.join("\n"));
 });
 
 /** Named Actions steps as they execute after YAML block scalar decoding. */

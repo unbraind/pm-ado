@@ -2,6 +2,9 @@ import { sameScope, normalizeFieldValues, normalizeStatusValue, normalizeScopeVa
 import { NativeWriteFence, nativeHead, NativeHistoryConflict, isNativeHead, type NativeHead } from "./history-fence.ts";
 /** Portable, revision-bound decisions over the existing Azure sync field map. */
 import { agreementMutation, advanceSyncBase, readBaseRevisions } from "./agreement.ts";
+
+/** Fields written when publishing read-back agreement. */
+const AGREEMENT_FIELDS: ReadonlySet<string> = new Set(["ado_sync_base", "ado_rev", "ado_sync_intent"]);
 import { createHash, createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
@@ -10,6 +13,12 @@ import type * as Sdk from "@unbrained/pm-cli/sdk";
 import type { CommandHandlerContext } from "@unbrained/pm-cli/sdk/authoring";
 import { AdoClient, CommandError, RevisionConflict, STATE_MAP, readConfig, type AdoConfig, type AdoWorkItem, type JsonPatchOperation, buildUpdatePatch, PATCH_MEDIA_TYPE } from "./index.ts";
 import { ADO_FIELD_MAP, IMPORT_STATE_MAP, azureFields, localValues, readBase, remoteValues, stateMap, transport, threeWayFieldConflict, readLocalAgreement, remoteAgreement, remoteScalarValues, type Values } from "./sync.ts";
+
+/** Match a conflict whose changes are all agreement fields and include the expected base. */
+function matchesAgreementConflict(error: unknown, serializedBase: string): boolean {
+  return error instanceof NativeHistoryConflict && error.fields.ado_sync_base?.current === serializedBase
+    && Object.keys(error.fields).every((name) => AGREEMENT_FIELDS.has(name));
+}
 
 /** Stable refusals agents can branch on without parsing error prose. */
 export type ResolutionRefusalCode = "invalid_plan" | "invalid_choices" | "stale_local" | "stale_remote" | "scope" | "configuration" | "apply_failed" | "ado_partial_apply";
@@ -469,10 +478,22 @@ export class AdoResolutionService {
           return { revision: remote.rev, values: remoteAgreement(remote, local.values, this.config, readback.identities, normalizedMaps.imports, normalizedMaps.exports, normalization) };
         },
         publish: async (base, revision, version) => {
-          await nativeWrites.assertCurrent(inspected.id);
-          const { field, unset } = agreementMutation(readback.item, base, revision);
-          if (field.length || unset !== undefined) await nativeWrites.update(plan.local.id, { field, unset, message: "Azure read-back agreement" },
-            `ado-agreement-${this.sdk.deriveMutationTransactionId(JSON.stringify([plan.local.id, version, field]))}`);
+          try {
+            await nativeWrites.assertCurrent(inspected.id);
+            const { field, unset } = agreementMutation(readback.item, base, revision);
+            if (field.length || unset !== undefined) await nativeWrites.update(plan.local.id, { field, unset, message: "Azure read-back agreement" },
+              `ado-agreement-${this.sdk.deriveMutationTransactionId(JSON.stringify([plan.local.id, version, field]))}`);
+          } catch (error) {
+            const serializedBase = JSON.stringify(base);
+            if (matchesAgreementConflict(error, serializedBase)) {
+              // update() can report only the fields it would write. Verify the complete fence delta.
+              const fullConflict = await nativeWrites.assertCurrent(inspected.id).catch((current: unknown) => current);
+              if (matchesAgreementConflict(fullConflict, serializedBase)) {
+                throw new ResolutionRefusal("ado_partial_apply", `A peer recorded matching Azure agreement for decision ${decision}. Rerun ado resolve-apply with the SAME --plan or --artifact to verify settlement; do not repeat the PATCH manually.`);
+              }
+            }
+            throw error;
+          }
         } });
       if (agreement.differences.length) throw this.partial(decision, agreement.remote.revision);
       return { ok: true, decision, replayed, pm_id: plan.local.id };

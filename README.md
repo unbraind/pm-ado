@@ -2,16 +2,10 @@
 
 Azure DevOps work-item sync for [`pm-cli`](https://github.com/unbraind/pm-cli).
 
-## Install and release approval
+## Install
 
-The first npm release is pending the maintainer's interactive bootstrap. After
-that first publish, the maintainer configures npm trusted publishing for
-`release.yml` and sets the repository variable `PM_RELEASE_APPROVED` to `true`.
-The daily workflow and manual dispatch both require this variable and `main`.
-Publishing uses OIDC with provenance; no stored npm token is needed.
-
-Once published, install the package and compatible pm host, then activate the
-extension in an initialized pm project:
+Install the package and compatible pm host, then activate the extension in an
+initialized pm project:
 
 ```sh
 npm install pm-ado @unbrained/pm-cli
@@ -27,6 +21,20 @@ pm ado --help
 The package exports its SDK through `main` and `types` and registers commands
 with pm. It has no standalone `bin`: use `npx pm` or `bunx --bun pm` through
 the installed host. npm/Bun dependency installation alone does not activate it.
+
+### Daily release
+
+Configure the npm trusted publisher for `unbraind/pm-ado` with workflow file
+`release.yml` and allow direct `npm publish`. Then set the `PM_RELEASE_APPROVED`
+repository variable to `true`. The variable only enables Daily Release on
+`main`. npm publisher authorization is configured in npm, and the pinned
+workflow stops at its OIDC preflight if the publisher is missing.
+[npm trusted publishing setup](https://docs.npmjs.com/trusted-publishers/#configuring-trusted-publishing)
+
+Preparation is scheduled at 03:23 UTC.
+Hourly reconciliation at minute 41 reads the current candidate and its
+exact-head checks. The workflow requests protected auto-merge and uses npm
+trusted publishing with OIDC provenance after verifying the merged candidate.
 
 ## Why this is not just another tracker bridge
 

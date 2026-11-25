@@ -1527,10 +1527,85 @@ test("resolution recovery serializes two writers using the same prepared decisio
   const results = await Promise.allSettled([resolver(f).apply(plan), resolver(f).apply(plan)]);
   assert.ok(results.some((result) => result.status === "fulfilled" && result.value.ok));
   for (const result of results) if (result.status === "rejected") {
-    assert.ok(["ado_partial_apply", "apply_failed"].includes((result.reason as ResolutionRefusal).code));
+    assert.ok(["ado_partial_apply", "apply_failed"].includes((result.reason as ResolutionRefusal).code), String(result.reason));
     assert.equal((result.reason as ResolutionRefusal).exitCode, 4);
   }
   assert.equal((await resolver(f).apply(plan)).replayed, true);
+  assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 1);
+});
+
+test("resolution recovery reports a retryable agreement race after a peer replays the same decision", async (t) => {
+  const f = await fixture(t);
+  await f.command("import");
+  const item = await row(f.pm);
+  await f.pm.update(item.id, { title: "Concurrent agreement" });
+  const peer = resolver(f);
+  const plan = choices(await peer.plan(item.id));
+  let peerAgreed = false;
+  f.afterBatch(async () => {
+    // Settlement has released its lease. The first writer currently owns a
+    // read-back fence, and the replay can advance agreement before it publishes.
+    if (!peerAgreed && (await row(f.pm)).ado_resolution_receipt) {
+      peerAgreed = true;
+      const replay = await peer.apply(plan);
+      assert.equal(replay.replayed, true);
+    }
+  });
+  await assert.rejects(resolver(f).apply(plan), { code: "ado_partial_apply", exitCode: 4 });
+  assert.ok(peerAgreed);
+  const agreed = snapshot(f.pmRoot);
+  assert.equal((await peer.apply(plan)).replayed, true);
+  assert.deepEqual(snapshot(f.pmRoot), agreed);
+  assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 1);
+});
+
+test("resolution recovery keeps a peer agreement followed by a local edit classified as stale_local", async (t) => {
+  const f = await fixture(t);
+  await f.command("import");
+  const item = await row(f.pm);
+  await f.pm.update(item.id, { title: "Concurrent agreement" });
+  const peer = resolver(f);
+  const plan = choices(await peer.plan(item.id));
+  let peerEdited = false;
+  f.afterBatch(async () => {
+    // The peer replays the matching agreement and then changes an unrelated field
+    // before the first writer's read-back fence is checked.
+    if (!peerEdited && (await row(f.pm)).ado_resolution_receipt) {
+      peerEdited = true;
+      assert.equal((await peer.apply(plan)).replayed, true);
+      await f.pm.update(item.id, { title: "Local edit after the agreement" });
+    }
+  });
+  await assert.rejects(resolver(f).apply(plan), (error: unknown) => {
+    assert.notEqual((error as { code?: string }).code, "ado_partial_apply", "a mixed conflict must not be reported as retryable");
+    return true;
+  });
+  assert.ok(peerEdited);
+  assert.equal((await row(f.pm)).title, "Local edit after the agreement");
+});
+
+test("resolution recovery keeps an edit during the agreement write classified as stale_local", async (t) => {
+  const f = await fixture(t);
+  await f.command("import");
+  const item = await row(f.pm);
+  await f.pm.update(item.id, { title: "Concurrent agreement" });
+  const peer = resolver(f);
+  const plan = choices(await peer.plan(item.id));
+  const update = NativeWriteFence.prototype.update;
+  let peerEdited = false;
+  t.mock.method(NativeWriteFence.prototype, "update", async function (this: NativeWriteFence, ...args: Parameters<typeof update>) {
+    if (!peerEdited) {
+      assert.equal(args[1].message, "Azure read-back agreement");
+      // The caller has checked its full fence. Interleave before update projects the conflict.
+      peerEdited = true;
+      assert.equal((await peer.apply(plan)).replayed, true);
+      await f.pm.update(item.id, { title: "Local edit during the agreement write" });
+    }
+    return update.apply(this, args);
+  });
+  await assert.rejects(resolver(f).apply(plan), { code: "stale_local", exitCode: 4 });
+  assert.ok(peerEdited);
+  assert.equal((await row(f.pm)).title, "Local edit during the agreement write");
   assert.equal(f.requests.filter((request) => request.method === "PATCH").length, 1);
 });
 

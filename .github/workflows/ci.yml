@@ -123,7 +123,9 @@ jobs:
 
       - name: Engines floor tests
         if: steps.changes.outputs.code == 'true' && matrix.node-version == 22
-        run: npm test
+        run: |
+          npm test
+          npm run verify:release-publish-attestation
 
       # Full V8 and Istanbul passes belong to CI Deep and release:check. Running
       # both here repeats the expensive model matrices beyond the hosted budget.

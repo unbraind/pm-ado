@@ -5,7 +5,14 @@ GitHub-hosted runners, quick deterministic seed prefixes, cancellation and 30 mi
 job limits. Main pushes, dispatch and nightly 02:41 UTC run four distinct deep
 jobs: Node 22/26 × npm/Bun, one full gate each, with 120 minute limits and scale 3.
 The local pool is used unless PM_LOCAL_DEEP is off. Local npm cache is persistent;
-Bun is preinstalled and its version is logged. Release scheduling is unchanged.
+Bun is preinstalled and its version is logged.
+
+Daily Release prepares at 03:23 UTC and reconciles release intent hourly at
+minute 41. The pinned pm-ops caller uses `release:check:quick` for preparation
+with npm and Bun. The script selects the quick model depth for the complete
+release gate. Publication verifies the merged tree against the prepared artifact.
+Ordinary workflow tests exercise the local caller. The publish attestation gate
+also checks the immutable upstream workflow source.
 
 | Check | PR Node 22 | PR Node 26 | Docs/tracker only (both) | Deep (each matrix leg) |
 | --- | --- | --- | --- | --- |

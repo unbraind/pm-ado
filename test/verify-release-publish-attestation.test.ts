@@ -123,16 +123,6 @@ test("the fail-open guard still admits a genuinely attested publish", () => {
   assert.deepEqual(audited.failures, [], "a readable --provenance binding must still pass");
 });
 
-test("this repository's own workflows pass the gate", () => {
-  // The gate pointed at this checkout, which is what CI runs. Reported through
-  // captured streams rather than the process ones so a failure is readable.
-  const lines: string[] = [];
-  let exitCode = 0;
-  report(verify(root), (line) => lines.push(line), (code) => { exitCode = code; });
-  assert.equal(exitCode, 0, `the gate must pass on this repository:\n${lines.join("\n")}`);
-  assert.ok(lines.some((line) => line.includes("every publish invocation is attested")));
-});
-
 test("the launcher runs only as the process entry point", () => {
   // A bare `if` at module scope leaves its own body unreachable from any
   // in-process test, which is how an entry point quietly stops running.

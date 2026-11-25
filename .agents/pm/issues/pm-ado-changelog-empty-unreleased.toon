@@ -1,0 +1,21 @@
+id: pm-ado-changelog-empty-unreleased
+title: Changelog check adds an empty Unreleased section
+description: "Verify the pinned generator against a prepared empty dated release, its tagged form, and a later pending delivery. https://github.com/unbraind/pm-ado/issues/90"
+type: Issue
+status: in_progress
+priority: 2
+tags[1]: "gh:unbraind/pm-ado#90"
+created_at: "2026-11-24T20:32:12.385Z"
+updated_at: "2026-11-24T21:02:09.449Z"
+author: codex-agent
+comments[2]{created_at,author,text}:
+  "2026-11-24T20:40:22.828Z",codex-agent,"The installed pm-changelog 2026.11.20 passes the fetched-tag check on main. Add a real tracker and git fixture for prepared empty notes, post-tag stability, and preservation of legitimate pending changes. Use the reported 2026.10.31 pin as the behavioral revert."
+  "2026-11-24T20:44:47.938Z",codex-agent,"Behavioral revert: substituting the published 2026.10.31 generator alone made changelog:check return 1 after tagging and add the empty Unreleased / No changes block. Restored 2026.11.20 passes before and after tagging and reports a real pending delivery until regeneration. The existing scripts retain dated empty sections and run checking without writes."
+files[2]{path,scope}:
+  package.json,project
+  test/release-workflow.test.ts,project
+tests[1]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
+  "node --test --test-concurrency=2 --test-name-pattern=\"prepared empty dated release\" test/release-workflow.test.ts",project,codex-agent,"2026-11-24T20:44:46.709Z",local_mutation,fix/adopt-reusable-daily-release
+docs[1]{path,scope,note}:
+  README.md,project,Daily release entry point
+body: ""

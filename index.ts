@@ -1164,7 +1164,7 @@ export default defineExtension({
         name: `ado ${mode}`,
         description: `${mode} Azure DevOps work items with revision-checked reconciliation`,
         flags: SYNC_FLAGS,
-        handler: (ctx: CommandHandlerContext) => runSyncCommand(ctx, mode),
+        run: (ctx: CommandHandlerContext) => runSyncCommand(ctx, mode),
       });
     }
 
@@ -1175,7 +1175,7 @@ export default defineExtension({
       flags: [
         { long: "--items", value_type: "string", value_name: "ids", description: "Comma-separated exact linked pm IDs (1..20)" },
       ],
-      handler: runArtifactCommand,
+      run: runArtifactCommand,
     });
 
     api.registerCommand({
@@ -1185,7 +1185,7 @@ export default defineExtension({
         { long: "--fields", value_type: "string", description: "Required comma-separated native pm field needs" },
         { long: "--max-output-bytes", value_type: "number", description: "Complete JSON receipt budget, 1024..1048576 (default 65536)" },
       ],
-      handler: runRefreshCommand,
+      run: runRefreshCommand,
     });
 
     api.registerCommand({
@@ -1195,7 +1195,7 @@ export default defineExtension({
         { long: "--item", value_type: "string", value_name: "id", description: "Linked pm item to inspect" },
         { long: "--save", value_type: "boolean", description: "Store the portable artifact in a core Plan body" },
       ],
-      handler: (ctx: CommandHandlerContext) => runResolutionCommand(ctx, "plan"),
+      run: (ctx: CommandHandlerContext) => runResolutionCommand(ctx, "plan"),
     });
     api.registerCommand({
       name: "ado resolve-apply",
@@ -1204,7 +1204,7 @@ export default defineExtension({
         { long: "--plan", value_type: "string", value_name: "id", description: "Core Plan whose body contains the artifact and choices" },
         { long: "--artifact", value_type: "string", value_name: "file", description: "Portable JSON artifact including explicit choices" },
       ],
-      handler: (ctx: CommandHandlerContext) => runResolutionCommand(ctx, "apply"),
+      run: (ctx: CommandHandlerContext) => runResolutionCommand(ctx, "apply"),
     });
 
     api.registerCommand({
@@ -1218,7 +1218,7 @@ export default defineExtension({
         { long: "--type", value_type: "string", description: "Single type to validate (default Task)" },
         { long: "--expect-fingerprint", value_type: "string", description: "Expected shared field contract fingerprint" },
       ],
-      handler: runMoveCommand,
+      run: runMoveCommand,
     });
 
     api.registerCommand({
@@ -1231,7 +1231,7 @@ export default defineExtension({
         { long: "--check-tracker", value_type: "boolean", description: "Read the complete local tracker through the SDK and check mapped values" },
         { long: "--expect-fingerprint", value_name: "sha256", value_type: "string", description: "Refuse if the selected remote schema changed" },
       ],
-      handler: runContractCommand,
+      run: runContractCommand,
     });
 
     api.registerCommand({
@@ -1239,7 +1239,7 @@ export default defineExtension({
       description: "Check Azure DevOps readiness without making a network call",
       intent: "Diagnose whether pm-ado has the configuration it needs, without leaking secrets",
       examples: ["pm ado validate"],
-      handler: (_ctx: CommandHandlerContext) => {
+      run: (_ctx: CommandHandlerContext) => {
         const missing = missingEnv(process.env);
         const config = readConfig(process.env);
         return {

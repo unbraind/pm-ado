@@ -1,0 +1,33 @@
+id: pm-ado-github-5532dc4b9a65-137
+title: Use canonical command registration for strict extension health
+description: "Track https://github.com/unbraind/pm-ado/issues/137. The published package registers ten commands through the legacy handler alias, which produces gate-failing health warnings."
+type: Issue
+status: in_progress
+priority: 2
+tags[1]: "gh:unbraind/pm-ado#137"
+created_at: "2026-11-25T20:33:34.979Z"
+updated_at: "2026-11-25T22:06:02.913Z"
+author: codex-agent
+acceptance_criteria: Use run for all ten command registrations in source and built output while preserving command behavior.; A built package installed as a project extension in a non-git tracker passes strict health with zero pm-ado warnings.; Verify the corrected artifact in the next scheduled Daily Release.
+comments[5]{created_at,author,text}:
+  "2026-11-25T20:33:39.161Z",codex-agent,"Reproduced strict JSON health exit 1 after npm-packing and installing the unmodified pm-ado 2026.11.25 artifact into a non-git project under the pinned host. The response attributes ten warnings to legacy command registration. The linked Daily Release shows successful publishing and a failing post-publish Bun check. Plan: preserve command behavior, rename all eight registrations, rebuild, and add a packed project health regression."
+  "2026-11-25T20:35:37.961Z",codex-agent,"The regression fails on the unmodified compiled package under both pinned Node and native Bun hosts. It installs and activates the archive with all ten commands, then fails the complete JSON warning assertion with exactly ten legacy alias findings in each runtime (zero passed, three failed including the parent). The fix changes only the registration keys; the same checks will run against the rebuilt candidate."
+  "2026-11-25T20:38:22.031Z",codex-agent,"The candidate archive passed real npm and Bun dependency installation with pm-cli 2026.11.24, followed by project activation and strict health in JSON and TOON. Both JSON reports were complete and contained zero pm-ado warnings. Native Bun used bunx --bun --no-install pm. The repository-wide check found only the eight source call sites and their generated copies, so no workflow, documentation, or output formatter changes were needed."
+  "2026-11-25T20:46:05.473Z",codex-agent,"Final revert proof: a disposable copy built with only the eight registration fields reverted failed the installed-extension test under Node and Bun, with exactly ten pm-ado alias warnings in each runtime and 0/3 passing. Reapplying the fix and rebuilding yielded byte-identical candidate JavaScript and source map, followed by 3/3 passing. The linked pm test ran from a disposable tracker and passed 1/1 commands with 3/3 assertions reported by the Node test runner. The installation receipt verifies activation and the exact ten command paths before checking health."
+  "2026-11-25T22:06:00.744Z",codex-agent,"Local targeted gate at the repository CI quick profile: 955/955 tests passed, zero skipped, using PM_TEST_DEPTH=quick node --test --test-concurrency=2 test/{ado,contracts,installed-extension-health,moves,packed-install-shapes,public-api,refresh,sync}.test.ts. The focused Node runner counted three tests (two runtime subtests plus their parent). Build, test typecheck, typecheck, and the docstring gate passed (142 declarations across 20 files). The repository has no standalone lint script. Full coverage and release validation remain at their existing workflow thresholds. The next scheduled Daily Release will verify the published artifact."
+files[4]:
+  - path: dist/index.js
+    scope: project
+  - path: dist/index.js.map
+    scope: project
+    note: Generated source map
+  - path: index.ts
+    scope: project
+  - path: test/installed-extension-health.test.ts
+    scope: project
+tests[1]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
+  node --test --test-concurrency=2 test/installed-extension-health.test.ts,project,codex-agent,"2026-11-25T20:35:36.804Z",local_mutation,fix/register-commands-with-run
+docs[2]{path,scope,note}:
+  docs/ci-tiers.md,project,Existing PR and release validation tiers
+  README.md,project,Existing extension install and command documentation
+body: ""

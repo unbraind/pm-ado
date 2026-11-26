@@ -2,11 +2,11 @@ id: pm-ado-github-5532dc4b9a65-137
 title: Use canonical command registration for strict extension health
 description: "Track https://github.com/unbraind/pm-ado/issues/137. The published package registers ten commands through the legacy handler alias, which produces gate-failing health warnings."
 type: Issue
-status: in_progress
+status: open
 priority: 2
 tags[1]: "gh:unbraind/pm-ado#137"
 created_at: "2026-11-25T20:33:34.979Z"
-updated_at: "2026-11-25T22:06:02.913Z"
+updated_at: "2026-11-26T09:56:37.768Z"
 author: codex-agent
 acceptance_criteria: Use run for all ten command registrations in source and built output while preserving command behavior.; A built package installed as a project extension in a non-git tracker passes strict health with zero pm-ado warnings.; Verify the corrected artifact in the next scheduled Daily Release.
 comments[5]{created_at,author,text}:
@@ -30,4 +30,5 @@ tests[1]{command,scope,provenance{author,created_at,source_kind,source_ref}}:
 docs[2]{path,scope,note}:
   docs/ci-tiers.md,project,Existing PR and release validation tiers
   README.md,project,Existing extension install and command documentation
+github_url: "https://github.com/unbraind/pm-ado/issues/137"
 body: ""

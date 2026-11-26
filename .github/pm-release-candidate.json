@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "repository": "unbraind/pm-ado",
-  "baseSha": "d3500fd70685004580b9c93940bffe5adba1e602",
-  "version": "2026.11.25",
-  "runId": 45621176399,
+  "baseSha": "ce4b8c1793bacbb9000060ee7970af02ce34f3be",
+  "version": "2026.11.26",
+  "runId": 45823777327,
   "runAttempt": 1,
   "configDigest": "b9d3316c54b238637ec2575e91c4f7dc04a05b10d121ff28025cc8555bd99adc"
 }

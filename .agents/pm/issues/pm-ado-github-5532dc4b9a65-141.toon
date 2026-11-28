@@ -1,0 +1,25 @@
+id: pm-ado-github-5532dc4b9a65-141
+title: Daily gated issue sync is failing
+description: "GH issue #141: https://github.com/unbraind/pm-ado/issues/141 · author @github-actions[bot] · state reason completed · created 2026-11-26T09:37:47Z · updated 2026-11-26T10:16:00Z"
+type: Issue
+status: closed
+priority: 2
+tags[2]: "gh:unbraind/pm-ado#141","github_author:github-actions[bot]"
+created_at: "2026-11-26T09:37:47Z"
+updated_at: "2026-11-28T08:56:28.794Z"
+closed_at: "2026-11-26T10:16:00Z"
+completed_at: "2026-11-26T10:16:00Z"
+author: pm-github
+release: v2026.11.26
+close_reason: "Closed on GitHub as completed on 2026-11-26T10:16:00Z"
+github_close_reason: "Closed on GitHub as completed on 2026-11-26T10:16:00Z"
+github_closed_at: "2026-11-26T10:16:00Z"
+github_created_at: "2026-11-26T09:37:47Z"
+github_link_only: false
+github_number: 141
+github_release: v2026.11.26
+github_state: closed
+github_state_reason: completed
+github_updated_at: "2026-11-26T10:16:00Z"
+github_url: "https://github.com/unbraind/pm-ado/issues/141"
+body: "Failing step: Preview GitHub to pm plan\nRun URL: https://github.com/unbraind/pm-ado/actions/runs/45793004747/attempts/1\nRules: none\n\n\n---\n\n### GitHub comments (1)\n\n> **@coderabbitai[bot]** (2026-11-26T09:38:10Z)\n>\n> <!-- coderabbit-ai-generated:v1 -->\n> \n> <!-- This is an auto-generated issue plan by CodeRabbit -->\n> <details>\n> <summary>🔗 Related PRs</summary>\n> <dl>\n> <dd>\n> <br>\n> \n> unbraind/pm-ado#129 - Remove literal host temporary-directory paths from a mirror comment so the gated GitHub sync preflight passes [merged]\n> unbraind/pm-ado#139 - Pin pm-github 2026.11.25 so the gated sync works with the installed pm CLI again [closed]\n> </dd>\n> </dl>\n> </details>\n> \n> ---\n> <details>\n> <summary>📝 Issue Planner</summary>\n> <dl>\n> <dd>\n> <br>\n> \n> <sub>Check the box below or use the `@coderabbitai plan` command to generate an implementation plan and prompts that you can use with your favorite coding assistant.</sub>\n> \n> - [ ] <!-- {\"checkboxId\":\"8d4f2b9c-3e1a-4f7c-a9b2-d5e8f1c4a7b9\"} --> Create Plan\n> </dd>\n> </dl>\n> </details>\n> \n> \n> ---\n> <details>\n> <summary> 🧪 Issue enrichment is currently in open beta.</summary>\n> <dl>\n> <dd>\n> <br>\n> \n> \n> You can configure auto-planning by selecting labels in the issue_enrichment configuration.\n> \n> To disable automatic issue enrichment, add the following to your `.coderabbit.yaml`:\n> ```yaml\n> issue_enrichment:\n>   auto_enrich:\n>     enabled: false\n> ```\n> </dd>\n> </dl>\n> </details>\n> \n> 💬 Have feedback or questions? Drop into our [discord](https://discord.gg/coderabbit)!"

@@ -1,0 +1,21 @@
+id: pm-ado-github-5532dc4b9a65-136
+title: Published pm-ado 2026.11.25 registers legacy handler aliases that fail strict PM CLI verification
+description: "GH issue #136: https://github.com/unbraind/pm-ado/issues/136 · author @unbraind · created 2026-11-25T19:42:52Z · updated 2026-11-25T19:42:52Z"
+type: Issue
+status: open
+priority: 2
+tags[2]: "gh:unbraind/pm-ado#136","github_author:unbraind"
+created_at: "2026-11-25T19:42:52Z"
+updated_at: "2026-11-28T08:56:28.516Z"
+author: pm-github
+github_close_reason: ""
+github_closed_at: ""
+github_created_at: "2026-11-25T19:42:52Z"
+github_link_only: false
+github_number: 136
+github_release: ""
+github_state: open
+github_state_reason: unspecified
+github_updated_at: "2026-11-25T19:42:52Z"
+github_url: "https://github.com/unbraind/pm-ado/issues/136"
+body: "`pm-ado@2026.11.25` was published and tagged at `7bd012fb08ba5a83683077913dd9220424e2f969` ([release](https://github.com/unbraind/pm-ado/releases/tag/v2026.11.25)). In the [post-publication Bun verification job](https://github.com/unbraind/pm-ado/actions/runs/45686506926/job/139462793476), Bun installed the exact package and `@unbrained/pm-cli@2026.11.24`. The subsequent strict extension compatibility check exited 1 with `extension_command_definition_legacy_handler_alias` for ten commands, including `ado import`, `ado export`, `ado sync`, and `ado validate`. The job summary labels this a Bun-install verification failure, but resolution and installation succeeded. [Exact source](https://github.com/unbraind/pm-ado/blob/7bd012fb08ba5a83683077913dd9220424e2f969/index.ts#L1154-L1250) still uses `handler`. This proves strict extension health fails; it does not establish failure of individual commands or a live Azure DevOps operation.\n\nAcceptance: use the canonical SDK command definitions for all affected commands, preserving names/metadata/behavior; verify strict health on a candidate pack with the intended host in a disposable tracker before publishing, without ADO credentials or operations; distinguish install errors from post-install compatibility failures; verify the corrected published artifact with the same strict check."

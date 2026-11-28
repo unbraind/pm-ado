@@ -1,12 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Use canonical command registration for strict extension health ([pm-ado-github-5532dc4b9a65-137](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-github-5532dc4b9a65-137.toon))
+
 ## 2026.11.26 - 2026-11-26
 
-No changes.
+### Closed
+
+- Closed: Daily gated issue sync is failing ([pm-ado-github-5532dc4b9a65-141](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-github-5532dc4b9a65-141.toon))
 
 ## 2026.11.25 - 2026-11-25
 
-No changes.
+### Closed
+
+- Closed: Changelog check adds an empty Unreleased section and blocks otherwise passing PR gates ([pm-ado-github-5532dc4b9a65-90](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-github-5532dc4b9a65-90.toon))
+- Closed: Release timeout asks for workflow approval after automatic approval succeeded ([pm-ado-github-5532dc4b9a65-84](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-github-5532dc4b9a65-84.toon))
 
 ## 2026.11.20 - 2026-11-20
 
@@ -21,6 +32,7 @@ No changes.
 ### Fixed
 
 - Adopt decision-bound native revision guards for Azure lifecycle writes ([pm-ado-sdk-history-fence](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-sdk-history-fence.toon))
+- Closeout records gap-reporting PR \#16 as statement-enforcement delivery instead of \#19 ([pm-ado-github-5532dc4b9a65-33](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-github-5532dc4b9a65-33.toon))
 
 ### Other
 
@@ -44,6 +56,12 @@ No changes.
 
 - The daily release generated its changelog with a drifted copy of the generator flags and its own check refused it ([pm-ado-r5ps](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-r5ps.toon))
 - Restore the prepared 2026.10.29 release notes ([pm-ado-release-notes-1029](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-release-notes-1029.toon))
+
+### Closed
+
+- Closed: PR46 history-fence revision fails terminal reconciliation and seeded assignee-preservation gates ([pm-ado-github-5532dc4b9a65-60](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-github-5532dc4b9a65-60.toon))
+- Closed: PR46 passes712 tests but fails unchanged branch-coverage gate at99.36% ([pm-ado-github-5532dc4b9a65-59](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-github-5532dc4b9a65-59.toon))
+- Closed: PR46 native-claim fixture fails build:test: GetItemProjection passed to ItemMetadata helper ([pm-ado-github-5532dc4b9a65-67](https://github.com/unbraind/pm-ado/blob/main/.agents/pm/issues/pm-ado-github-5532dc4b9a65-67.toon))
 
 ## 2026.10.29 - 2026-10-29
 
